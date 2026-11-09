@@ -1,0 +1,267 @@
+import { useEffect, useRef, useState } from 'react';
+import type { Track } from '@vision/shared';
+import { formatDuration } from '@vision/shared';
+import { api } from '../api';
+import { useLibrary } from '../state/library';
+import { usePlayer } from '../state/player';
+import { Cover, Icon, useToast } from '../ui';
+
+type Props = {
+  tracks: Track[];
+  onPlay: (track: Track) => void;
+  onRemove?: (track: Track) => void;
+  emptyTitle: string;
+  emptyHint: string;
+  emptyAction?: { label: string; onClick: () => void };
+  showArtist?: boolean;
+};
+
+export function TrackList({ tracks, onPlay, onRemove, emptyTitle, emptyHint, emptyAction, showArtist = true }: Props) {
+  if (!tracks.length) {
+    return (
+      <div className="empty">
+        <div className="empty__icon">
+          <Icon name="music" size={34} />
+        </div>
+        <h3>{emptyTitle}</h3>
+        <p>{emptyHint}</p>
+        {emptyAction && (
+          <button type="button" className="btn btn--primary" onClick={emptyAction.onClick}>
+            {emptyAction.label}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="tracklist" role="list">
+      {tracks.map((track, position) => (
+        <TrackRow
+          key={track.id}
+          track={track}
+          position={position}
+          onPlay={() => onPlay(track)}
+          onRemove={onRemove ? () => onRemove(track) : undefined}
+          showArtist={showArtist}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TrackRow({
+  track,
+  position,
+  onPlay,
+  onRemove,
+  showArtist,
+}: {
+  track: Track;
+  position: number;
+  onPlay: () => void;
+  onRemove?: () => void;
+  showArtist: boolean;
+}) {
+  const { playlists, patchTrack, dropTrack, reload } = useLibrary();
+  const { current, playing, removeFromQueue, replaceTrack } = usePlayer();
+  const { push } = useToast();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [newPlaylist, setNewPlaylist] = useState('');
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const isCurrent = current?.id === track.id;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  const toggleLike = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    try {
+      const updated = await api.setLiked(track.id, !track.liked);
+      patchTrack(track.id, { liked: updated.liked });
+      replaceTrack(updated);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось обновить лайк', 'error');
+    }
+  };
+
+  const addToPlaylist = async (playlistId: string) => {
+    try {
+      await api.addToPlaylist(playlistId, track.id);
+      await reload();
+      push('Трек добавлен в плейлист');
+      setMenuOpen(false);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось добавить', 'error');
+    }
+  };
+
+  const createPlaylist = async () => {
+    const name = newPlaylist.trim();
+    if (!name) return;
+    try {
+      const playlist = await api.createPlaylist(name);
+      await api.addToPlaylist(playlist.id, track.id);
+      await reload();
+      setNewPlaylist('');
+      setMenuOpen(false);
+      push(`Плейлист «${name}» создан`);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось создать плейлист', 'error');
+    }
+  };
+
+  const remove = async () => {
+    setMenuOpen(false);
+    if (onRemove) {
+      onRemove();
+      return;
+    }
+    if (!window.confirm(`Удалить «${track.title}» из библиотеки? Файл будет стёрт с сервера.`)) return;
+    try {
+      await api.deleteTrack(track.id);
+      dropTrack(track.id);
+      removeFromQueue(track.id);
+      await reload();
+      push('Трек удалён');
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось удалить трек', 'error');
+    }
+  };
+
+  return (
+    <div className={`track${isCurrent ? ' track--current' : ''}`} role="listitem" onClick={onPlay}>
+      <button
+        type="button"
+        className="track__play"
+        aria-label={isCurrent && playing ? 'Пауза' : `Играть ${track.title}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onPlay();
+        }}
+      >
+        {isCurrent && playing ? (
+          <span className="equalizer" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+        ) : (
+          <>
+            <span className="track__index">{position + 1}</span>
+            <Icon name="play" size={16} className="track__playicon" />
+          </>
+        )}
+      </button>
+
+      <Cover track={track} size={44} />
+
+      <div className="track__info">
+        <span className="track__title">{track.title}</span>
+        {showArtist && <span className="track__artist">{track.artist}</span>}
+      </div>
+
+      {track.genre && <span className="pill track__genre">{track.genre}</span>}
+
+      <span className="track__plays" title="Прослушивания">
+        <Icon name="play" size={11} />
+        {track.plays}
+      </span>
+
+      <span className="track__time">{formatDuration(track.duration)}</span>
+
+      <button
+        type="button"
+        className={`iconbtn track__like${track.liked ? ' is-active' : ''}`}
+        aria-label={track.liked ? 'Убрать лайк' : 'Поставить лайк'}
+        aria-pressed={track.liked}
+        onClick={toggleLike}
+      >
+        <Icon name="heart" size={17} />
+      </button>
+
+      <div className="track__menuWrap" ref={menuRef}>
+        <button
+          type="button"
+          className="iconbtn"
+          aria-label="Действия с треком"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(event) => {
+            event.stopPropagation();
+            setMenuOpen((v) => !v);
+          }}
+        >
+          <Icon name="more" size={18} />
+        </button>
+
+        {menuOpen && (
+          <div className="menu" role="menu">
+            <div className="menu__label">В плейлист</div>
+            <div className="menu__scroll">
+              {playlists.length === 0 && <div className="menu__empty">Плейлистов пока нет</div>}
+              {playlists.map((playlist) => (
+                <button
+                  key={playlist.id}
+                  type="button"
+                  role="menuitem"
+                  className="menu__item"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void addToPlaylist(playlist.id);
+                  }}
+                >
+                  <Icon name="disc" size={15} />
+                  <span>{playlist.name}</span>
+                  <span className="menu__count">{playlist.trackCount}</span>
+                </button>
+              ))}
+            </div>
+            <div className="menu__create">
+              <input
+                value={newPlaylist}
+                onChange={(event) => setNewPlaylist(event.target.value)}
+                placeholder="Новый плейлист"
+                aria-label="Название нового плейлиста"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === 'Enter') void createPlaylist();
+                }}
+              />
+              <button
+                type="button"
+                className="iconbtn"
+                aria-label="Создать плейлист"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void createPlaylist();
+                }}
+              >
+                <Icon name="plus" size={16} />
+              </button>
+            </div>
+            <button type="button" role="menuitem" className="menu__item menu__item--danger" onClick={remove}>
+              <Icon name="trash" size={15} />
+              <span>{onRemove ? 'Убрать из плейлиста' : 'Удалить трек'}</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

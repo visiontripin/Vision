@@ -1,0 +1,22 @@
+{
+  "name": "vision-audio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Vision Audio — личный аналог SoundCloud: web, Android, iOS, Windows, Linux",
+  "workspaces": [
+    "apps/web",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/web",
+    "dev:api": "node --watch services/api/src/server.js",
+    "build": "npm run build --workspace apps/web",
+    "start": "node services/api/src/server.js",
+    "test": "node --test services/api/test/*.test.js",
+    "preview": "npm run build && npm start"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

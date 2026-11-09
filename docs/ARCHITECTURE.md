@@ -1,0 +1,119 @@
+# Архитектура
+
+## 1. Принципы
+
+1. **Один бэкенд, много клиентов.** API — единственный источник правды; типы и HTTP-клиент живут в `packages/shared`.
+2. **Стриминг вместо скачивания.** Аудио отдаётся с поддержкой HTTP Range → мгновенный seek на всех платформах.
+3. **Минимум зависимостей на сервере.** Node 22 (`node:http`, `node:sqlite`) — меньше поверхность атаки и быстрый деплой.
+4. **Файлы — на диске, метаданные — в БД.** Медиа не хранится в базе; путь строится по id, а не по имени файла (path traversal невозможен).
+5. **Приватность по умолчанию.** Никаких публичных URL без явного шаринга; авторизация токеном на всех `/api/*`, кроме `/api/auth/*` и `/api/health`.
+
+## 2. Стек по платформам
+
+| Платформа | Технология | Почему |
+|-----------|-----------|--------|
+| Web | React 19 + TypeScript + Vite | быстрый DX, общий код и типы |
+| API | Node 22 + `node:http` + `node:sqlite` | ноль зависимостей, SQLite для одного пользователя |
+| Android / iOS | React Native (Expo) | один код на две ОС, нативные модули для фонового аудио |
+| Windows / Linux | Tauri 2 (Rust shell + web-бандл) | 5–10 МБ вместо Electron, доступ к трею и медиа-клавишам |
+| Хранилище | локальный диск + S3-совместимое (опционально) | личное использование → сервер и есть хранилище |
+
+## 3. Структура репозитория (npm workspaces)
+
+```
+Vision/
+├─ apps/
+│  ├─ web/                 # SPA: библиотека, плеер, загрузка
+│  ├─ mobile/              # Expo-приложение Android/iOS (этап 3)
+│  └─ desktop/             # Tauri-оболочка Windows/Linux (этап 4)
+├─ services/api/           # HTTP API + стриминг + SQLite
+├─ packages/shared/        # типы, API-клиент, общие хелперы
+├─ docs/                   # ROLES, PRODUCT, ARCHITECTURE, API, ROADMAP, ADR
+└─ data/                   # runtime: media/, covers/, vision.db (не в git)
+```
+
+## 4. Модель данных
+
+```sql
+tracks (
+  id TEXT PRIMARY KEY,          -- uuid
+  title TEXT NOT NULL,
+  artist TEXT NOT NULL DEFAULT 'Unknown',
+  album TEXT, genre TEXT,
+  description TEXT,
+  mime TEXT NOT NULL,
+  ext TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  duration REAL NOT NULL DEFAULT 0,
+  peaks TEXT,                   -- JSON: 200 нормализованных значений 0..1
+  cover_mime TEXT,
+  plays INTEGER NOT NULL DEFAULT 0,
+  liked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+)
+
+playlists (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT)
+playlist_tracks (playlist_id TEXT, track_id TEXT, position INTEGER,
+                 PRIMARY KEY (playlist_id, track_id))
+
+shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
+```
+
+Индексы: `tracks(created_at)`, `tracks(liked)`, `playlist_tracks(playlist_id, position)`.
+
+## 5. Стриминг аудио
+
+- `GET /api/tracks/:id/stream` поддерживает `Range: bytes=start-end` → `206 Partial Content`,
+  `Accept-Ranges: bytes`, `Content-Range`, `Cache-Control: private, max-age=3600`.
+- Клиент ставит `audio.src` один раз; браузер сам делает Range-запросы для seek.
+- Ограничение: один диапазон на запрос (достаточно для `<audio>`; multipart/byteranges не нужен).
+- Большие файлы читаются потоком (`fs.createReadStream`), память не растёт.
+
+## 6. Загрузка
+
+1. Клиент читает файл через Web Audio API → длительность + 200 пиков волны.
+2. `POST /api/tracks?title=…&artist=…` с сырым аудио в теле (не multipart — проще и быстрее).
+3. Сервер: лимит 500 МБ, проверка magic bytes (ID3/RIFF/OggS/ftyp), запись во временный
+   файл → атомарный `rename` → запись в БД. При ошибке временный файл удаляется.
+4. Обложка: `PUT /api/tracks/:id/cover` (image/*, ≤ 8 МБ), отдаётся с ETag.
+
+## 7. Аутентификация
+
+- `POST /api/auth/login {password}` → `{ token }`, где token = `base64(payload).HMAC-SHA256`.
+- Пароль сравнивается с `VISION_PASSWORD` (env, по умолчанию `vision` для локального демо).
+- Клиент хранит токен в `localStorage`, отправляет `Authorization: Bearer <token>`.
+  Cookies не используются — приложение одинаково работает в iframe/превью и в нативной оболочке.
+- Rate limit на `/api/auth/login`: 10 попыток / 5 минут на IP.
+
+## 8. Web-клиент
+
+- Состояние: React-контексты `Auth`, `Library`, `Player` (без внешнего state-менеджера).
+- `PlayerProvider` держит единственный `<audio>` элемент, очередь, shuffle/repeat,
+  позицию и громкость в `localStorage` (восстановление при перезагрузке).
+- Роутинг: hash-роутер (без зависимостей): `#/`, `#/liked`, `#/playlists/:id`, `#/stats`.
+- Стили: CSS-переменные-токены, тёмная тема, orange-акцент; компоненты лежат в `src/components`.
+- Клиентские пики: `AudioContext.decodeAudioData` → RMS по блокам → 200 значений.
+
+## 9. Нативные приложения
+
+- **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`
+  для офлайн-кэша, `expo-notifications` для медиа-контролов. Общий клиент — `@vision/shared`.
+- **Desktop**: Tauri 2, `frontendDist` указывает на `apps/web/dist`; плагины: `global-shortcut`,
+  `tray-icon`, `updater`, `dialog`. Capabilities — минимальные (только окно + файлы).
+
+## 10. Наблюдаемость и эксплуатация
+
+- `GET /api/health` → `{ ok, tracks, diskFreeMb, version }` для мониторинга и CI-смоука.
+- Логи — JSON-строки в stdout, без имён файлов пользователя и токенов.
+- Бэкап: `sqlite3 .backup` + `rsync data/media` (скрипт `scripts/backup.sh`), проверка восстановления — месяц.
+- Деплой: один процесс API + статика web; опционально Caddy/Nginx с TLS.
+
+## 11. ADR (заведены)
+
+| # | Решение |
+|---|---------|
+| 0001 | SQLite вместо Postgres: один пользователь, нулевое администрирование |
+| 0002 | Bearer-токен вместо cookie-сессий: iframe-превью и нативные оболочки |
+| 0003 | Сырое тело запроса для загрузки вместо multipart: меньше кода, потоковая запись |
+| 0004 | React Native + Tauri вместо «веб-обёрток»: один TypeScript-стек, нативные интеграции |
+| 0005 | Пики волны считает клиент: нет ffmpeg на сервере, waveform появляется сразу |
