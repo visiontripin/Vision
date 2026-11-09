@@ -1,0 +1,21 @@
+{
+  "name": "@vision/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Vision Audio для Windows и Linux (Tauri 2)",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:linux": "tauri build --bundles appimage,deb",
+    "build:windows": "tauri build --bundles msi,nsis",
+    "icon": "tauri icon src-tauri/icons/icon.png"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-global-shortcut": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  }
+}

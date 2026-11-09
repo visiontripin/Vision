@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'arena/**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: API contract tests
+        run: npm test
+      - name: Local (IndexedDB) client tests
+        run: npm run test:local
+      - name: Typecheck + web build
+        run: npm run build
+      - name: Smoke test API
+        run: |
+          node services/api/src/server.js &
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:4000/api/health && break || sleep 0.5
+          done
+          curl -sf http://localhost:4000/api/health | grep -q '"ok":true'
