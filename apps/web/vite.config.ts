@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // Для GitHub Pages: BASE_PATH=/Vision/ (имя репозитория)
+  base: process.env.BASE_PATH || '/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -25,7 +27,9 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    // OUT_DIR нужен, чтобы статическая сборка для GitHub Pages не перетирала dist,
+    // который отдаёт self-hosted API.
+    outDir: process.env.OUT_DIR || 'dist',
     emptyOutDir: true,
   },
 });

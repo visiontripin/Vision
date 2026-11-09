@@ -17,6 +17,8 @@ jobs:
       - run: npm ci
       - name: API contract tests
         run: npm test
+      - name: Local (IndexedDB) client tests
+        run: npm run test:local
       - name: Typecheck + web build
         run: npm run build
       - name: Smoke test API

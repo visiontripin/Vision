@@ -1,4 +1,5 @@
 import { formatBytes } from '@vision/shared';
+import { IS_LOCAL_MODE } from '../api';
 import { useAuth } from '../state/auth';
 import { useLibrary } from '../state/library';
 import { Icon } from '../ui';
@@ -73,17 +74,29 @@ export function Sidebar({ route, onUpload }: { route: string; onUpload: () => vo
       <footer className="sidebar__foot">
         <div className="storage">
           <div className="storage__row">
-            <span>Свободно на диске</span>
-            <strong>{stats?.diskFreeMb ? formatBytes(stats.diskFreeMb * 1024 * 1024) : '—'}</strong>
+            <span>{IS_LOCAL_MODE ? 'Локальный режим' : 'Свободно на диске'}</span>
+            <strong>
+              {IS_LOCAL_MODE
+                ? 'в браузере'
+                : stats?.diskFreeMb
+                  ? formatBytes(stats.diskFreeMb * 1024 * 1024)
+                  : '—'}
+            </strong>
           </div>
           <div className="storage__bar">
             <i style={{ width: `${Math.min(100, ((stats?.tracks ?? 0) / 200) * 100)}%` }} />
           </div>
           <p>{stats?.tracks ?? 0} треков · {Math.round((stats?.duration ?? 0) / 60)} мин</p>
         </div>
-        <button type="button" className="sidebar__logout" onClick={logout}>
-          Выйти
-        </button>
+        {IS_LOCAL_MODE ? (
+          <p className="sidebar__note" title="Треки хранятся в IndexedDB этого браузера">
+            Данные — только в этом браузере
+          </p>
+        ) : (
+          <button type="button" className="sidebar__logout" onClick={logout}>
+            Выйти
+          </button>
+        )}
       </footer>
     </aside>
   );

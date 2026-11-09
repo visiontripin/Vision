@@ -1,0 +1,63 @@
+name: Deploy web (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Сборка статической версии
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Тесты (API)
+        run: npm test
+      - name: Тесты (локальный режим)
+        run: npm run test:local
+      - name: Сборка (local-first, без сервера)
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+        run: npm run build:pages
+      - name: SPA-фолбэк и .nojekyll
+        run: |
+          cp apps/web/dist-pages/index.html apps/web/dist-pages/404.html
+          touch apps/web/dist-pages/.nojekyll
+      - name: Артефакт (можно скачать и открыть офлайн)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-web-static
+          path: apps/web/dist-pages
+          retention-days: 30
+
+  deploy:
+    name: Публикация на GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist-pages
+      - id: deployment
+        uses: actions/deploy-pages@v4

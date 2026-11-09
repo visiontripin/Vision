@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, hasToken, saveToken } from '../api';
+import { api, hasToken, IS_LOCAL_MODE, saveToken } from '../api';
 
 type Status = 'loading' | 'anon' | 'authed';
 
@@ -19,6 +19,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (IS_LOCAL_MODE) {
+        // Локальный режим: данные в браузере, пароль не нужен
+        if (!cancelled) setStatus('authed');
+        return;
+      }
       if (!hasToken()) {
         setStatus('anon');
         return;
@@ -50,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     saveToken(null);
-    setStatus('anon');
+    setStatus(IS_LOCAL_MODE ? 'authed' : 'anon');
   }, []);
 
   const value = useMemo(() => ({ status, busy, login, logout }), [status, busy, login, logout]);

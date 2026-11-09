@@ -1,4 +1,13 @@
-import { createClient } from '@vision/shared';
+import { createClient, type VisionClient } from '@vision/shared';
+import { LocalClient } from './local/client';
+
+/**
+ * Два режима работы:
+ *  - обычный: запросы к API (self-hosted);
+ *  - локальный (VITE_LOCAL_MODE=1): вся библиотека в IndexedDB браузера,
+ *    поэтому сайт можно открыть как статику (GitHub Pages) без сервера.
+ */
+export const IS_LOCAL_MODE = import.meta.env.VITE_LOCAL_MODE === '1';
 
 const TOKEN_KEY = 'vision.token';
 const BASE_KEY = 'vision.apiBase';
@@ -20,7 +29,10 @@ function storedBase(): string {
   }
 }
 
-export const api = createClient({ token: storedToken(), baseUrl: storedBase() });
+const remote = createClient({ token: storedToken(), baseUrl: storedBase() });
+const local = new LocalClient();
+
+export const api = (IS_LOCAL_MODE ? local : remote) as unknown as VisionClient;
 
 export function saveToken(token: string | null) {
   api.setToken(token);
@@ -43,7 +55,7 @@ export function saveApiBase(base: string) {
 }
 
 export function hasToken(): boolean {
-  return Boolean(api.getToken());
+  return IS_LOCAL_MODE || Boolean(api.getToken());
 }
 
 export function apiBase(): string {
