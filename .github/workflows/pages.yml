@@ -43,6 +43,14 @@ jobs:
           name: vision-web-static
           path: apps/web/dist-pages
           retention-days: 30
+      # Артефакт `github-pages` должен собираться в том же job, где лежит dist-pages,
+      # иначе deploy-job его просто не увидит.
+      - name: Конфигурация Pages
+        uses: actions/configure-pages@v5
+      - name: Упаковка для Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist-pages
 
   deploy:
     name: Публикация на GitHub Pages
@@ -52,12 +60,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: apps/web/dist-pages
       - id: deployment
         uses: actions/deploy-pages@v4
