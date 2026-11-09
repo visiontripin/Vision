@@ -1,5 +1,8 @@
 # Vision Audio
 
+[![Demo](https://img.shields.io/badge/demo-visiontripin.github.io%2FVision-ff5a1f?style=flat-square)](https://visiontripin.github.io/Vision/)
+[![CI](https://github.com/visiontripin/Vision/actions/workflows/ci.yml/badge.svg)](https://github.com/visiontripin/Vision/actions/workflows/ci.yml)
+
 Личный аналог веб-версии SoundCloud: загрузка своих треков, библиотека, волновой плеер,
 плейлисты и лайки. Один владелец, приватность по умолчанию. Дальше — приложения под
 **Android, iOS, Windows, Linux** на том же API.
@@ -23,9 +26,10 @@ Web-версия умеет работать **полностью в брауз�
   загруженные треки сохраняются в вашем браузере (другой браузер = другая библиотека).
 - Сборка для статики: `npm run build:pages` → `apps/web/dist-pages`
   (переменные `VITE_LOCAL_MODE=1`, `BASE_PATH=/Vision/`).
-- Если GitHub Pages недоступен (приватный репозиторий без платного плана), готовый
-  архив сайта лежит в артефактах workflow **Deploy web (GitHub Pages)** →
-  `vision-web-static`: скачайте, распакуйте и откройте `index.html`.
+- Сайт собирается и публикуется workflow **Deploy web (GitHub Pages)** при каждом
+  пуше в `main`. Если Pages отключён в настройках репозитория, тот же бандл лежит
+  в артефактах этого workflow (`vision-web-static`): скачайте, распакуйте и
+  откройте `index.html` — сервер не нужен.
 
 | Режим | Хранение | Запуск |
 |-------|----------|--------|
