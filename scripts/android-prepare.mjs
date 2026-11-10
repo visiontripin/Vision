@@ -76,6 +76,22 @@ android {
 
 writeFileSync(GRADLE, gradle);
 
+// --- 2b. память Gradle: сборка с new architecture (C++/CMake на 4 ABI) ---
+const GRADLE_PROPS = path.join(APP_DIR, 'android/gradle.properties');
+if (existsSync(GRADLE_PROPS)) {
+  let props = readFileSync(GRADLE_PROPS, 'utf8');
+  const jvmArgs = '-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8';
+  if (/^org\.gradle\.jvmargs=.*$/m.test(props)) {
+    props = props.replace(/^org\.gradle\.jvmargs=.*$/m, `org.gradle.jvmargs=${jvmArgs}`);
+  } else {
+    props += `\norg.gradle.jvmargs=${jvmArgs}\n`;
+  }
+  if (!/^kotlin\.daemon\.jvmargs=/m.test(props)) {
+    props += 'kotlin.daemon.jvmargs=-Xmx3g\n';
+  }
+  writeFileSync(GRADLE_PROPS, props);
+}
+
 const keystore = path.resolve(process.env.VISION_KEYSTORE_PATH || path.join(APP_DIR, 'vision-release.p12'));
 if (!existsSync(keystore)) {
   console.error(`✖ Не найден ключ подписи ${keystore} (docs/ANDROID.md)`);

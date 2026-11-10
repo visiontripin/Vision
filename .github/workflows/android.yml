@@ -64,14 +64,39 @@ jobs:
       - name: Типы
         run: npx tsc --noEmit
 
+      - name: Android SDK и лицензии
+        run: |
+          SDKM=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platform-tools" "platforms;android-36" "build-tools;36.0.0" > /dev/null 2>&1 || true
+
       - name: Нативный проект (prebuild)
         run: npx expo prebuild --platform android --no-install
 
       - name: Подпись и версия
         run: node ../../scripts/android-prepare.mjs
 
+      - name: Окружение
+        run: |
+          java -version 2>&1 | head -2 | while IFS= read -r l; do echo "::warning title=java::$l"; done
+          echo "::warning title=sdk::ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null | tr '\n' ' ' | while IFS= read -r l; do echo "::warning title=platforms::$l"; done
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null | tr '\n' ' ' | while IFS= read -r l; do echo "::warning title=build-tools::$l"; done
+          grep -E "versionCode|versionName|visionRelease|storeType" android/app/build.gradle | head -12 | while IFS= read -r l; do echo "::warning title=gradle::$l"; done
+          ls -l vision-release.p12
+
       - name: Сборка APK
-        run: cd android && ./gradlew assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          cd android
+          if ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log; then
+            exit 0
+          fi
+          # хвост лога в аннотации: логи job-а скачивать не всегда возможно
+          grep -nE "What went wrong|FAILURE:|Caused by:|error:|Execution failed|Could not|not found|No such file" /tmp/gradle.log | tail -25 \
+            | while IFS= read -r line; do echo "::error title=gradle-причина::$line"; done
+          tail -n 40 /tmp/gradle.log | while IFS= read -r line; do echo "::error title=gradle-хвост::$line"; done
+          exit 1
 
       - name: APK, размер и SHA-256
         id: apk
