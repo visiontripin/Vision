@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 export const PASSWORD = process.env.VISION_PASSWORD || 'vision';
 export const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Track } from '@vision/shared';
 import { formatDuration } from '@vision/shared';
 import { api } from '../api';
@@ -16,7 +16,51 @@ type Props = {
   showArtist?: boolean;
 };
 
+/** Списки длиннее этого рисуем окном — 5 000 строк не должны жить в DOM сразу. */
+const VIRTUALIZE_AFTER = 120;
+const OVERSCAN = 8;
+
 export function TrackList({ tracks, onPlay, onRemove, emptyTitle, emptyHint, emptyAction, showArtist = true }: Props) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [rowHeight, setRowHeight] = useState(62);
+  const [range, setRange] = useState({ start: 0, end: tracks.length });
+  const windowed = tracks.length > VIRTUALIZE_AFTER;
+
+  /* реальная высота строки зависит от брейкпоинта — измеряем, а не угадываем */
+  useLayoutEffect(() => {
+    const row = listRef.current?.querySelector<HTMLElement>('.track');
+    if (!row) return;
+    const height = row.getBoundingClientRect().height;
+    if (height > 1 && Math.abs(height - rowHeight) > 0.5) setRowHeight(height);
+  }, [rowHeight, tracks.length, showArtist]);
+
+  useEffect(() => {
+    if (!windowed) {
+      setRange((prev) => (prev.start === 0 && prev.end === tracks.length ? prev : { start: 0, end: tracks.length }));
+      return;
+    }
+
+    const compute = () => {
+      const list = listRef.current;
+      if (!list) return;
+      const rect = list.getBoundingClientRect();
+      const viewport = window.innerHeight;
+      const offset = Math.max(0, -rect.top);
+      const start = Math.max(0, Math.floor(offset / rowHeight) - OVERSCAN);
+      const visible = Math.ceil(viewport / rowHeight) + OVERSCAN * 2;
+      const end = Math.min(tracks.length, start + visible);
+      setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+    };
+
+    compute();
+    window.addEventListener('scroll', compute, { passive: true });
+    window.addEventListener('resize', compute);
+    return () => {
+      window.removeEventListener('scroll', compute);
+      window.removeEventListener('resize', compute);
+    };
+  }, [windowed, rowHeight, tracks.length]);
+
   if (!tracks.length) {
     return (
       <div className="empty">
@@ -34,18 +78,36 @@ export function TrackList({ tracks, onPlay, onRemove, emptyTitle, emptyHint, emp
     );
   }
 
+  // список мог сократиться (поиск/удаление) — окно не должно вылезти за границы
+  const maxStart = Math.max(0, tracks.length - 1);
+  const start = windowed ? Math.min(range.start, maxStart) : 0;
+  const end = windowed ? Math.max(Math.min(range.end, tracks.length), start) : tracks.length;
+
   return (
-    <div className="tracklist" role="list">
-      {tracks.map((track, position) => (
-        <TrackRow
-          key={track.id}
-          track={track}
-          position={position}
-          onPlay={() => onPlay(track)}
-          onRemove={onRemove ? () => onRemove(track) : undefined}
-          showArtist={showArtist}
+    <div ref={listRef} className="tracklist" role="list">
+      {windowed && start > 0 && (
+        <div aria-hidden="true" style={{ height: Math.round(start * rowHeight), flex: '0 0 auto' }} />
+      )}
+      {tracks.slice(start, end).map((track, offset) => {
+        const position = start + offset;
+        return (
+          <TrackRow
+            key={track.id}
+            track={track}
+            position={position}
+            onPlay={() => onPlay(track)}
+            onRemove={onRemove ? () => onRemove(track) : undefined}
+            showArtist={showArtist}
+            total={tracks.length}
+          />
+        );
+      })}
+      {windowed && end < tracks.length && (
+        <div
+          aria-hidden="true"
+          style={{ height: Math.round((tracks.length - end) * rowHeight), flex: '0 0 auto' }}
         />
-      ))}
+      )}
     </div>
   );
 }
@@ -56,12 +118,14 @@ function TrackRow({
   onPlay,
   onRemove,
   showArtist,
+  total,
 }: {
   track: Track;
   position: number;
   onPlay: () => void;
   onRemove?: () => void;
   showArtist: boolean;
+  total: number;
 }) {
   const { playlists, patchTrack, dropTrack, reload } = useLibrary();
   const { current, playing, removeFromQueue, replaceTrack } = usePlayer();
@@ -144,7 +208,13 @@ function TrackRow({
   };
 
   return (
-    <div className={`track${isCurrent ? ' track--current' : ''}`} role="listitem" onClick={onPlay}>
+    <div
+      className={`track${isCurrent ? ' track--current' : ''}`}
+      role="listitem"
+      aria-posinset={position + 1}
+      aria-setsize={total}
+      onClick={onPlay}
+    >
       <button
         type="button"
         className="track__play"
