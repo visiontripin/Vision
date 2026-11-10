@@ -3,7 +3,14 @@ import { QueueDrawer, PlayerBar } from './components/PlayerBar';
 import { Sidebar } from './components/Sidebar';
 import { UploadModal } from './components/UploadModal';
 import { Login } from './Login';
-import { LibraryPage, LikedPage, PlaylistPage, PlaylistsPage, StatsPage } from './pages';
+import {
+  ExternalPage,
+  LibraryPage,
+  LikedPage,
+  PlaylistPage,
+  PlaylistsPage,
+  StatsPage,
+} from './pages';
 import { AuthProvider, useAuth } from './state/auth';
 import { LibraryProvider, useLibrary } from './state/library';
 import { PlayerProvider, usePlayer } from './state/player';
@@ -111,6 +118,7 @@ function Shell() {
     if (route === '/liked') return <LikedPage />;
     if (route === '/playlists') return <PlaylistsPage />;
     if (route === '/stats') return <StatsPage />;
+    if (route === '/external') return <ExternalPage />;
     return <LibraryPage search={search} onUpload={openUpload} />;
   })();
 
@@ -159,6 +167,7 @@ function Shell() {
           <a href="#/liked" className={route === '/liked' ? 'is-active' : ''}>Лайки</a>
           <a href="#/playlists" className={route.startsWith('/playlists') ? 'is-active' : ''}>Плейлисты</a>
           <a href="#/stats" className={route === '/stats' ? 'is-active' : ''}>Статистика</a>
+          <a href="#/external" className={route === '/external' ? 'is-active' : ''}>SoundCloud</a>
         </nav>
 
         {error && (

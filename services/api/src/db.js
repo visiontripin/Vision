@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { db, DATA_DIR, MEDIA_DIR, COVER_DIR } from './connection.js';
 import { runMigrations, migrationStatus } from './migrations/index.js';
 
@@ -309,4 +310,66 @@ export function genres() {
        GROUP BY genre ORDER BY count DESC`
     )
     .all();
+}
+
+/* --------------------------- внешние источники --------------------------- */
+
+function toExternal(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    source: row.source,
+    permalink: row.permalink,
+    title: row.title,
+    artist: row.artist ?? null,
+    artwork: row.artwork ?? null,
+    embedUrl: row.embed_url,
+    duration: row.duration,
+    note: row.note ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+export function listExternal(limit = 200) {
+  return db
+    .prepare('SELECT * FROM external_tracks ORDER BY created_at DESC LIMIT ?')
+    .all(Math.min(Math.max(Number(limit) || 200, 1), 500))
+    .map(toExternal);
+}
+
+export function getExternal(id) {
+  return toExternal(db.prepare('SELECT * FROM external_tracks WHERE id = ?').get(id));
+}
+
+/** Повторный импорт той же ссылки обновляет метаданные, но не плодит записи. */
+export function upsertExternal({ permalink, title, artist, artwork, embedUrl }) {
+  const existing = db
+    .prepare('SELECT id FROM external_tracks WHERE permalink = ?')
+    .get(permalink);
+
+  if (existing) {
+    db.prepare(
+      `UPDATE external_tracks
+          SET title = ?, artist = ?, artwork = ?, embed_url = ?
+        WHERE id = ?`
+    ).run(title, artist, artwork, embedUrl, existing.id);
+    return { ...getExternal(existing.id), created: false };
+  }
+
+  const id = randomUUID().replace(/-/g, '');
+  db.prepare(
+    `INSERT INTO external_tracks (id, source, permalink, title, artist, artwork, embed_url, duration, note, created_at)
+     VALUES (?, 'soundcloud', ?, ?, ?, ?, ?, 0, NULL, ?)`
+  ).run(id, permalink, title, artist, artwork, embedUrl, new Date().toISOString());
+
+  return { ...getExternal(id), created: true };
+}
+
+export function updateExternalNote(id, note) {
+  db.prepare('UPDATE external_tracks SET note = ? WHERE id = ?').run(note, id);
+  return getExternal(id);
+}
+
+export function deleteExternal(id) {
+  return db.prepare('DELETE FROM external_tracks WHERE id = ?').run(id).changes > 0;
 }

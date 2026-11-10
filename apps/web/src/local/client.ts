@@ -1,5 +1,7 @@
 import type {
+  ExternalTrack,
   HistoryEntry,
+  ImportResult,
   MediaMap,
   Playlist,
   Stats,
@@ -18,7 +20,7 @@ import type {
 const DB_NAME = 'vision-audio-local';
 const DB_VERSION = 1;
 const LOCAL_TOKEN = 'local';
-const VERSION = '0.3.0-local';
+const VERSION = '0.4.0-local';
 
 type StoredTrack = Track & { blob: Blob };
 type StoredPlaylist = {
@@ -267,6 +269,23 @@ export class LocalClient {
   }
 
   async clearHistory() {
+    /* noop */
+  }
+
+  async external(): Promise<ExternalTrack[]> {
+    /* в статической версии внешних ссылок нет — раздел отключён в UI */
+    return [];
+  }
+
+  async importExternal(): Promise<ImportResult> {
+    throw new Error('Импорт ссылок доступен только при запуске с сервером.');
+  }
+
+  async updateExternal(_id: string, _note: string | null): Promise<ExternalTrack> {
+    throw new Error('Импорт ссылок доступен только при запуске с сервером.');
+  }
+
+  async deleteExternal(): Promise<void> {
     /* noop */
   }
 

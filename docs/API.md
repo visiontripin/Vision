@@ -1,4 +1,4 @@
-# API v0.3.0
+# API v0.4.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -121,6 +121,39 @@ Body: изображение (jpeg/png/webp, ≤ 8 МБ). → `204`
 ### GET /api/playlists/:id/tracks → `200 Track[]`
 ### POST /api/playlists/:id/tracks `{ "trackId": "…" }` → `204`
 ### DELETE /api/playlists/:id/tracks/:trackId → `204`
+
+## Внешние источники (SoundCloud)
+
+Раздел хранит только метаданные и адрес официального встроенного плеера.
+Аудио не скачивается и не проксируется — см. `docs/CONTENT.md`.
+
+### GET /api/external?limit=200
+→ `200 [{ "id": "…", "source": "soundcloud", "permalink": "https://soundcloud.com/…",
+"title": "…", "artist": "…", "artwork": "https://i1.sndcdn.com/…", "embedUrl":
+"https://w.soundcloud.com/player/?url=…", "duration": 0, "note": null,
+"createdAt": "…" }]`
+
+### POST /api/external
+```json
+{ "urls": ["https://soundcloud.com/artist/track"] }
+```
+До 50 ссылок за раз. Разрешены домены `soundcloud.com`, `www.`, `m.`, `on.`;
+метаданные берутся с официального oEmbed-эндпоинта.
+
+→ `201 { "added": [{ …ExternalTrack, "created": true }], "failed": [] }`
+→ `400` если ни одну ссылку не удалось добавить (`failed[].code`:
+`invalid_url`, `unsupported_host`, `not_found`, `embed_unavailable`,
+`source_unreachable`, `source_error`), а также при `no_urls` / `too_many_urls`.
+
+Повторный импорт той же ссылки обновляет запись (`created: false`), дублей нет.
+
+### PATCH /api/external/:id
+```json
+{ "note": "заметка" }
+```
+→ `200 ExternalTrack`
+
+### DELETE /api/external/:id → `204`
 
 ## Stats
 

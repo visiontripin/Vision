@@ -23,6 +23,7 @@ export const OPENAPI = {
     { name: 'media' },
     { name: 'history' },
     { name: 'playlists' },
+    { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'system' },
   ],
   security: [{ bearerAuth: [] }],
@@ -103,6 +104,21 @@ export const OPENAPI = {
           stream: { type: 'string', description: 'Путь со свежей подписью (exp, sig)' },
           cover: { type: ['string', 'null'] },
           expiresAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      ExternalTrack: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          source: { type: 'string', examples: ['soundcloud'] },
+          permalink: { type: 'string', format: 'uri' },
+          title: { type: 'string' },
+          artist: { type: ['string', 'null'] },
+          artwork: { type: ['string', 'null'] },
+          embedUrl: { type: 'string', description: 'Официальный плеер источника' },
+          duration: { type: 'number', description: 'Не копируется с источника, по умолчанию 0' },
+          note: { type: ['string', 'null'] },
+          createdAt: { type: 'string', format: 'date-time' },
         },
       },
       Stats: {
@@ -555,6 +571,81 @@ export const OPENAPI = {
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'trackId', in: 'path', required: true, schema: { type: 'string' } },
         ],
+        responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/external': {
+      get: {
+        tags: ['external'],
+        summary: 'Закладки на внешние треки (метаданные и официальный плеер)',
+        parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', default: 200, maximum: 500 } }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/ExternalTrack' } },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        tags: ['external'],
+        summary: 'Импорт ссылок SoundCloud через официальный oEmbed (аудио не скачивается)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['urls'],
+                properties: {
+                  urls: { type: 'array', maxItems: 50, items: { type: 'string', format: 'uri' } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Что добавилось и что не получилось',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    added: { type: 'array', items: { $ref: '#/components/schemas/ExternalTrack' } },
+                    failed: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          url: { type: 'string' },
+                          code: { type: 'string' },
+                          message: { type: 'string' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: 'Ни одной ссылки не удалось добавить' },
+        },
+      },
+    },
+    '/external/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      patch: {
+        tags: ['external'],
+        summary: 'Заметка к ссылке',
+        responses: { 200: { description: 'OK' } },
+      },
+      delete: {
+        tags: ['external'],
+        summary: 'Удалить закладку',
         responses: { 204: { description: 'OK' } },
       },
     },

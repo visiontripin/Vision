@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,6 +13,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 
 let child;
 let dataDir;
+let oembed;
 let token = '';
 let firstTrackId = '';
 
@@ -144,8 +146,37 @@ async function upload(body, query = {}) {
 
 /* --------------------------------- запуск --------------------------------- */
 
+/** Фейковый oEmbed-эндпоинт: тесты не ходят в интернет. */
+const OEMBED_FIXTURES = {
+  'https://soundcloud.com/vision-labs/midnight-drive': {
+    title: 'Midnight Drive (external)',
+    author_name: 'Vision Labs',
+    thumbnail_url: 'https://i1.sndcdn.com/artworks-test-t500x500.jpg',
+    html: '<iframe width="100%" height="166" scrolling="no" frameborder="no" src="https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/1&color=%23ff5500"></iframe>',
+  },
+};
+
+async function startOembed() {
+  oembed = createServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    const target = url.searchParams.get('url');
+    const fixture = OEMBED_FIXTURES[target];
+    if (!fixture) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not_found' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ...fixture, provider_name: 'SoundCloud' }));
+  });
+
+  await new Promise((resolve) => oembed.listen(0, '127.0.0.1', resolve));
+  return `http://127.0.0.1:${oembed.address().port}/oembed`;
+}
+
 before(async () => {
   dataDir = mkdtempSync(path.join(tmpdir(), 'vision-test-'));
+  const oembedUrl = await startOembed();
   child = spawn(process.execPath, ['services/api/src/server.js'], {
     cwd: ROOT,
     env: {
@@ -155,6 +186,7 @@ before(async () => {
       DATA_DIR: dataDir,
       VISION_PASSWORD: 'vision',
       NODE_ENV: 'test',
+      SOUNDCLOUD_OEMBED_BASE: oembedUrl,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -179,6 +211,7 @@ before(async () => {
 
 after(() => {
   child?.kill('SIGTERM');
+  oembed?.close();
   if (dataDir) rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -432,6 +465,70 @@ test('/api/v1 — алиас контракта с тем же поведени�
 
   const health = await (await fetch(`${BASE}/api/v1/health`)).json();
   assert.equal(health.ok, true);
+});
+
+test('импорт внешних ссылок: только метаданные, без скачивания аудио', async () => {
+  const created = await fetch(`${BASE}/api/external`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: ['https://soundcloud.com/vision-labs/midnight-drive?si=abc123'] }),
+  });
+  assert.equal(created.status, 201);
+  const payload = await created.json();
+  assert.equal(payload.added.length, 1);
+  assert.equal(payload.failed.length, 0);
+
+  const item = payload.added[0];
+  assert.equal(item.title, 'Midnight Drive (external)');
+  assert.equal(item.artist, 'Vision Labs');
+  assert.equal(item.permalink, 'https://soundcloud.com/vision-labs/midnight-drive');
+  assert.match(item.embedUrl, /^https:\/\/w\.soundcloud\.com\/player\//);
+  assert.equal(item.duration, 0, 'аудио не скачивается, длительность не выдумываем');
+
+  // повторный импорт не создаёт дубль
+  const again = await fetch(`${BASE}/api/external`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: ['https://soundcloud.com/vision-labs/midnight-drive'] }),
+  });
+  const second = await again.json();
+  assert.equal(second.added[0].created, false);
+  assert.equal(second.added[0].id, item.id);
+
+  const list = await (await fetch(`${BASE}/api/external`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  assert.equal(list.length, 1);
+
+  const removed = await fetch(`${BASE}/api/external/${item.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(removed.status, 204);
+});
+
+test('импорт отклоняет чужие домены и несуществующие треки', async () => {
+  const foreign = await fetch(`${BASE}/api/external`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: ['https://evil.example.com/track'] }),
+  });
+  assert.equal(foreign.status, 400);
+  const foreignBody = await foreign.json();
+  assert.equal(foreignBody.failed[0].code, 'unsupported_host');
+
+  const missing = await fetch(`${BASE}/api/external`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: ['https://soundcloud.com/nobody/nothing'] }),
+  });
+  assert.equal(missing.status, 400);
+  assert.equal((await missing.json()).failed[0].code, 'not_found');
+
+  const empty = await fetch(`${BASE}/api/external`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: [] }),
+  });
+  assert.equal(empty.status, 400);
 });
 
 test('метрики Prometheus и заголовки безопасности', async () => {

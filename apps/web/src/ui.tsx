@@ -133,6 +133,13 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
+  external: (
+    <>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-8.5 8.5" />
+      <path d="M18 14v4.5A1.5 1.5 0 0116.5 20h-11A1.5 1.5 0 014 18.5v-11A1.5 1.5 0 015.5 6H10" />
+    </>
+  ),
   more: (
     <>
       <circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none" />
