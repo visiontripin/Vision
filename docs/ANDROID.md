@@ -18,6 +18,7 @@ https://github.com/visiontripin/Vision/releases/tag/android-v0.2.0
 | `npx expo prebuild -p android` | генерирует `apps/mobile/android` (в git не попадает) |
 | `node scripts/android-prepare.mjs` | версия, ключ подписи, проверка `usesCleartextTraffic` |
 | `./gradlew assembleRelease` | Hermes-бандл + релизный APK |
+| «Проверка APK» | `apksigner verify --print-certs`, `aapt2 dump badging`, наличие `assets/index.android.bundle` |
 | upload-artifact | `VisionAudio-<версия>-android.apk` + `.sha256` (90 дней) |
 | GitHub Release | `android-v<версия>`, тег на текущий коммит, файлы в ассетах |
 
@@ -28,6 +29,22 @@ https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.
 ```
 
 Повторный запуск с тем же тегом не падает: workflow обновляет ассеты (`--clobber`).
+
+## Что проверяется в CI
+
+Сборка не публикуется, если APK не проходит проверки; результаты печатаются
+`::warning`-аннотациями на странице job-а:
+
+| Проверка | Текущий APK (0.2.0, versionCode 5) |
+| --- | --- |
+| `apksigner verify` | `Verifies`, схема **v2** — true |
+| `aapt2 dump badging` | `package: app.vision.audio`, `versionName 0.2.0`, `targetSdkVersion 36` |
+| JS-бандл | `assets/index.android.bundle` внутри APK |
+| размер | ~57 МБ (universal: arm64-v8a, armeabi-v7a, x86, x86_64) |
+
+Схема v1 выключена намеренно: `minSdk 24` (Android 7.0), а v1 нужна только для
+Android 6 и ниже. Universal-APK удобнее для ручной раздачи, чем отдельные
+сборки под ABI: один файл ставится на любой телефон.
 
 ## Подпись
 
@@ -75,6 +92,7 @@ Release-сборка Android по умолчанию блокирует `http://
 ## Установка на телефон
 
 1. Открыть ссылку релиза на телефоне, скачать `VisionAudio-<версия>-android.apk`
+   (нужен Android 7.0+ — `minSdk 24`)
    (Chrome предупредит про «файл может быть опасен» — это обычная подпись
    самоподписанного APK, не из Play Store).
 2. В диалоге установки разрешить установку из этого источника
