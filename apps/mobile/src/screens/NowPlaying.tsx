@@ -25,7 +25,7 @@ export function NowPlaying({
   if (!track) return null;
 
   const size = Math.min(Dimensions.get('window').width - 72, 300);
-  const downloaded = downloads.has(track.id);
+  const downloaded = downloads.has(track.checksum ?? track.id);
   const progress = downloads.progress[track.id];
   const ratio = player.duration > 0 ? player.position / player.duration : 0;
 

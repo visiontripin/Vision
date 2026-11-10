@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatBytes, offlineEntries, offlineTotalBytes, pickEvictions, type OfflineEntry } from './offline.ts';
+import {
+  formatBytes, offlineEntries, offlineRef, offlineTotalBytes, pickEvictions, type OfflineEntry,
+} from './offline.ts';
 
 const MB = 1024 * 1024;
 
-function entry(id: string, megabytes: number, at: number): OfflineEntry {
-  return { id, title: id, artist: 'Test', bytes: megabytes * MB, at };
+function entry(id: string, megabytes: number, at: number, hash = ''): OfflineEntry {
+  return { id, hash, title: id, artist: 'Test', bytes: megabytes * MB, at };
 }
 
 test('офлайн: пока влезает в лимит — ничего не удаляем', () => {
@@ -41,6 +43,13 @@ test('офлайн: суммы и форматирование размеров'
   assert.equal(formatBytes(5 * MB), '5.0 МБ');
   assert.equal(formatBytes(250 * MB), '250 МБ');
   assert.equal(formatBytes(2048 * MB), '2.0 ГБ');
+});
+
+test('офлайн: ключ копии — sha256 содержимого, иначе id трека', () => {
+  assert.equal(offlineRef({ id: 'abc', checksum: 'f'.repeat(64) }), 'f'.repeat(64));
+  assert.equal(offlineRef({ id: 'abc' }), 'abc');
+  assert.equal(offlineRef({ id: 'abc', checksum: '' }), 'abc');
+  assert.equal(offlineRef(null), '');
 });
 
 test('офлайн: без localStorage и Cache Storage модуль не падает', () => {

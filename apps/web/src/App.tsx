@@ -11,7 +11,7 @@ import {
   PlaylistsPage,
   StatsPage,
 } from './pages';
-import { isOfflineCached } from './offline';
+import { isTrackCached } from './offline';
 import { syncReplicas } from './seeds';
 import { AuthProvider, useAuth } from './state/auth';
 import { LibraryProvider, useLibrary } from './state/library';
@@ -82,7 +82,7 @@ function Shell() {
   useEffect(() => {
     if (replicasSynced.current || !tracks.length) return;
     replicasSynced.current = true;
-    void syncReplicas(tracks, isOfflineCached);
+    void syncReplicas(tracks, isTrackCached);
   }, [tracks]);
   const player = usePlayer();
   const [search, setSearch] = useState('');

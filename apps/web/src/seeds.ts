@@ -56,9 +56,10 @@ export async function withdrawReplica(track: Track): Promise<void> {
  * Повторно объявить все имеющиеся офлайн-копии: записи в реестре стареют, а
  * браузер не может слать heartbeat из закрытой вкладки.
  */
-export async function syncReplicas(tracks: Track[], isCached: (id: string) => boolean): Promise<number> {
+export async function syncReplicas(tracks: Track[], isCached: (track: Track) => boolean): Promise<number> {
   if (IS_LOCAL_MODE) return 0;
-  const withCopies = tracks.filter((track) => track.checksum && isCached(track.id));
+  // копия адресуется содержимым: ищем её по sha256 (и по id для старых записей)
+  const withCopies = tracks.filter((track) => track.checksum && isCached(track));
   for (const track of withCopies) await announceReplica(track);
   return withCopies.length;
 }

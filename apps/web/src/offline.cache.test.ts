@@ -33,9 +33,10 @@ class FakeCache {
   }
 }
 
-function track(id: string, megabytes: number): Track {
+function track(id: string, megabytes: number, checksum?: string): Track {
   return {
     id,
+    checksum,
     title: `Track ${id}`,
     artist: 'Test',
     album: '',
@@ -142,6 +143,87 @@ test('офлайн-кэш: удаление и полная очистка', asy
   await mod.clearOffline();
   assert.equal(mod.offlineEntries().length, 0);
   assert.equal(await mod.offlinePlayableUrl('b'), null);
+});
+
+test('офлайн-кэш: копия адресуется sha256 — другой id того же файла не качается второй раз', async () => {
+  const { mod, cachesMap } = await setup(10);
+  stubFetch(1 * MB);
+  const hash = 'a'.repeat(64);
+
+  const first = await mod.cacheTrack(track('import-1', 1, hash), 'http://vision.local/1');
+  assert.equal(first.hash, hash);
+  assert.equal(mod.isOfflineCached(hash), true);
+  assert.equal(mod.isOfflineCached('import-1'), true, 'старый id тоже находит копию');
+
+  // тот же файл импортировали заново — у него новый id, но то же содержимое
+  const second = await mod.cacheTrack(track('import-2', 1, hash), 'http://vision.local/2');
+  assert.equal(second.id, 'import-2');
+  assert.equal(mod.offlineEntries().length, 1, 'копия одна');
+  assert.equal(mod.isOfflineCached(hash), true);
+  assert.equal(mod.isOfflineCached('import-2'), true);
+  assert.equal(mod.isOfflineCached('import-1'), false, 'прежняя строка трека больше не в индексе');
+
+  // в Cache Storage ключ — контентный
+  const cache = await cachesMap.get('vision-media-v1')!.keys();
+  assert.deepEqual(cache.map((request) => new URL(request.url).pathname), [`/__vision-offline/${hash}`]);
+
+  assert.match(String(await mod.offlinePlayableUrl(hash)), /^blob:/);
+  assert.match(String(await mod.offlinePlayableUrl('import-2')), /^blob:/);
+
+  await mod.removeOffline('import-2');
+  assert.equal(mod.isOfflineCached(hash), false);
+});
+
+test('офлайн-кэш: копия старого формата без hash находится по id', async () => {
+  const { mod, storage, cachesMap } = await setup(10);
+  storage.set(
+    'vision.offline.index',
+    JSON.stringify([{ id: 'legacy', title: 'L', artist: 'A', bytes: MB, at: Date.now() }])
+  );
+  const cache = await cachesMap.get('vision-media-v1');
+  const target = cache ?? (await (globalThis as any).caches.open('vision-media-v1'));
+  await target.put('/__vision-offline/legacy', new Response(new Uint8Array(MB), {
+    headers: { 'content-type': 'audio/mpeg' },
+  }));
+
+  assert.equal(mod.isOfflineCached('legacy'), true);
+  assert.match(String(await mod.offlinePlayableUrl('legacy')), /^blob:/);
+
+  await mod.removeOffline('legacy');
+  assert.equal(mod.isOfflineCached('legacy'), false);
+  assert.deepEqual(mod.offlineEntries(), []);
+});
+
+test('офлайн-кэш: копия, скачанная до трекера (ключ — id), находится по checksum', async () => {
+  const { mod, storage, cachesMap } = await setup(10);
+  const hash = 'c'.repeat(64);
+  // так выглядела запись до v0.10.1: ключ — id, поля hash ещё нет
+  storage.set(
+    'vision.offline.index',
+    JSON.stringify([{ id: 'old-track', title: 'O', artist: 'A', bytes: MB, at: Date.now() }])
+  );
+  const cache = await (globalThis as any).caches.open('vision-media-v1');
+  await cache.put(
+    '/__vision-offline/old-track',
+    new Response(new Uint8Array(MB), { headers: { 'content-type': 'audio/mpeg' } })
+  );
+
+  const nowHasChecksum = { id: 'old-track', checksum: hash };
+  assert.equal(mod.isTrackCached(nowHasChecksum), true, 'id-запись всё ещё считается копией');
+  assert.match(String(await mod.offlinePlayable(nowHasChecksum)), /^blob:/);
+
+  // повторное скачивание переводит запись на контентный ключ и убирает старый
+  stubFetch(MB);
+  await mod.cacheTrack(track('old-track', 1, hash), 'http://vision.local/x');
+  const keys = (await cachesMap.get('vision-media-v1')!.keys()).map(
+    (request) => new URL(request.url).pathname
+  );
+  assert.deepEqual(keys, [`/__vision-offline/${hash}`]);
+  assert.equal(mod.offlineEntries().length, 1);
+
+  await mod.removeTrackCopy(nowHasChecksum);
+  assert.equal(mod.isTrackCached(nowHasChecksum), false);
+  assert.equal(mod.isOfflineCached(hash), false);
 });
 
 test('офлайн-кэш: ошибка сервера не оставляет мусор в индексе', async () => {

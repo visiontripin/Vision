@@ -4,7 +4,7 @@ import { formatDuration } from '@vision/shared';
 import { api, IS_LOCAL_MODE } from '../api';
 import { ensureMedia, getDownloadUrl } from '../media';
 import {
-  cacheTrack, formatBytes, isOfflineCached, offlineSupported, removeOffline, useOffline,
+  cacheTrack, formatBytes, isTrackCached, offlineSupported, removeTrackCopy, useOffline,
 } from '../offline';
 import { announceReplica, sourceLabel, withdrawReplica } from '../seeds';
 import { SourcesModal } from './SourcesModal';
@@ -143,7 +143,8 @@ function TrackRow({
   const [progress, setProgress] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useOffline(); // подписка: перерисоваться, когда копия появится или исчезнет
-  const cached = isOfflineCached(track.id);
+  // копия адресуется содержимым: тот же файл под другим id — та же копия
+  const cached = isTrackCached(track);
 
   // Трекер говорит, есть ли у кого файл. Офлайн-копия важнее: она уже локально.
   const label = sourceLabel(track);
@@ -227,7 +228,7 @@ function TrackRow({
 
   const dropOffline = async () => {
     try {
-      await removeOffline(track.id);
+      await removeTrackCopy(track);
       void withdrawReplica(track);
       push('Офлайн-копия удалена');
       setMenuOpen(false);

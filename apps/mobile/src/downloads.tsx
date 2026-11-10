@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { Track } from '@vision/shared';
 import { downloadFileName } from './lib/format';
+import { findCopy } from './lib/downloads';
 import { announceReplica, withdrawReplica } from './lib/seeds';
 
 /**
@@ -15,7 +16,7 @@ import { announceReplica, withdrawReplica } from './lib/seeds';
 
 export type DownloadEntry = {
   id: string;
-  /** sha256 файла — адрес блоба в реестре реплик */
+  /** sha256 файла — адрес блоба в реестре реплик; он же ключ копии */
   hash?: string;
   title: string;
   artist: string;
@@ -32,8 +33,9 @@ type DownloadsValue = {
   totalBytes: number;
   count: number;
   error: string | null;
-  localUri: (id: string) => string | null;
-  has: (id: string) => boolean;
+  /** `ref` — id трека или sha256: копия адресуется содержимым. */
+  localUri: (ref: string | null | undefined) => string | null;
+  has: (ref: string | null | undefined) => boolean;
   download: (track: Track, url: string, mime?: string) => Promise<void>;
   downloadMany: (
     items: { track: Track; url: string; mime?: string }[],
@@ -121,7 +123,9 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const download = useCallback(
     async (track: Track, url: string, mime?: string) => {
       if (!url) throw new Error('Нет ссылки на файл');
-      if (entriesRef.current[track.id]) return;
+      // уже есть этот id или та же копия того же содержимого — второй файл не нужен
+      if (findCopy(entriesRef.current, track.id)) return;
+      if (findCopy(entriesRef.current, track.checksum)) return;
 
       setError(null);
       setProgress((prev) => ({ ...prev, [track.id]: 0 }));
@@ -186,13 +190,14 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   );
 
   const remove = useCallback(
-    async (id: string) => {
-      const entry = entriesRef.current[id];
-      if (entry) await FileSystem.deleteAsync(entry.uri, { idempotent: true }).catch(() => {});
+    async (ref: string) => {
+      const entry = findCopy(entriesRef.current, ref);
+      if (!entry) return;
+      await FileSystem.deleteAsync(entry.uri, { idempotent: true }).catch(() => {});
       const next = { ...entriesRef.current };
-      delete next[id];
+      delete next[entry.id];
       await persist(next);
-      void withdrawReplica(entry?.hash);
+      void withdrawReplica(entry.hash);
     },
     [persist]
   );
@@ -213,8 +218,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       totalBytes,
       count: Object.keys(entries).length,
       error,
-      localUri: (id: string) => entries[id]?.uri ?? null,
-      has: (id: string) => Boolean(entries[id]),
+      localUri: (ref: string | null | undefined) => findCopy(entries, ref)?.uri ?? null,
+      has: (ref: string | null | undefined) => Boolean(findCopy(entries, ref)),
       download,
       downloadMany,
       remove,
