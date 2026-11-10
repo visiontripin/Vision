@@ -98,6 +98,23 @@ jobs:
           tail -n 40 /tmp/gradle.log | while IFS= read -r line; do echo "::error title=gradle-хвост::$line"; done
           exit 1
 
+      - name: Проверка APK
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "::warning title=apk::$(ls -lh "$APK" | awk '{print $5}')"
+          # подпись: схема и отпечаток сертификата
+          "$BT/apksigner" verify --verbose --print-certs "$APK" > /tmp/verify.txt 2>&1 || { cat /tmp/verify.txt; exit 1; }
+          grep -E "Verifies|v2 scheme|v3 scheme" /tmp/verify.txt | while IFS= read -r l; do echo "::warning title=apk-подпись::$l"; done
+          grep -E "Signer #1 certificate (DN|SHA-256)" /tmp/verify.txt | while IFS= read -r l; do echo "::warning title=apk-сертификат::$l"; done
+          # пакет, версия, минимальный Android
+          "$BT/aapt2" dump badging "$APK" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code" \
+            | while IFS= read -r l; do echo "::warning title=apk-badging::$l"; done
+          # JS-бандл внутри APK обязателен (иначе приложение откроет пустой экран)
+          unzip -l "$APK" | grep -q "assets/index.android.bundle" || { echo "::error title=apk::в APK нет assets/index.android.bundle"; exit 1; }
+          echo "::warning title=apk::bundle на месте"
+
       - name: APK, размер и SHA-256
         id: apk
         run: |
@@ -161,6 +178,7 @@ jobs:
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
+            gh release edit "$TAG" --notes "$NOTES" 
           else
             gh release create "$TAG" "$NAME" "$NAME.sha256" \
               --target "$GITHUB_SHA" \
