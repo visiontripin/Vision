@@ -1,55 +1,72 @@
 # Vision Audio — Android и iOS
 
-React Native (Expo) + общий клиент `@vision/shared`. Это отдельный проект: не входит
+React Native (Expo) + общий клиент `@vision/shared`. Отдельный проект: не входит
 в npm workspaces корня, чтобы не тянуть 400 МБ зависимостей при обычной сборке веба.
 
-## Запуск на устройстве/эмуляторе
+Версия клиента — **0.2.0**. Работает в Expo Go (SDK 54).
+
+## Что уже умеет
+
+- **Вход**: адрес домашнего сервера вводится на экране входа (Wi-Fi дома, Tailscale,
+  туннель) и запоминается; пароль как в вебе. Адрес можно сменить без переустановки.
+- **Библиотека**: список треков с обложками, поиск по названию/исполнителю/жанру,
+  pull-to-refresh.
+- **Плейлисты**: список, состав, «Играть», «Скачать плейлист».
+- **Плеер**: очередь, следующий/предыдущий, перемешивание, повтор (все/один),
+  перемотка тапом по полосе, ±15 с, фон при выключенном экране
+  (`staysActiveInBackground` + `UIBackgroundModes: audio` / foreground service).
+- **Офлайн**: кнопка ↓ у трека и в плеере — файл качается в приватный каталог
+  приложения, играет без сети и без трафика. «Настройки» показывают занятое место,
+  позволяют удалить копию или всё сразу.
+- **Настройки**: смена сервера с проверкой, выход, управление копиями.
+
+Проверка контракта с сервером (Node + tsx, без эмулятора): `scripts`-скрипт
+прогоняет вход → треки → плейлисты → media → скачивание → Range-стрим → play/listen.
+
+## Запуск
 
 ```bash
 cd apps/mobile
 npm install
 npx expo install --fix        # выравнивает версии под вашу версию Expo SDK
+npx expo start                # QR в Expo Go на телефоне
 ```
 
-Адрес API задаётся переменной окружения:
+Адрес сервера задаётся либо на экране входа, либо переменной окружения:
 
 ```bash
-# Android-эмулятор видит хост как 10.0.2.2
-EXPO_PUBLIC_API_URL=http://10.0.2.2:4000 npm run android
-
-# iOS-симулятор — localhost
-EXPO_PUBLIC_API_URL=http://localhost:4000 npm run ios
-
-# Реальный телефон — IP машины в локальной сети
-EXPO_PUBLIC_API_URL=http://192.168.1.10:4000 npx expo start
+EXPO_PUBLIC_API_URL=http://192.168.1.10:4000 npx expo start   # телефон в той же Wi-Fi
+EXPO_PUBLIC_API_URL=http://10.0.2.2:4000 npm run android      # эмулятор Android
+EXPO_PUBLIC_API_URL=http://localhost:4000 npm run ios         # симулятор iOS
 ```
 
-В `app.json` уже включены: фоновое аудио на iOS (`UIBackgroundModes: audio`) и
-media-playback foreground service на Android.
+Сервер (Termux/ПК) должен слушать `0.0.0.0` — по умолчанию так и есть. Если телефон
+не дома, используйте адрес Tailscale (`https://<device>.<tailnet>.ts.net`).
+
+## Типы и тесты
+
+```bash
+cd apps/mobile
+npx tsc --noEmit                 # типы всего клиента (это же гоняет CI)
+
+cd ../.. && npm run test:local    # 35 тестов, из них 13 про мобильную логику:
+                                  # format (размеры, MIME → расширение), queue
+                                  # (шаг, повтор, перемешивание), media (что качать)
+```
 
 ## Сборки
 
 ```bash
 npm i -g eas-cli && eas login
 eas build:configure
-npm run build:android   # AAB для Google Play
-npm run build:ios       # IPA для App Store / TestFlight
+npm run build:android   # AAB для Google Play / internal testing
+npm run build:ios       # IPA для TestFlight
 ```
 
-Перед публикацией: подставить реальный `bundleIdentifier`/`package`,
-настроить `eas.json` (production-профиль), загрузить иконку 1024×1024 и splash.
+## Ограничения текущей версии
 
-## Что уже реализовано
-
-- вход по паролю с сохранением токена в AsyncStorage;
-- список треков с обложками-заглушками и длительностью;
-- стриминг через Range-запросы, пауза/продолжение, seek ±15 с;
-- счётчик прослушиваний.
-
-## Дальше по плану (этап 2 из docs/ROADMAP.md)
-
-- `react-native-track-player` вместо `expo-av`: фоновое воспроизведение, экран блокировки, Bluetooth;
-- офлайн-кэш (`expo-file-system`) и предзагрузка плейлистов;
-- загрузка файлов из «Файлов»/«Музыки» (`expo-document-picker`);
-- очередь, shuffle, лайки, плейлисты;
-- медиа-уведомления и Android Auto / CarPlay (этап 4).
+- **Экран блокировки и Bluetooth-гарнитура**: `expo-av` не даёт системные
+  медиа-кнопки. Нужен dev build с `react-native-track-player` (следующая итерация).
+- **Загрузка с телефона** (upload) пока только через веб-версию.
+- **Сидирование файлов другим пользователям** — отдельная итерация: план в
+  `docs/DISTRIBUTED.md` (контент-адресация, реестр реплик, сиды Termux/десктоп/телефон).

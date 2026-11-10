@@ -28,3 +28,21 @@ jobs:
             curl -sf http://localhost:4000/api/health && break || sleep 0.5
           done
           curl -sf http://localhost:4000/api/health | grep -q '"ok":true'
+
+  mobile:
+    # Мобильный клиент — отдельный проект (не в workspaces корня): проверяем типы,
+    # чтобы код не разъезжался с API, пока нет устройства под рукой.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npx tsc --noEmit
