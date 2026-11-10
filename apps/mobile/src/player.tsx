@@ -140,7 +140,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       await unload();
       if (cancelled) return;
 
-      const local = downloads.localUri(current.id);
+      const local = downloads.localUri(current.checksum ?? current.id);
       let uri = local;
       if (!uri) {
         const media = await api.media([current.id]).catch(() => null);

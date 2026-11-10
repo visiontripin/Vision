@@ -134,7 +134,7 @@ export function SettingsScreen({
                   {item.artist} · {formatBytes(item.bytes)}
                 </Text>
               </View>
-              <Pressable onPress={() => void downloads.remove(item.id)} hitSlop={8} style={styles.remove}>
+              <Pressable onPress={() => void downloads.remove(item.hash ?? item.id)} hitSlop={8} style={styles.remove}>
                 <Text style={styles.removeText}>✕</Text>
               </Pressable>
             </View>

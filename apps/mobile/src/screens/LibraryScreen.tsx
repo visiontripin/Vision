@@ -65,10 +65,10 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
 
   const toggleDownload = useCallback(
     (track: Track) => {
-      if (downloads.has(track.id)) {
+      if (downloads.has(track.checksum ?? track.id)) {
         Alert.alert('Удалить офлайн-копию?', `${track.title} — ${track.artist}`, [
           { text: 'Отмена', style: 'cancel' },
-          { text: 'Удалить', style: 'destructive', onPress: () => void downloads.remove(track.id) },
+          { text: 'Удалить', style: 'destructive', onPress: () => void downloads.remove(track.checksum ?? track.id) },
         ]);
         return;
       }
@@ -198,10 +198,10 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
                 cover={covers[item.id]}
                 active={player.current?.id === item.id}
                 playing={player.playing}
-                downloaded={downloads.has(item.id)}
+                downloaded={downloads.has(item.checksum ?? item.id)}
                 progress={progress}
                 onPress={() => {
-                  if (item.available === false && !downloads.has(item.id)) {
+                  if (item.available === false && !downloads.has(item.checksum ?? item.id)) {
                     Alert.alert(
                       'Нет источника',
                       'Ни одно устройство сейчас не раздаёт этот файл. Включите Termux или ПК с копией и обновите библиотеку.'
@@ -214,7 +214,7 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
                   Alert.alert(item.title, `${item.artist}${item.genre ? ` · ${item.genre}` : ''}`, [
                     { text: 'Закрыть', style: 'cancel' },
                     {
-                      text: downloads.has(item.id) ? 'Удалить копию' : 'Скачать офлайн',
+                      text: downloads.has(item.checksum ?? item.id) ? 'Удалить копию' : 'Скачать офлайн',
                       onPress: () => toggleDownload(item),
                     },
                   ])
