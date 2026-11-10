@@ -26,6 +26,8 @@ export function TrackRow({
   onToggleDownload: () => void;
 }) {
   const downloading = typeof progress === 'number';
+  // Трекер говорит, что файл сейчас никто не раздаёт (нет копий на других устройствах).
+  const missing = track.available === false && !downloaded;
 
   return (
     <Pressable
@@ -40,13 +42,16 @@ export function TrackRow({
         <Text numberOfLines={1} style={[styles.title, active && { color: colors.accentSoft }]}>
           {track.title}
         </Text>
-        <Text numberOfLines={1} style={styles.artist}>
+        <Text numberOfLines={1} style={[styles.artist, missing && styles.artistMissing]}>
           {track.artist}
           {track.genre ? ` · ${track.genre}` : ''}
+          {missing ? ' · нет источника' : ''}
         </Text>
       </View>
 
-      <Text style={styles.time}>{active && playing ? '▮▮▮' : formatDuration(track.duration)}</Text>
+      <Text style={[styles.time, missing && styles.timeMissing]}>
+        {active && playing ? '▮▮▮' : formatDuration(track.duration)}
+      </Text>
 
       <Pressable
         onPress={onToggleDownload}
@@ -77,6 +82,8 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 15, fontWeight: '600' },
   artist: { color: colors.muted, fontSize: 12.5, marginTop: 2 },
   time: { color: colors.dim, fontSize: 11.5, fontVariant: ['tabular-nums'] },
+  artistMissing: { color: '#ff9f6b' },
+  timeMissing: { color: '#ff9f6b', opacity: 0.8 },
   download: {
     width: 32,
     height: 32,

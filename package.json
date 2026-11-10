@@ -1,7 +1,7 @@
 {
   "name": "vision-audio",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "description": "Vision Audio — личный аналог SoundCloud: web, Android, iOS, Windows, Linux",
   "workspaces": [

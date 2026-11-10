@@ -789,6 +789,96 @@ select:focus {
   opacity: 0.75;
 }
 
+/* «Где лежит файл» — реестр реплик */
+.sources__title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sources__title h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.sources__title p {
+  margin: 2px 0 0;
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
+.sources__facts {
+  margin: 14px 0 12px;
+}
+
+.sources__list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.sources__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 13px;
+}
+
+.sources__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  flex: 0 0 auto;
+}
+
+.sources__dot.is-online {
+  background: #49d18a;
+  box-shadow: 0 0 0 3px rgba(73, 209, 138, 0.18);
+}
+
+.sources__device {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sources__device em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sources__meta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+.sources__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sources__hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .track__source {
   font-size: 11px;
   padding: 2px 8px;

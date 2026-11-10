@@ -1,4 +1,4 @@
-# API v0.9.0
+# API v0.10.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -74,7 +74,9 @@ TTL задаётся `MEDIA_URL_TTL_MS` (по умолчанию 30 минут).
 → `201 { blob, seeds }`. Если передан `deviceId`/`kind`/`baseUrl` — сразу создаётся
 запись сида.
 
-### GET /api/blobs/:hash → `{ blob, local, seeds, stats }`
+### GET /api/blobs/:hash → `{ blob, local, seeded, deviceId, seeds, stats }`
+`seeded` — файл лежит в каталоге сида **этого** узла (его можно отдать по `/seed/:hash`),
+`deviceId` — кто этот узел по мнению трекера.
 ### DELETE /api/blobs/:hash → `204`
 
 ### GET /api/blobs/:hash/seeds
@@ -95,6 +97,12 @@ Heartbeat устройства: `{ "deviceId": "termux", "kind": "node", "baseUr
 ### POST /api/blobs/:hash/replicate
 Забирает файл с первого живого сида, сверяет `sha256` и начинает раздавать его сам.
 → `200 { ok, bytes, already, from, stats }`, `409 no_source` — брать не у кого.
+
+### DELETE /api/blobs/:hash/replica → `204`
+Убирает локальную реплику: файл из `SEED_DIR` и свой сид из реестра
+(метрика `vision_blob_replica_removed_total`). Origin-файлы в хранилище и чужие сиды
+не трогает; если своей копии нет — `404 not_a_replica`. После этого трек снова
+качается с пира.
 
 ### GET /api/seeds
 ```json

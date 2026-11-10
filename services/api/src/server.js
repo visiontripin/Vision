@@ -19,6 +19,7 @@ import {
   isHash, extForMime, declareBlob, getBlob, registerSeed, removeSeed, listSeeds,
   seedSummary, withSources, resolveDownload, localFileFor, adoptBlob, heartbeatSelf,
   reconcileSelf, pruneSeeds, seedUrl, verifySeedToken, trackerStats,
+  replicaFileFor, dropReplica,
 } from './seeds.js';
 import {
   backfillVariants, enqueueTranscode, hlsPath, removeVariants, transcodeStatus, variantPath,
@@ -890,6 +891,9 @@ async function handleApi(req, res, url) {
       return json(res, 200, {
         blob,
         local: Boolean(local),
+        // «реплика» = файл в каталоге сида, а не загруженный origin-файл
+        seeded: Boolean(replicaFileFor(hash)),
+        deviceId: DEVICE_ID,
         seeds: listSeeds(hash),
         stats: seedSummary([hash]).get(hash),
       });
@@ -937,6 +941,21 @@ async function handleApi(req, res, url) {
         ttlHint: true,
       });
       return json(res, 200, { ...registered, stats: seedSummary([hash]).get(hash) });
+    }
+
+    if (action === '/replica' && method === 'DELETE') {
+      const result = await dropReplica(hash);
+      if (!result.ok) {
+        return fail(
+          res, 404, result.reason,
+          result.reason === 'not_a_replica'
+            ? 'На этом узле нет реплики (или файл загружен сюда, а не скачан с сида).'
+            : 'Некорректный хеш.'
+        );
+      }
+      inc('vision_blob_replica_removed_total');
+      res.writeHead(204);
+      return res.end();
     }
 
     if (action === '/replicate' && method === 'POST') {

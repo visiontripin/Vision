@@ -623,6 +623,9 @@ export const OPENAPI = {
       get: {
         tags: ['seeds'],
         summary: 'Состояние блоба и его сиды',
+        description:
+          'Отдаёт blob, local, seeded (файл лежит в каталоге сида этого узла), deviceId узла, ' +
+          'seeds и stats.',
         parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           200: { description: 'OK' },
@@ -708,6 +711,23 @@ export const OPENAPI = {
         responses: {
           200: { description: 'Реплика создана (или уже была)' },
           409: { $ref: '#/components/responses/NoSource' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/blobs/{hash}/replica': {
+      delete: {
+        tags: ['seeds'],
+        summary: 'Удалить локальную реплику блоба',
+        description:
+          'Убирает файл из каталога сида и снимает свой сид с реестра трекера. ' +
+          'Origin-файлы из хранилища не трогает; чужой сид не снимается.',
+        parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          204: { description: 'Реплика удалена' },
+          404: {
+            description: 'not_a_replica — локальной реплики нет (origin-файл или файла нет вовсе)',
+          },
           401: { $ref: '#/components/responses/Unauthorized' },
         },
       },

@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Track } from '@vision/shared';
 import { formatDuration } from '@vision/shared';
-import { api } from '../api';
+import { api, IS_LOCAL_MODE } from '../api';
 import { ensureMedia, getDownloadUrl } from '../media';
 import {
   cacheTrack, formatBytes, isOfflineCached, offlineSupported, removeOffline, useOffline,
 } from '../offline';
 import { announceReplica, sourceLabel, withdrawReplica } from '../seeds';
+import { SourcesModal } from './SourcesModal';
 import { useLibrary } from '../state/library';
 import { usePlayer } from '../state/player';
 import { Cover, Icon, useToast } from '../ui';
@@ -138,6 +139,7 @@ function TrackRow({
   const [menuOpen, setMenuOpen] = useState(false);
   const [newPlaylist, setNewPlaylist] = useState('');
   const [downloading, setDownloading] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useOffline(); // подписка: перерисоваться, когда копия появится или исчезнет
@@ -400,6 +402,22 @@ function TrackRow({
                 <Icon name="plus" size={16} />
               </button>
             </div>
+            {!IS_LOCAL_MODE && track.checksum && (
+              <button
+                type="button"
+                role="menuitem"
+                className="menu__item"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  setSourcesOpen(true);
+                }}
+              >
+                <Icon name="disc" size={15} />
+                <span>Источники файла</span>
+                {devices > 0 && <span className="menu__count">{devices}</span>}
+              </button>
+            )}
             {offlineSupported() && (
               cached ? (
                 <button
@@ -443,6 +461,14 @@ function TrackRow({
           </div>
         )}
       </div>
+
+      {sourcesOpen && (
+        <SourcesModal
+          track={track}
+          onClose={() => setSourcesOpen(false)}
+          onChanged={() => void reload()}
+        />
+      )}
     </div>
   );
 }

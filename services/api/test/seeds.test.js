@@ -294,12 +294,23 @@ describe('трекер реплик', () => {
     assert.equal(sha256(mirrored), hash);
   });
 
-  test('локальная копия пропала → снова качаем с пира, а не отдаём 404', async () => {
-    const seedDir = path.join(dirs[1], 'seed');
-    for (const file of readdirSync(seedDir)) rmSync(path.join(seedDir, file), { force: true });
+  test('удаление реплики: файл уходит, трек снова качается с пира', async () => {
+    const before = await getJson(`${B}/api/blobs/${hash}`, tokenB);
+    assert.equal(before.body.seeded, true, 'файл должен лежать в каталоге сида');
 
-    const { body } = await getJson(`${B}/api/tracks?q=Seed`, tokenB);
-    const track = body[0];
+    const { body: tracks } = await getJson(`${B}/api/tracks?q=Seed`, tokenB);
+    const track = tracks[0];
+
+    const removed = await fetch(`${B}/api/blobs/${hash}/replica`, {
+      method: 'DELETE',
+      headers: authed(tokenB),
+    });
+    assert.equal(removed.status, 204);
+
+    const after = await getJson(`${B}/api/blobs/${hash}`, tokenB);
+    assert.equal(after.body.seeded, false);
+    assert.equal(after.body.local, false);
+
     const res = await fetch(`${B}/api/tracks/${track.id}/download`, {
       headers: authed(tokenB),
       redirect: 'manual',
@@ -311,6 +322,16 @@ describe('трекер реплик', () => {
     );
   });
 
+  test('удаление не-реплики (origin-файл) запрещено', async () => {
+    const res = await fetch(`${A}/api/blobs/${hash}/replica`, {
+      method: 'DELETE',
+      headers: authed(tokenA),
+    });
+    assert.equal(res.status, 404);
+    const body = await res.json();
+    assert.equal(body.error.code, 'not_a_replica');
+  });
+
   test('снятие сида убирает его из реестра', async () => {
     const res = await fetch(`${B}/api/blobs/${hash}/seed?deviceId=desktop-1`, {
       method: 'DELETE',
@@ -320,8 +341,19 @@ describe('трекер реплик', () => {
 
     const { body } = await getJson(`${B}/api/blobs/${hash}/seeds`, tokenB);
     assert.equal(body.seeds.filter((seed) => seed.deviceId === 'desktop-1').length, 0);
-    // собственная реплика осталась живой
-    assert.ok(body.seeds.some((seed) => seed.deviceId === 'node-b' && seed.servable));
+    // реплику узла B удалили тестом выше, клиентский сид десктопа снят только что:
+    // раздающих копий в реестре не осталось
+    assert.equal(body.seeds.length, 0);
+
+    const state = await getJson(`${B}/api/blobs/${hash}`, tokenB);
+    assert.equal(state.body.seeded, false);
+
+    const seedTrack = (await getJson(`${B}/api/tracks?q=Seed`, tokenB)).body[0];
+    const download = await fetch(`${B}/api/tracks/${seedTrack.id}/download?json=1`, {
+      headers: authed(tokenB),
+    });
+    assert.equal(download.status, 409);
+    assert.equal((await download.json()).error.code, 'no_source');
   });
 
   test('здоровье и метрики знают про блобы и сиды', async () => {
