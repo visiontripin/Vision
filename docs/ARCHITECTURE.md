@@ -99,7 +99,9 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`
   для офлайн-кэша, `expo-notifications` для медиа-контролов. Общий клиент — `@vision/shared`.
 - **Desktop**: Tauri 2, `frontendDist` указывает на `apps/web/dist`; плагины: `global-shortcut`,
-  `tray-icon`, `updater`, `dialog`. Capabilities — минимальные (только окно + файлы).
+  `tray-icon`, `updater`. Capabilities — минимальные (окно, события, hotkeys, updater).
+  Трей и «свернуть в трей» — в `src-tauri/src/main.rs`, связь с плеером — `apps/web/src/desktop.ts`
+  (события `media:*` наружу, `player_state` внутрь), см. `docs/DESKTOP.md`.
 
 ## 10. Наблюдаемость и эксплуатация
 

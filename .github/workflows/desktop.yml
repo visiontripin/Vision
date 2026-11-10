@@ -1,0 +1,107 @@
+name: Desktop (Tauri)
+
+# Собирает десктопное приложение (тот же web-бандл + Rust-оболочка Tauri 2).
+#
+#   pull_request / push → проверка, что Rust собирается, и артефакт .deb/.AppImage
+#   git tag desktop-v0.2.0 && git push origin desktop-v0.2.0 → GitHub Release
+#
+# Локально Rust собирается той же командой: npm --prefix apps/desktop run build:linux
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/web/**'
+      - 'packages/shared/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop.yml'
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: '1'
+
+jobs:
+  linux:
+    name: Linux (.deb + .AppImage)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Зависимости WebKitGTK и GTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libssl-dev libfuse2
+
+      - name: Web-бандл и Node-зависимости
+        run: |
+          npm ci
+          npm --prefix apps/desktop install --no-audit --no-fund
+
+      - name: Сборка (cargo + tauri bundler)
+        run: |
+          set -uo pipefail
+          cd apps/desktop
+          if ! npx tauri build --bundles deb,appimage > /tmp/desktop-build.log 2>&1; then
+            echo "::error::Сборка Tauri упала — ниже ошибки компилятора"
+            grep -nE '^(error(\[[A-Za-z0-9]+\])?:|error: could not)' -A 5 /tmp/desktop-build.log \
+              | head -120 | while IFS= read -r line; do echo "::error::${line}"; done
+            tail -n 40 /tmp/desktop-build.log
+            exit 1
+          fi
+          tail -n 12 /tmp/desktop-build.log
+
+      - name: Проверка артефактов
+        run: |
+          set -uo pipefail
+          ls -lh apps/desktop/src-tauri/target/release/bundle/deb/ || true
+          ls -lh apps/desktop/src-tauri/target/release/bundle/appimage/ || true
+          test -n "$(ls -A apps/desktop/src-tauri/target/release/bundle/deb/*.deb 2>/dev/null)" \
+            || { echo "::error::.deb не собрался"; exit 1; }
+          echo "::notice::$(ls apps/desktop/src-tauri/target/release/bundle/deb/*.deb | xargs -n1 basename | tr '\n' ' ')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vision-desktop-linux
+          if-no-files-found: error
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Release (только по тегу desktop-v*)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
+            --title "Vision Audio Desktop ${tag#desktop-}" \
+            --notes "Десктопное приложение Vision Audio ${tag#desktop-}: тот же интерфейс, что в вебе, плюс системный трей и глобальные медиа-клавиши."
+          gh release upload "$tag" --clobber \
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb \
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
