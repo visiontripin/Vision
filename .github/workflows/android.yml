@@ -135,6 +135,8 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/$NAME"
           cd "$GITHUB_WORKSPACE"
           sha256sum "$NAME" | tee "$NAME.sha256"
+          # постоянная ссылка: имя файла не зависит от версии
+          cp "$NAME" VisionAudio-latest.apk
           SIZE=$(du -h "$NAME" | cut -f1)
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -143,6 +145,7 @@ jobs:
             echo "### Vision Audio ${VERSION} — Android APK"
             echo ""
             echo "- файл: \`${NAME}\` (${SIZE})"
+            echo "- постоянная ссылка: \`VisionAudio-latest.apk\`"
             echo "- versionCode: ${GITHUB_RUN_NUMBER}"
             echo "- установка: скачать APK на телефон → «Установить из неизвестного источника»"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -173,6 +176,8 @@ jobs:
 
           1. Скачайте \`${NAME}\` на телефон (Android 7.0+, minSdk 24).
           2. Откройте файл и разрешите установку из этого источника.
+             Постоянная ссылка на актуальную сборку (без версии в имени):
+             \`https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk\`
           3. В приложении укажите адрес сервера, например \`http://192.168.1.10:4000\`
              (или ваш Tailscale / Cloudflare-адрес) и войдите паролем \`vision\`.
 
@@ -188,10 +193,10 @@ jobs:
           EOF
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
+            gh release upload "$TAG" "$NAME" "$NAME.sha256" VisionAudio-latest.apk --clobber
             gh release edit "$TAG" --notes "$NOTES" 
           else
-            gh release create "$TAG" "$NAME" "$NAME.sha256" \
+            gh release create "$TAG" "$NAME" "$NAME.sha256" VisionAudio-latest.apk \
               --target "$GITHUB_SHA" \
               --title "Vision Audio ${VERSION} — Android APK" \
               --notes "$NOTES"

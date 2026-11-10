@@ -125,10 +125,10 @@ cd apps/mobile && npm install && npx expo start   # Expo Go на телефон�
 ```
 
 **Готовый APK** (CI, без Expo-аккаунта) — Actions → «Android APK» → Run workflow;
-файл появляется в релизе `android-v<версия>`:
+файл появляется в релизе `android-v<версия>` (и постоянная ссылка `VisionAudio-latest.apk`):
 
 ```
-https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.0-android.apk
+https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk
 ```
 
 Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`. План распределённого
