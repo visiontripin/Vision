@@ -5,10 +5,12 @@ import {
   type ExternalTrack,
   type HistoryEntry,
   type Playlist,
+  type Share,
   type Track,
 } from '@vision/shared';
 import { api, IS_LOCAL_MODE } from './api';
 import { clearOffline, formatBytes as formatOfflineBytes, setOfflineLimitMb, useOffline } from './offline';
+import { ShareModal } from './components/ShareModal';
 import { TrackList } from './components/TrackList';
 import { useLibrary } from './state/library';
 import { usePlayer } from './state/player';
@@ -360,6 +362,7 @@ export function PlaylistPage({ id, search }: { id: string; search: string }) {
   const player = usePlayer();
   const { push } = useToast();
   const [tracks, setTracks] = useState<Track[] | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const playlist = playlists.find((item) => item.id === id);
 
   useEffect(() => {
@@ -446,6 +449,10 @@ export function PlaylistPage({ id, search }: { id: string; search: string }) {
             <Icon name="play" size={16} />
             Слушать
           </button>
+          <button type="button" className="btn btn--ghost" onClick={() => setShareOpen(true)}>
+            <Icon name="share" size={16} />
+            Ссылка
+          </button>
           <button type="button" className="btn btn--ghost" onClick={removePlaylist}>
             <Icon name="trash" size={16} />
             Удалить
@@ -468,8 +475,219 @@ export function PlaylistPage({ id, search }: { id: string; search: string }) {
           emptyHint="Откройте библиотеку и добавьте треки через меню «⋯» рядом с треком."
         />
       )}
+
+      {shareOpen && playlist && (
+        <ShareModal
+          target={{
+            kind: 'playlist',
+            id: playlist.id,
+            name: playlist.name,
+            cover: visible[0] ?? null,
+          }}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </section>
   );
+}
+
+/**
+ * «Ссылки» — все приватные ссылки владельца в одном месте: что открывали, сколько
+ * раз, что истекло. Отзыв и перевыпуск здесь же; сам токен повторно не показывается
+ * (в БД только хеш), поэтому скомпрометированную ссылку именно перевыпускают.
+ */
+export function SharesPage({
+  tracksById,
+  playlists,
+}: {
+  tracksById: Map<string, Track>;
+  playlists: Playlist[];
+}) {
+  const { push } = useToast();
+  const [shares, setShares] = useState<Share[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showDead, setShowDead] = useState(false);
+
+  const load = async () => {
+    try {
+      setShares(await api.shares({ includeRevoked: true }));
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось получить ссылки', 'error');
+      setShares([]);
+    }
+  };
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) {
+      setShares([]);
+      return;
+    }
+    void load();
+  }, []);
+
+  const revoke = async (share: Share) => {
+    setBusy(share.id);
+    try {
+      await api.deleteShare(share.id);
+      push('Ссылка отозвана');
+      await load();
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось отозвать', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rotate = async (share: Share) => {
+    setBusy(share.id);
+    try {
+      const next = await api.rotateShare(share.id);
+      await navigator.clipboard.writeText(next.url).catch(() => {});
+      push('Новая ссылка скопирована, старая больше не работает');
+      await load();
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось перевыпустить', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (IS_LOCAL_MODE) {
+    return (
+      <section className="page">
+        <header className="page__head">
+          <div>
+            <h1>Ссылки</h1>
+            <p>Приватные ссылки живут на сервере</p>
+          </div>
+        </header>
+        <div className="empty">
+          <div className="empty__icon">
+            <Icon name="share" size={30} />
+          </div>
+          <h3>В локальном режиме ссылок нет</h3>
+          <p>
+            Здесь библиотека хранится в браузере, и отдать файл другу некому. Запустите сервер
+            (<code>npm start</code>) — и ссылка откроется у любого, кому вы её отправите.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  const all = shares ?? [];
+  const visible = all.filter((share) => showDead || !isDeadShare(share));
+  const deadCount = all.filter(isDeadShare).length;
+
+  return (
+    <section className="page">
+      <header className="page__head">
+        <div>
+          <h1>Ссылки</h1>
+          <p>Что вы отправили, сколько раз открыли и что уже не работает</p>
+        </div>
+        {deadCount > 0 && (
+          <div className="page__tools">
+            <button type="button" className="btn btn--ghost" onClick={() => setShowDead((value) => !value)}>
+              {showDead ? 'Скрыть неактивные' : `Показать неактивные (${deadCount})`}
+            </button>
+          </div>
+        )}
+      </header>
+
+      {shares === null && (
+        <div className="skeleton-list">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      )}
+
+      {shares !== null && visible.length === 0 && (
+        <div className="empty">
+          <div className="empty__icon">
+            <Icon name="share" size={30} />
+          </div>
+          <h3>Пока ни одной ссылки</h3>
+          <p>
+            Меню трека → «Поделиться ссылкой» или кнопка «Ссылка» на странице плейлиста.
+            Гость откроет плеер без пароля и сможет скачать файл.
+          </p>
+        </div>
+      )}
+
+      {shares !== null && visible.length > 0 && (
+        <div className="shares">
+          {visible.map((share) => {
+            const track = share.targetKind === 'track' ? tracksById.get(share.targetId) : null;
+            const playlist = share.targetKind === 'playlist'
+              ? playlists.find((item) => item.id === share.targetId)
+              : null;
+            const dead = isDeadShare(share);
+            const hits = share.stats?.hits ?? {};
+            return (
+              <div key={share.id} className={`shares__row${dead ? ' is-dead' : ''}`}>
+                {track ? (
+                  <Cover track={track} size={44} />
+                ) : (
+                  <span className="brand__mark" aria-hidden="true">
+                    <Icon name="disc" size={18} />
+                  </span>
+                )}
+                <div className="shares__meta">
+                  <strong>{share.title || track?.title || playlist?.name || 'Ссылка'}</strong>
+                  <span>
+                    {share.targetKind === 'track' ? 'трек' : 'плейлист'}
+                    {track ? ` · ${track.artist}` : playlist ? ` · ${playlist.trackCount} треков` : ' · удалено'}
+                    {' · '}
+                    {dead
+                      ? share.revokedAt
+                        ? 'отозвана'
+                        : 'истекла'
+                      : share.expiresAt
+                        ? `до ${new Date(share.expiresAt).toLocaleDateString('ru-RU')}`
+                        : 'бессрочная'}
+                  </span>
+                  <span className="muted">
+                    открытий {share.plays}
+                    {share.maxPlays ? ` из ${share.maxPlays}` : ''} · прослушиваний {hits.stream ?? 0} ·
+                    скачиваний {hits.download ?? 0} · гостей {share.stats?.visitors ?? 0}
+                  </span>
+                </div>
+                {!dead && (
+                  <div className="shares__actions">
+                    <button
+                      type="button"
+                      className="btn btn--small btn--ghost"
+                      disabled={busy === share.id}
+                      onClick={() => void rotate(share)}
+                    >
+                      Перевыпустить
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--small btn--ghost"
+                      disabled={busy === share.id}
+                      onClick={() => void revoke(share)}
+                    >
+                      Отозвать
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function isDeadShare(share: Share): boolean {
+  if (share.revokedAt) return true;
+  if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) return true;
+  if (share.maxPlays !== null && share.plays >= share.maxPlays) return true;
+  return false;
 }
 
 export function StatsPage() {

@@ -133,6 +133,22 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
+  share: (
+    <>
+      <circle cx="18" cy="5.5" r="2.5" />
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="18" cy="18.5" r="2.5" />
+      <path d="M8.2 10.8l7.6-4" />
+      <path d="M8.2 13.2l7.6 4" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M12 4v11" />
+      <path d="M7.5 11l4.5 4.5 4.5-4.5" />
+      <path d="M4 19h16" />
+    </>
+  ),
   external: (
     <>
       <path d="M14 4h6v6" />

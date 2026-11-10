@@ -12,7 +12,7 @@ import {
   deleteTrackRecord, findByChecksum, recordListen, listHistory, clearHistory,
   setCoverMime, getCoverInfo, listPlaylists, getPlaylist, stats, genres, migrationStatus,
   listExternal, getExternal, upsertExternal, updateExternalNote, deleteExternal,
-  listVariants, getVariant, deleteVariants, trackByChecksum,
+  listVariants, getVariant, deleteVariants, trackByChecksum, getShare,
 } from './db.js';
 import {
   STORAGE_MODE, SEED_ENABLED, DEVICE_ID, PUBLIC_URL, SEED_TTL_MS,
@@ -25,6 +25,12 @@ import {
   backfillVariants, enqueueTranscode, hlsPath, removeVariants, transcodeStatus, variantPath,
 } from './transcode.js';
 import { ffmpegAvailable, ffmpegVersion, resolveFfmpeg } from './ffmpeg.js';
+import {
+  ShareError, createShare, dropShareById, externalBase, guestView,
+  isActive, logShareHit, parseTtl, publicShare, renderShareGone, renderSharePage,
+  resolveShareToken, revokeForTarget, revokeShareById, rotateShare, serveGuestCover,
+  serveGuestDownload, serveGuestStream, shareList, shareUrl, updateShareFields,
+} from './shares.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
@@ -153,6 +159,17 @@ function versionedPath(pathname) {
 
 function routeKey(pathname) {
   return pathname.replace(/\/[A-Za-z0-9_-]{32}(?=\/|$)/g, '/:id');
+}
+
+/**
+ * Путь для логов. Токен приватной ссылки — это секрет доступа, поэтому в лог
+ * он не попадает: `/s/<token>/stream/<id>` пишется как `/s/:token/stream/:id`.
+ * Иначе один лог-файл (или агрегатор) становится списком рабочих ссылок.
+ */
+function logPath(pathname) {
+  return pathname
+    .replace(/^\/s\/[A-Za-z0-9_-]{20,128}/, '/s/:token')
+    .replace(/^\/api\/shares\/[a-f0-9]{32}(?=\/|$)/, '/api/shares/:id');
 }
 
 /* --------------------------------- auth --------------------------------- */
@@ -968,6 +985,121 @@ async function handleApi(req, res, url) {
     return fail(res, 404, 'not_found', 'Неизвестное действие с блобом.');
   }
 
+
+  /* ---- приватные ссылки (Фаза 6): владелец создаёт, гость только читает ---- */
+
+  if (pathname === '/api/shares') {
+    if (method === 'GET') {
+      const list = shareList({
+        targetKind: url.searchParams.get('targetKind') || undefined,
+        targetId: url.searchParams.get('targetId') || undefined,
+        includeRevoked: url.searchParams.get('includeRevoked') === '1',
+      });
+      const base = externalBase(PUBLIC_URL, req);
+      // токен не хранится, поэтому показать «готовый URL» можно только при создании
+      return json(res, 200, list.map((share) => ({ ...share, baseUrl: base })));
+    }
+
+    if (method === 'POST') {
+      const body = await readJson(req).catch(() => ({}));
+      const targetKind = String(body.targetKind || body.kind || (body.playlistId ? 'playlist' : 'track'));
+      const targetId = String(body.targetId || body.trackId || body.playlistId || '');
+      if (!/^[a-f0-9]{32}$/.test(targetId)) {
+        return fail(res, 400, 'invalid_target', 'Нужен targetKind (track|playlist) и targetId.');
+      }
+
+      let created;
+      try {
+        created = createShare({
+          targetKind,
+          targetId,
+          title: str(body.title, 120),
+          ttl: body.ttl ?? url.searchParams.get('ttl') ?? undefined,
+          maxPlays: body.maxPlays ?? null,
+        });
+      } catch (error) {
+        if (error instanceof ShareError) return fail(res, error.status, error.code, error.message);
+        throw error;
+      }
+
+      inc('vision_share_created_total', 1, { kind: targetKind });
+      const base = externalBase(PUBLIC_URL, req);
+      return json(res, 201, {
+        ...publicShare(created.share),
+        token: created.token,
+        url: shareUrl(base, created.token),
+        path: `/s/${created.token}`,
+        active: true,
+        stats: { hits: {}, visitors: 0, lastHitAt: null },
+      });
+    }
+
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
+
+  const shareMatch = /^\/api\/shares\/([a-f0-9]{32})$/.exec(pathname);
+  if (shareMatch) {
+    const shareId = shareMatch[1];
+    const share = getShare(shareId);
+    if (!share) return fail(res, 404, 'not_found', 'Ссылка не найдена.');
+
+    if (method === 'GET') {
+      return json(res, 200, {
+        ...shareList({ includeRevoked: true }).find((item) => item.id === shareId),
+        baseUrl: externalBase(PUBLIC_URL, req),
+      });
+    }
+
+    if (method === 'PATCH') {
+      const body = await readJson(req).catch(() => ({}));
+      const patch = {};
+      if ('title' in body) patch.title = str(body.title, 120);
+      if ('ttl' in body) {
+        // `ttl: null` — явное «бессрочно»; отсутствие поля — не трогаем срок
+        const ttlMs = body.ttl === null ? null : parseTtl(body.ttl);
+        patch.expiresAt = ttlMs === null ? null : new Date(Date.now() + ttlMs).toISOString();
+      }
+      if ('maxPlays' in body) {
+        // ноль и null снимают лимит: иначе 0 означал бы «закрыта сразу»
+        const limit = Number(body.maxPlays);
+        patch.maxPlays = body.maxPlays === null || !Number.isFinite(limit) || limit <= 0
+          ? null
+          : Math.min(10_000, Math.trunc(limit));
+      }
+      const updated = updateShareFields(shareId, patch);
+      return json(res, 200, { ...publicShare(updated), active: isActive(updated) });
+    }
+
+    if (method === 'DELETE') {
+      const hard = url.searchParams.get('purge') === '1';
+      if (hard) {
+        dropShareById(shareId);
+      } else {
+        revokeShareById(shareId);
+      }
+      inc('vision_share_revoked_total');
+      res.writeHead(204);
+      return res.end();
+    }
+  }
+
+  const shareRotate = /^\/api\/shares\/([a-f0-9]{32})\/rotate$/.exec(pathname);
+  if (shareRotate && method === 'POST') {
+    try {
+      const rotated = rotateShare(shareRotate[1]);
+      inc('vision_share_rotated_total');
+      return json(res, 200, {
+        ...publicShare(rotated.share),
+        token: rotated.token,
+        url: shareUrl(externalBase(PUBLIC_URL, req), rotated.token),
+        path: `/s/${rotated.token}`,
+      });
+    } catch (error) {
+      if (error instanceof ShareError) return fail(res, error.status, error.code, error.message);
+      throw error;
+    }
+  }
+
   /* ---- треки ---- */
   if (pathname === '/api/tracks') {
     if (method === 'GET') {
@@ -1047,6 +1179,7 @@ async function handleApi(req, res, url) {
       }
       deleteVariants(track.id);
       void removeVariants(track.id);
+      revokeForTarget('track', track.id);
       inc('vision_track_deleted_total');
       res.writeHead(204);
       return res.end();
@@ -1185,6 +1318,7 @@ async function handleApi(req, res, url) {
 
     if (!sub && method === 'DELETE') {
       db.prepare('DELETE FROM playlists WHERE id = ?').run(playlistId);
+      revokeForTarget('playlist', playlistId);
       res.writeHead(204);
       return res.end();
     }
@@ -1217,7 +1351,78 @@ async function handleApi(req, res, url) {
   return fail(res, 404, 'not_found', 'Маршрут не найден.');
 }
 
+
+/* --------------------------- гостевые ссылки /s/* -------------------------- */
+
+/**
+ * Гостевой маршрут знает ровно четыре вещи: страницу, поток, скачивание и
+ * обложку. Токен в пути — единственный ключ доступа; сессия владельца не нужна,
+ * но и не мешает (владелец тоже может открыть ссылку).
+ */
+function serveShare(req, res, url) {
+  const match = /^\/s\/([A-Za-z0-9_-]{20,128})(?:\/(stream|download|cover)\/([a-f0-9]{32}))?$/.exec(url.pathname);
+  if (!match) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(renderShareGone('not_found'));
+  }
+
+  const [, token, action, trackId] = match;
+  // токен в пути: не отдаём его никуда дальше (Referer, кэши, логи)
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  const resolved = resolveShareToken(token);
+  const selfBase = externalBase(PUBLIC_URL, req);
+
+  if (resolved.error) {
+    res.writeHead(resolved.status, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Robots-Tag': 'noindex',
+    });
+    return res.end(renderShareGone(resolved.error));
+  }
+
+  const share = resolved.share;
+
+  if (action === 'stream' || action === 'download') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { Allow: 'GET, HEAD' });
+      return res.end();
+    }
+    logShareHit(share, action, clientIp(req));
+    return action === 'stream'
+      ? serveGuestStream(req, res, share, trackId, { selfBase })
+      : serveGuestDownload(req, res, share, trackId, { selfBase });
+  }
+
+  if (action === 'cover') {
+    return serveGuestCover(req, res, share, trackId);
+  }
+
+  const view = guestView(share, { selfBase });
+  if (!view) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(renderShareGone('not_found'));
+  }
+
+  logShareHit(share, 'open', clientIp(req));
+  inc('vision_share_open_total', 1, { kind: share.targetKind });
+
+  const html = renderSharePage(view, { token, selfBase });
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+    'Cache-Control': 'no-store',
+    'X-Robots-Tag': 'noindex, nofollow',
+    // Страница самодостаточна: ни бандла, ни JS, ни запросов к API.
+    // media-src разрешает редирект на живой сид (другой узел роя) — локальный
+    // файл отдаётся тем же origin, но распределённое хранилище живёт на своих адресах.
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'none'; frame-ancestors *",
+  });
+  res.end(html);
+}
+
 /* --------------------------------- static --------------------------------- */
+
 
 function serveStatic(req, res, url) {
   let pathname;
@@ -1316,7 +1521,7 @@ const server = createServer(async (req, res) => {
     log('info', 'http', {
       id: requestId,
       method: req.method,
-      path: url.pathname,
+      path: logPath(url.pathname),
       status,
       ms: Math.round(durationMs),
     });
@@ -1326,6 +1531,9 @@ const server = createServer(async (req, res) => {
   try {
     if (url.pathname.startsWith('/seed/')) {
       return handleSeed(req, res, url, url.pathname);
+    }
+    if (url.pathname.startsWith('/s/')) {
+      return serveShare(req, res, url);
     }
     if (url.pathname.startsWith('/api/')) {
       const internal = versionedPath(url.pathname);

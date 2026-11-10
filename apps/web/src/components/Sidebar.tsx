@@ -9,6 +9,7 @@ const NAV = [
   { href: '#/liked', label: 'Лайкнутое', icon: 'heart' },
   { href: '#/playlists', label: 'Плейлисты', icon: 'disc' },
   { href: '#/stats', label: 'Статистика', icon: 'stats' },
+  { href: '#/shares', label: 'Ссылки', icon: 'share' },
   { href: '#/external', label: 'Из SoundCloud', icon: 'external' },
 ];
 

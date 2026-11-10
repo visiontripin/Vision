@@ -433,3 +433,154 @@ export function updateExternalNote(id, note) {
 export function deleteExternal(id) {
   return db.prepare('DELETE FROM external_tracks WHERE id = ?').run(id).changes > 0;
 }
+
+/* ------------------------------ приватные ссылки -------------------------- */
+
+function toShare(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    targetKind: row.target_kind,
+    targetId: row.target_id,
+    title: row.title ?? null,
+    expiresAt: row.expires_at ?? null,
+    maxPlays: row.max_plays ?? null,
+    plays: row.plays,
+    revokedAt: row.revoked_at ?? null,
+    lastSeenAt: row.last_seen_at ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+export function insertShare(share) {
+  db.prepare(
+    `INSERT INTO shares (id, token_hash, target_kind, target_id, title, expires_at, max_plays,
+                         plays, revoked_at, last_seen_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?)`
+  ).run(
+    share.id, share.tokenHash, share.targetKind, share.targetId,
+    share.title ?? null, share.expiresAt ?? null, share.maxPlays ?? null, share.createdAt
+  );
+  return getShare(share.id);
+}
+
+export function getShare(id) {
+  return toShare(db.prepare('SELECT * FROM shares WHERE id = ?').get(id));
+}
+
+export function getShareByTokenHash(tokenHash) {
+  return toShare(db.prepare('SELECT * FROM shares WHERE token_hash = ?').get(tokenHash));
+}
+
+/**
+ * Поиск по действующему и по предыдущему токену. Второй нужен, чтобы человек
+ * со старой ссылкой увидел «ссылка перевыпущена», а не «такой ссылки нет».
+ */
+export function findShareByTokenHash(tokenHash) {
+  const current = db.prepare('SELECT * FROM shares WHERE token_hash = ?').get(tokenHash);
+  if (current) return { share: toShare(current), previous: false };
+  const previous = db.prepare('SELECT * FROM shares WHERE prev_token_hash = ?').get(tokenHash);
+  return previous ? { share: toShare(previous), previous: true } : null;
+}
+
+/** Перевыпуск: старый хеш остаётся в prev_token_hash, новый становится рабочим. */
+export function rotateShareToken(id, tokenHash) {
+  db.prepare(
+    'UPDATE shares SET prev_token_hash = token_hash, token_hash = ? WHERE id = ?'
+  ).run(tokenHash, id);
+  return getShare(id);
+}
+
+export function listShares({ targetKind, targetId, includeRevoked = false } = {}) {
+  const clauses = [];
+  const params = [];
+  if (targetKind) {
+    clauses.push('target_kind = ?');
+    params.push(targetKind);
+  }
+  if (targetId) {
+    clauses.push('target_id = ?');
+    params.push(targetId);
+  }
+  if (!includeRevoked) clauses.push("revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)");
+  if (!includeRevoked) params.push(new Date().toISOString());
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return db
+    .prepare(`SELECT * FROM shares ${where} ORDER BY created_at DESC`)
+    .all(...params)
+    .map(toShare);
+}
+
+export function updateShare(id, patch = {}) {
+  const fields = [];
+  const values = [];
+  const map = { title: 'title', expiresAt: 'expires_at', maxPlays: 'max_plays' };
+  for (const [key, column] of Object.entries(map)) {
+    if (key in patch) {
+      fields.push(`${column} = ?`);
+      values.push(patch[key]);
+    }
+  }
+  if (!fields.length) return getShare(id);
+  values.push(id);
+  db.prepare(`UPDATE shares SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  return getShare(id);
+}
+
+export function revokeShare(id) {
+  const result = db
+    .prepare('UPDATE shares SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL')
+    .run(new Date().toISOString(), id);
+  return result.changes > 0;
+}
+
+export function deleteShare(id) {
+  return db.prepare('DELETE FROM shares WHERE id = ?').run(id).changes > 0;
+}
+
+/**
+ * Журнал обращений по ссылке. `plays` растёт только на открытие страницы:
+ * браузер делает несколько Range-запросов на один трек, и считать каждый
+ * из них «прослушиванием» значило бы врать в статистике и жечь лимит открытий.
+ */
+export function recordShareHit(id, { kind = 'open', ipHash = null } = {}) {
+  const now = new Date().toISOString();
+  db.exec('BEGIN');
+  try {
+    db.prepare(
+      `INSERT INTO share_hits (share_id, ip_hash, kind, at) VALUES (?, ?, ?, ?)`
+    ).run(id, ipHash, kind, now);
+    if (kind === 'open') {
+      db.prepare('UPDATE shares SET plays = plays + 1, last_seen_at = ? WHERE id = ?').run(now, id);
+    } else {
+      db.prepare('UPDATE shares SET last_seen_at = ? WHERE id = ?').run(now, id);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Статистика ссылки: сколько открытий и с каких адресов (только хеши). */
+export function shareStats(id) {
+  const hits = db
+    .prepare('SELECT kind, COUNT(*) AS n FROM share_hits WHERE share_id = ? GROUP BY kind')
+    .all(id);
+  const visitors = db
+    .prepare('SELECT COUNT(DISTINCT ip_hash) AS n FROM share_hits WHERE share_id = ? AND ip_hash IS NOT NULL')
+    .get(id);
+  return {
+    hits: Object.fromEntries(hits.map((row) => [row.kind, row.n])),
+    visitors: visitors?.n ?? 0,
+    lastHitAt: db.prepare('SELECT MAX(at) AS at FROM share_hits WHERE share_id = ?').get(id)?.at ?? null,
+  };
+}
+
+/** Удалённый трек/плейлист не должен оставлять рабочие ссылки. */
+export function revokeSharesForTarget(targetKind, targetId) {
+  return db
+    .prepare('UPDATE shares SET revoked_at = ? WHERE target_kind = ? AND target_id = ? AND revoked_at IS NULL')
+    .run(new Date().toISOString(), targetKind, targetId).changes;
+}

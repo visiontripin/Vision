@@ -194,6 +194,50 @@ export type HistoryEntry = {
   listenedAt: string;
 };
 
+/**
+ * Приватная ссылка на трек или плейлист (Фаза 6, E1).
+ *
+ * Токен показывается **один раз** при создании: в базе лежит только его sha256.
+ * Поэтому `token`/`url` есть в ответе `createShare`, но не в `share(id)` и не в
+ * списке — восстановить ссылку можно только перевыпуском (`rotateShare`).
+ */
+export type Share = {
+  id: string;
+  targetKind: 'track' | 'playlist';
+  targetId: string;
+  title: string | null;
+  expiresAt: string | null;
+  maxPlays: number | null;
+  plays: number;
+  revokedAt: string | null;
+  lastSeenAt: string | null;
+  createdAt: string;
+  active?: boolean;
+  stats?: {
+    hits: Record<string, number>;
+    visitors: number;
+    lastHitAt: string | null;
+  };
+  baseUrl?: string;
+};
+
+export type ShareWithToken = Share & {
+  /** одноразово: сохраните, второй раз сервер его не покажет */
+  token: string;
+  /** абсолютный URL, готовый к отправке в мессенджер */
+  url: string;
+  path: string;
+};
+
+export type ShareInput = {
+  targetKind: 'track' | 'playlist';
+  targetId: string;
+  title?: string | null;
+  /** «30m», «12h», «7d», «forever» или null — бессрочно */
+  ttl?: string | number | null;
+  maxPlays?: number | null;
+};
+
 export type TrackQuery = {
   q?: string;
   genre?: string;
@@ -353,6 +397,37 @@ export function createClient(options: ClientOptions = {}) {
     },
     deleteExternal(id: string) {
       return request<void>(`/api/external/${id}`, { method: 'DELETE' });
+    },
+
+    /* ---------------- приватные ссылки (Фаза 6, E1) ---------------- */
+
+    createShare(input: ShareInput) {
+      return request<ShareWithToken>('/api/shares', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    shares(params: { targetKind?: string; targetId?: string; includeRevoked?: boolean } = {}) {
+      const q = qs({
+        targetKind: params.targetKind,
+        targetId: params.targetId,
+        includeRevoked: params.includeRevoked ? 1 : undefined,
+      });
+      return request<Share[]>(`/api/shares${q}`);
+    },
+    share(id: string) {
+      return request<Share>(`/api/shares/${id}`);
+    },
+    updateShare(id: string, patch: { title?: string | null; ttl?: string | number | null; maxPlays?: number | null }) {
+      return request<Share>(`/api/shares/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    },
+    /** Отзыв (по умолчанию) или полное удаление записи о ссылке. */
+    deleteShare(id: string, purge = false) {
+      return request<void>(`/api/shares/${id}${purge ? '?purge=1' : ''}`, { method: 'DELETE' });
+    },
+    /** Новая ссылка вместо скомпрометированной: старая перестаёт работать сразу. */
+    rotateShare(id: string) {
+      return request<ShareWithToken>(`/api/shares/${id}/rotate`, { method: 'POST', body: '{}' });
     },
 
     history(limit = 12) {

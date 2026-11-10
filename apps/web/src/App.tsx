@@ -10,6 +10,7 @@ import {
   LikedPage,
   PlaylistPage,
   PlaylistsPage,
+  SharesPage,
   StatsPage,
 } from './pages';
 import { isTrackCached } from './offline';
@@ -87,6 +88,7 @@ function Shell() {
     void syncReplicas(tracks, isTrackCached);
   }, [tracks]);
   const player = usePlayer();
+  const { playlists } = useLibrary();
   const [search, setSearch] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
@@ -130,6 +132,9 @@ function Shell() {
     if (route === '/liked') return <LikedPage />;
     if (route === '/playlists') return <PlaylistsPage />;
     if (route === '/stats') return <StatsPage />;
+    if (route === '/shares') {
+      return <SharesPage tracksById={new Map(tracks.map((track) => [track.id, track]))} playlists={playlists} />;
+    }
     if (route === '/external') return <ExternalPage />;
     return <LibraryPage search={search} onUpload={openUpload} />;
   })();
@@ -180,6 +185,7 @@ function Shell() {
           <a href="#/playlists" className={route.startsWith('/playlists') ? 'is-active' : ''}>Плейлисты</a>
           <a href="#/stats" className={route === '/stats' ? 'is-active' : ''}>Статистика</a>
           <a href="#/external" className={route === '/external' ? 'is-active' : ''}>SoundCloud</a>
+          <a href="#/shares" className={route === '/shares' ? 'is-active' : ''}>Ссылки</a>
         </nav>
 
         {error && (

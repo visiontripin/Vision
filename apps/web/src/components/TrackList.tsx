@@ -7,6 +7,7 @@ import {
   cacheTrack, formatBytes, isTrackCached, offlineSupported, removeTrackCopy, useOffline,
 } from '../offline';
 import { announceReplica, sourceLabel, withdrawReplica } from '../seeds';
+import { ShareModal } from './ShareModal';
 import { SourcesModal } from './SourcesModal';
 import { useLibrary } from '../state/library';
 import { usePlayer } from '../state/player';
@@ -140,6 +141,7 @@ function TrackRow({
   const [newPlaylist, setNewPlaylist] = useState('');
   const [downloading, setDownloading] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useOffline(); // подписка: перерисоваться, когда копия появится или исчезнет
@@ -403,6 +405,19 @@ function TrackRow({
                 <Icon name="plus" size={16} />
               </button>
             </div>
+            <button
+              type="button"
+              role="menuitem"
+              className="menu__item"
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen(false);
+                setShareOpen(true);
+              }}
+            >
+              <Icon name="share" size={15} />
+              <span>Поделиться ссылкой</span>
+            </button>
             {!IS_LOCAL_MODE && track.checksum && (
               <button
                 type="button"
@@ -462,6 +477,13 @@ function TrackRow({
           </div>
         )}
       </div>
+
+      {shareOpen && (
+        <ShareModal
+          target={{ kind: 'track', track }}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
 
       {sourcesOpen && (
         <SourcesModal

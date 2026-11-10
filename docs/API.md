@@ -1,4 +1,4 @@
-# API v0.11.0
+# API v0.12.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -9,6 +9,64 @@
 и подписанных медиа-ссылок (у них своя HMAC-подпись в query).
 Ошибки: `{ "error": { "code": "string", "message": "string" } }` + HTTP-статус.
 Каждый ответ содержит `X-Request-Id`, тот же идентификатор пишется в структурный лог.
+
+## Приватные ссылки (Фаза 6)
+
+Ссылка открывается без пароля и отдаёт гостю **только** трек или плейлист, на который
+она выдана. Токен показывается один раз: в базе лежит `sha256(token)`, поэтому
+восстановить адрес нельзя — только перевыпустить. Модель и компромиссы — ADR 0007.
+
+### POST /api/shares
+```json
+{ "targetKind": "track", "targetId": "0b4d…", "title": "для Димы",
+  "ttl": "7d", "maxPlays": 5 }
+```
+`targetKind`: `track` | `playlist`. `ttl`: `30m`, `12h`, `7d`, `forever` или число мс;
+по умолчанию `SHARE_DEFAULT_TTL_MS` (7 дней), максимум год. `maxPlays` — лимит открытий
+страницы (`null` — без лимита).
+
+→ `201`
+```json
+{ "id": "…", "targetKind": "track", "targetId": "0b4d…", "title": "для Димы",
+  "expiresAt": "2026-11-17T20:17:21.487Z", "maxPlays": 5, "plays": 0,
+  "revokedAt": null, "lastSeenAt": null,
+  "token": "4qPK_wyw7gQkG7n5pTyqCesDM3wXfO4r16Yl9MjWrNE",
+  "url": "https://audio.example.com/s/4qPK…", "path": "/s/4qPK…", "active": true }
+```
+Токен — единственный раз, когда сервер его показывает. `404 target_not_found`,
+`400 invalid_kind/invalid_target`.
+
+### GET /api/shares?targetKind=&targetId=&includeRevoked=1
+Список ссылок владельца без токенов, с `stats`:
+`{ hits: { open, stream, download }, visitors, lastHitAt }` и `active`.
+
+### GET /api/shares/:id → `200 Share`
+### PATCH /api/shares/:id
+`{ "title"?: string|null, "ttl"?: string|null, "maxPlays"?: number|null }` — продлить,
+переименовать, снять лимит. `ttl: null` — бессрочно; `maxPlays: 0` или `null` — без лимита
+(отсутствие поля значение не меняет). → `200 Share`
+### DELETE /api/shares/:id → `204`
+Отзыв (мгновенный). `?purge=1` — удалить запись вместе с журналом открытий.
+### POST /api/shares/:id/rotate → `200` с новым `token`/`url`
+Старый адрес сразу отвечает `410 rotated` (не `404`: человек должен понять, что ссылку
+перевыпустили, а не что она потерялась).
+
+### Гостевые маршруты (без токена и без сессии)
+| Маршрут | Ответ |
+|---|---|
+| `GET /s/:token` | HTML-страница: плеер, список треков плейлиста, «Скачать», OG-теги. `noindex`, CSP `default-src 'none'` |
+| `GET /s/:token/stream/:trackId` | Аудио с Range: `200/206`, `HEAD`, `ETag`. Нет локального файла → `302` на живой сид, нет сидов → `409 no_source` |
+| `GET /s/:token/download/:trackId` | Файл с `Content-Disposition: attachment`, либо `302` на сид |
+| `GET /s/:token/cover/:trackId` | Обложка (для OG-карточки) |
+
+`403 forbidden` — трек не входит в ссылку (для ссылки на плейлист проверяется состав).
+`410` + человеческий текст — `revoked`, `rotated`, `expired`, `exhausted`. `404` — токена нет.
+Открытия страницы инкрементируют `plays`; `stream`/`download` пишутся только в журнал,
+поэтому браузер с десятком Range-запросов не съедает лимит.
+
+### Метрики
+`vision_share_created_total{kind}`, `vision_share_open_total{kind}`,
+`vision_share_revoked_total`, `vision_share_rotated_total`.
 
 ## Медиа и подписи
 
@@ -307,6 +365,8 @@ Body: изображение (jpeg/png/webp, ≤ 8 МБ). → `204`
 | `METRICS_TOKEN` | — | закрыть `/metrics` |
 | `WEB_DIST` | `apps/web/dist` | статика веб-клиента |
 | `LOG_FORMAT` | `json` при `NODE_ENV=production` | структурные логи |
+| `SHARE_DEFAULT_TTL_MS` | `604800000` (7 дней) | срок жизни ссылки по умолчанию |
+| `PUBLIC_URL` | из заголовков запроса | публичный адрес для ссылок и OG-тегов (нужен за прокси) |
 
 ## Версионирование
 

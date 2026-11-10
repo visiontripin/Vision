@@ -25,6 +25,7 @@ export const OPENAPI = {
     { name: 'playlists' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
+    { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
     { name: 'system' },
   ],
   security: [{ bearerAuth: [] }],
@@ -39,6 +40,46 @@ export const OPENAPI = {
       },
     },
     schemas: {
+      Share: {
+        type: 'object',
+        required: ['id', 'targetKind', 'targetId', 'plays', 'createdAt'],
+        properties: {
+          id: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+          targetKind: { type: 'string', enum: ['track', 'playlist'] },
+          targetId: { type: 'string' },
+          title: { type: ['string', 'null'] },
+          expiresAt: { type: ['string', 'null'], format: 'date-time' },
+          maxPlays: { type: ['integer', 'null'] },
+          plays: { type: 'integer', description: 'Открытия страницы (не Range-запросы)' },
+          revokedAt: { type: ['string', 'null'], format: 'date-time' },
+          lastSeenAt: { type: ['string', 'null'], format: 'date-time' },
+          createdAt: { type: 'string', format: 'date-time' },
+          active: { type: 'boolean' },
+          stats: {
+            type: 'object',
+            properties: {
+              hits: { type: 'object', additionalProperties: { type: 'integer' }, examples: [{ open: 3, stream: 7, download: 1 }] },
+              visitors: { type: 'integer', description: 'Уникальные адреса (хранятся как HMAC-хеши)' },
+              lastHitAt: { type: ['string', 'null'] },
+            },
+          },
+          baseUrl: { type: 'string' },
+        },
+      },
+      ShareWithToken: {
+        allOf: [
+          { $ref: '#/components/schemas/Share' },
+          {
+            type: 'object',
+            required: ['token', 'url'],
+            properties: {
+              token: { type: 'string', description: 'Показывается один раз' },
+              url: { type: 'string', description: 'Абсолютный адрес /s/<token>' },
+              path: { type: 'string' },
+            },
+          },
+        ],
+      },
       Error: {
         type: 'object',
         required: ['error'],
@@ -586,6 +627,105 @@ export const OPENAPI = {
           200: { description: 'JSON с адресом и сидами (?json=1)' },
           401: { $ref: '#/components/responses/Unauthorized' },
           409: { $ref: '#/components/responses/NoSource' },
+        },
+      },
+    },
+    '/shares': {
+      post: {
+        tags: ['shares'],
+        summary: 'Создать приватную ссылку на трек или плейлист',
+        description:
+          'Токен возвращается один раз: в базе хранится только его sha256. ' +
+          'Гость открывает /s/<token> без аккаунта и получает только эту цель.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['targetKind', 'targetId'],
+                properties: {
+                  targetKind: { type: 'string', enum: ['track', 'playlist'] },
+                  targetId: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+                  title: { type: ['string', 'null'], description: 'Подпись владельца, не видна гостю в ссылке' },
+                  ttl: {
+                    type: 'string',
+                    examples: ['1h', '24h', '7d', 'forever'],
+                    description: 'Срок жизни; по умолчанию SHARE_DEFAULT_TTL_MS (7 дней), «forever» — бессрочно',
+                  },
+                  maxPlays: { type: ['integer', 'null'], description: 'Лимит открытий страницы' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Ссылка создана',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ShareWithToken' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'Трек или плейлист не найден (target_not_found)' },
+        },
+      },
+      get: {
+        tags: ['shares'],
+        summary: 'Все ссылки владельца (включая отозванные)',
+        parameters: [
+          { name: 'targetKind', in: 'query', schema: { type: 'string', enum: ['track', 'playlist'] } },
+          { name: 'targetId', in: 'query', schema: { type: 'string' } },
+          { name: 'includeRevoked', in: 'query', schema: { type: 'string', enum: ['1'] } },
+        ],
+        responses: {
+          200: {
+            description: 'Список без токенов (их нельзя восстановить, только перевыпустить)',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/Share' } },
+              },
+            },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/shares/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: {
+        tags: ['shares'],
+        summary: 'Одна ссылка со статистикой',
+        responses: {
+          200: { description: 'OK', content: { 'application/json': { schema: { $ref: '#/components/schemas/Share' } } } },
+          404: { description: 'Не найдена' },
+        },
+      },
+      patch: {
+        tags: ['shares'],
+        summary: 'Изменить подпись, срок жизни или лимит открытий',
+        responses: {
+          200: { description: 'Обновлённая ссылка' },
+          404: { description: 'Не найдена' },
+        },
+      },
+      delete: {
+        tags: ['shares'],
+        summary: 'Отозвать ссылку (?purge=1 — удалить запись и журнал)',
+        parameters: [{ name: 'purge', in: 'query', schema: { type: 'string', enum: ['1'] } }],
+        responses: { 204: { description: 'Отозвана' } },
+      },
+    },
+    '/shares/{id}/rotate': {
+      post: {
+        tags: ['shares'],
+        summary: 'Перевыпустить токен: старая ссылка сразу отвечает 410',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'Новый токен (единственный раз)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ShareWithToken' } } },
+          },
+          404: { description: 'Не найдена' },
         },
       },
     },
