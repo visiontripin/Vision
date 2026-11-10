@@ -2,7 +2,7 @@
   "expo": {
     "name": "Vision Audio",
     "slug": "vision-audio",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "scheme": "visionaudio",
     "userInterfaceStyle": "dark",
@@ -11,12 +11,16 @@
       "backgroundColor": "#07070A",
       "resizeMode": "contain"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.vision.audio",
       "infoPlist": {
-        "UIBackgroundModes": ["audio"],
+        "UIBackgroundModes": [
+          "audio"
+        ],
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -34,7 +38,9 @@
       ],
       "usesCleartextTraffic": true
     },
-    "plugins": ["expo-av"],
+    "plugins": [
+      "expo-av"
+    ],
     "extra": {
       "apiUrl": "http://10.0.2.2:4000"
     }
