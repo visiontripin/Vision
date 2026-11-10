@@ -12,7 +12,8 @@
 📦 продукт         →  docs/PRODUCT.md    (scope, сценарии, критерии приёмки)
 🏗  архитектура     →  docs/ARCHITECTURE.md
 🔌 контракт API    →  docs/API.md
-🗺  план            →  docs/ROADMAP.md
+🗺  план            →  docs/IMPROVEMENTS.md  (улучшения, оптимизации, дорожная карта v2)
+🔍 разбор рынка     →  docs/research/SOUNDCLOUD-TEARDOWN.md
 🚀 эксплуатация     →  docs/RUNBOOK.md
 ```
 
