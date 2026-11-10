@@ -12,6 +12,7 @@
 📦 продукт         →  docs/PRODUCT.md    (scope, сценарии, критерии приёмки)
 🏗  архитектура     →  docs/ARCHITECTURE.md
 🔌 контракт API    →  docs/API.md
+🎧 про контент      →  docs/CONTENT.md
 🗺  план            →  docs/IMPROVEMENTS.md  (улучшения, оптимизации, дорожная карта v2)
 🔍 разбор рынка     →  docs/research/SOUNDCLOUD-TEARDOWN.md
 🚀 эксплуатация     →  docs/RUNBOOK.md
@@ -42,7 +43,7 @@ Web-версия умеет работать **полностью в брауз�
 | Платформа | Технология | Состояние |
 |-----------|-----------|-----------|
 | Web | React 19 + TS + Vite | ✅ MVP работает: вход, загрузка с волной, библиотека, поиск, плеер, плейлисты, лайки, статистика. Есть локальный режим (IndexedDB) для GitHub Pages |
-| API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.3.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, `/api/v1` + OpenAPI |
+| API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.4.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, `/api/v1` + OpenAPI, закладки SoundCloud |
 | Android / iOS | React Native (Expo) | 🟡 каркас + вход/библиотека/плеер, нужны сборки и фоновое аудио |
 | Windows / Linux | Tauri 2 | 🟡 каркас + медиа-клавиши, нужна сборка на целевых ОС |
 

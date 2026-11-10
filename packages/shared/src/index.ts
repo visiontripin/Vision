@@ -58,6 +58,28 @@ export type MediaMap = {
   items: Record<string, MediaItem>;
 };
 
+/**
+ * Ссылка на трек во внешнем сервисе. Аудио у нас не хранится: воспроизведение
+ * идёт через официальный встроенный плеер источника.
+ */
+export type ExternalTrack = {
+  id: string;
+  source: 'soundcloud' | string;
+  permalink: string;
+  title: string;
+  artist: string | null;
+  artwork: string | null;
+  embedUrl: string;
+  duration: number;
+  note: string | null;
+  createdAt: string;
+};
+
+export type ImportResult = {
+  added: (ExternalTrack & { created: boolean })[];
+  failed: { url: string; code: string; message: string }[];
+};
+
 export type HistoryEntry = {
   track: Track;
   position: number;
@@ -208,6 +230,26 @@ export function createClient(options: ClientOptions = {}) {
         body: JSON.stringify(payload),
       });
     },
+    /* внешние источники — только метаданные и официальный виджет */
+    external(limit = 200) {
+      return request<ExternalTrack[]>(`/api/external?limit=${limit}`);
+    },
+    importExternal(urls: string[]) {
+      return request<ImportResult>('/api/external', {
+        method: 'POST',
+        body: JSON.stringify({ urls }),
+      });
+    },
+    updateExternal(id: string, note: string | null) {
+      return request<ExternalTrack>(`/api/external/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ note }),
+      });
+    },
+    deleteExternal(id: string) {
+      return request<void>(`/api/external/${id}`, { method: 'DELETE' });
+    },
+
     history(limit = 12) {
       return request<HistoryEntry[]>(`/api/history?limit=${limit}`);
     },

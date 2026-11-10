@@ -11,7 +11,9 @@ import {
   getTrack, getTrackFile, listTracks, countTracks, insertTrack, updateTrackFields,
   deleteTrackRecord, findByChecksum, recordListen, listHistory, clearHistory,
   setCoverMime, getCoverInfo, listPlaylists, getPlaylist, stats, genres, migrationStatus,
+  listExternal, getExternal, upsertExternal, updateExternalNote, deleteExternal,
 } from './db.js';
+import { ImportError, resolveSoundCloudLink } from './external.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -27,8 +29,11 @@ const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_UPLOAD = 500 * 1024 * 1024;
 const MAX_COVER = 8 * 1024 * 1024;
+// Разрешаем только официальный виджет SoundCloud: он играет со своих серверов,
+// наших файлов и нашего трафика это не касается.
 const SECURITY_TXT = 'default-src \'self\'; img-src \'self\' data: blob:; media-src \'self\' blob:; '
   + 'style-src \'self\' \'unsafe-inline\'; script-src \'self\'; connect-src \'self\'; font-src \'self\'; '
+  + 'frame-src https://w.soundcloud.com https://soundcloud.com; '
   + 'frame-ancestors *; base-uri \'self\'; form-action \'self\'';
 
 const MIME = {
@@ -482,6 +487,66 @@ async function handleApi(req, res, url) {
   }
 
   /* ---- подписанные медиа-ссылки ---- */
+  /* ---- внешние источники (метаданные + официальный виджет) ---- */
+  if (pathname === '/api/external') {
+    if (method === 'GET') {
+      return json(res, 200, listExternal(Number(url.searchParams.get('limit')) || 200));
+    }
+
+    if (method === 'POST') {
+      let body;
+      try {
+        body = await readJson(req);
+      } catch {
+        return fail(res, 400, 'invalid_json', 'Ожидался JSON вида { "urls": ["..."] }.');
+      }
+
+      const raw = Array.isArray(body.urls) ? body.urls : body.url ? [body.url] : [];
+      const urls = raw.map((value) => String(value ?? '').trim()).filter(Boolean);
+      if (!urls.length) return fail(res, 400, 'no_urls', 'Добавьте хотя бы одну ссылку.');
+      if (urls.length > 50) return fail(res, 400, 'too_many_urls', 'За один раз — не больше 50 ссылок.');
+
+      const added = [];
+      const failed = [];
+      for (const link of urls) {
+        try {
+          // только метаданные: аудио не скачиваем и не проксируем
+          const resolved = await resolveSoundCloudLink(link);
+          const record = upsertExternal(resolved);
+          added.push(record);
+          inc('vision_external_import_total', 1, { result: record.created ? 'created' : 'updated' });
+        } catch (error) {
+          if (!(error instanceof ImportError)) throw error;
+          failed.push({ url: link, code: error.code, message: error.message });
+          inc('vision_external_import_total', 1, { result: 'failed' });
+        }
+      }
+
+      return json(res, added.length ? 201 : 400, { added, failed });
+    }
+
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
+
+  const externalMatch = /^\/api\/external\/([A-Za-z0-9_-]{8,64})$/.exec(pathname);
+  if (externalMatch) {
+    const id = externalMatch[1];
+    const record = getExternal(id);
+    if (!record) return fail(res, 404, 'not_found', 'Ссылка не найдена.');
+
+    if (method === 'PATCH') {
+      const body = await readJson(req).catch(() => ({}));
+      const note = body.note === null ? null : str(body.note, 300);
+      return json(res, 200, updateExternalNote(id, note));
+    }
+
+    if (method === 'DELETE') {
+      deleteExternal(id);
+      res.writeHead(204);
+      return res.end();
+    }
+  }
+
   if (pathname === '/api/media' && method === 'GET') {
     const ids = (url.searchParams.get('ids') || '')
       .split(',')

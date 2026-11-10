@@ -2365,3 +2365,166 @@ select:focus {
     padding-right: 14px;
   }
 }
+
+/* ====================== импорт ссылок и внешние треки ==================== */
+
+.import {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  margin-bottom: 22px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.import__label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.import__area {
+  width: 100%;
+  resize: vertical;
+  min-height: 78px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.import__area:focus-visible {
+  outline: 2px solid rgba(255, 118, 46, 0.5);
+  outline-offset: 1px;
+}
+
+.import__actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.import__hint {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 58ch;
+}
+
+.import__errors {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  list-style: none;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 96, 96, 0.35);
+  background: rgba(255, 96, 96, 0.08);
+  font-size: 12.5px;
+  color: #ffb3b3;
+}
+
+.import__errors code {
+  color: #ffd9d9;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.external-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.external {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.external.is-open {
+  border-color: rgba(255, 118, 46, 0.4);
+}
+
+.external__cover {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 20px;
+}
+
+.external__body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.external__title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.external__artist {
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.external__badge {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.external__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.external__player {
+  grid-column: 1 / -1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+}
+
+.external__player iframe {
+  display: block;
+  border: 0;
+}
+
+@media (max-width: 760px) {
+  .external {
+    grid-template-columns: 48px minmax(0, 1fr);
+    row-gap: 10px;
+  }
+
+  .external__cover {
+    width: 48px;
+    height: 48px;
+    font-size: 17px;
+  }
+
+  .external__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}

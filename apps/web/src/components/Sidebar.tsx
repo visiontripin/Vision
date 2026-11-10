@@ -9,6 +9,7 @@ const NAV = [
   { href: '#/liked', label: 'Лайкнутое', icon: 'heart' },
   { href: '#/playlists', label: 'Плейлисты', icon: 'disc' },
   { href: '#/stats', label: 'Статистика', icon: 'stats' },
+  { href: '#/external', label: 'Из SoundCloud', icon: 'external' },
 ];
 
 export function Sidebar({ route, onUpload }: { route: string; onUpload: () => void }) {

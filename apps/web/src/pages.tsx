@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { formatBytes, formatDuration, type HistoryEntry, type Playlist, type Track } from '@vision/shared';
+import {
+  formatBytes,
+  formatDuration,
+  type ExternalTrack,
+  type HistoryEntry,
+  type Playlist,
+  type Track,
+} from '@vision/shared';
 import { api, IS_LOCAL_MODE } from './api';
 import { TrackList } from './components/TrackList';
 import { useLibrary } from './state/library';
@@ -546,6 +553,238 @@ export function StatsPage() {
           </dl>
         </div>
       </div>
+    </section>
+  );
+}
+
+/* ---------------------- внешние ссылки (SoundCloud) ---------------------- */
+
+/**
+ * «Чужие» треки: у нас только метаданные, звук отдаёт официальный плеер
+ * источника со своих серверов. Никакого скачивания и проксирования.
+ */
+export function ExternalPage() {
+  const { push } = useToast();
+  const [items, setItems] = useState<ExternalTrack[]>([]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<{ url: string; code: string; message: string }[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!IS_LOCAL_MODE);
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) return;
+    let alive = true;
+    api
+      .external()
+      .then((list) => {
+        if (alive) setItems(list);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const urls = input
+      .split(/[\n,]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!urls.length) return;
+
+    setBusy(true);
+    setFailed([]);
+    try {
+      const result = await api.importExternal(urls);
+      setItems((prev) => {
+        const known = new Set(prev.map((item) => item.id));
+        return [...result.added.filter((item) => !known.has(item.id)), ...prev];
+      });
+      setFailed(result.failed);
+      setInput('');
+      const updated = result.added.filter((item) => !item.created).length;
+      if (result.added.length) {
+        push(
+          updated
+            ? `Добавлено ${result.added.length - updated}, обновлено ${updated}`
+            : `Добавлено ссылок: ${result.added.length}`
+        );
+      }
+      if (!result.added.length && result.failed.length) push(result.failed[0].message, 'error');
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось добавить ссылки', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (item: ExternalTrack) => {
+    try {
+      await api.deleteExternal(item.id);
+      setItems((prev) => prev.filter((entry) => entry.id !== item.id));
+      if (openId === item.id) setOpenId(null);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось удалить ссылку', 'error');
+    }
+  };
+
+  if (IS_LOCAL_MODE) {
+    return (
+      <section className="page">
+        <header className="page__head">
+          <div>
+            <h1>Из SoundCloud</h1>
+            <p>Раздел работает в режиме с сервером — в статической версии внешние ссылки не хранятся.</p>
+          </div>
+        </header>
+        <div className="empty">
+          <div className="empty__icon">
+            <Icon name="external" size={34} />
+          </div>
+          <h3>Нужен сервер Vision Audio</h3>
+          <p>
+            Запустите <code>npm start</code> и откройте приложение по адресу API — тогда ссылки
+            на треки SoundCloud можно будет собирать в отдельную полку.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="page">
+      <header className="page__head">
+        <div>
+          <h1>Из SoundCloud</h1>
+          <p>{items.length} внешних ссылок · звук играет официальный плеер источника</p>
+        </div>
+      </header>
+
+      <form className="import" onSubmit={submit}>
+        <label className="import__label" htmlFor="import-urls">
+          Ссылки на треки или плейлисты — по одной в строке
+        </label>
+        <textarea
+          id="import-urls"
+          className="import__area"
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder={'https://soundcloud.com/artist/track\nhttps://soundcloud.com/artist/sets/playlist'}
+          rows={3}
+          spellCheck={false}
+        />
+        <div className="import__actions">
+          <button type="submit" className="btn btn--primary" disabled={busy || !input.trim()}>
+            <Icon name="plus" size={16} />
+            {busy ? 'Проверяем ссылки…' : 'Добавить'}
+          </button>
+          <span className="import__hint">
+            Сохраняются только название, автор и код официального плеера. Аудио не скачивается.
+          </span>
+        </div>
+      </form>
+
+      {failed.length > 0 && (
+        <ul className="import__errors" role="alert">
+          {failed.map((item) => (
+            <li key={item.url}>
+              <code>{item.url}</code> — {item.message}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {loading ? (
+        <div className="skeleton-list">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="empty">
+          <div className="empty__icon">
+            <Icon name="external" size={34} />
+          </div>
+          <h3>Пока ни одной ссылки</h3>
+          <p>
+            Вставьте ссылку на публичный трек — появится карточка с кнопкой «Слушать». Трек
+            останется на серверах SoundCloud, а у нас будет только закладка.
+          </p>
+        </div>
+      ) : (
+        <div className="external-grid">
+          {items.map((item) => {
+            const hue = (item.title.charCodeAt(0) * 37 + item.title.length * 13) % 360;
+            const open = openId === item.id;
+            return (
+              <article key={item.id} className={`external${open ? ' is-open' : ''}`}>
+                <div
+                  className="external__cover"
+                  style={{ background: `linear-gradient(135deg, hsl(${hue} 62% 30%), hsl(${(hue + 50) % 360} 60% 16%))` }}
+                  aria-hidden="true"
+                >
+                  {item.title.slice(0, 1).toUpperCase()}
+                </div>
+
+                <div className="external__body">
+                  <strong className="external__title" title={item.title}>
+                    {item.title}
+                  </strong>
+                  <span className="external__artist">{item.artist ?? 'Неизвестный автор'}</span>
+                  <span className="external__badge">SoundCloud · не хранится у нас</span>
+                </div>
+
+                <div className="external__actions">
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    aria-expanded={open}
+                    onClick={() => setOpenId(open ? null : item.id)}
+                  >
+                    <Icon name={open ? 'pause' : 'play'} size={14} />
+                    {open ? 'Свернуть' : 'Слушать'}
+                  </button>
+                  <a
+                    className="btn btn--ghost btn--sm"
+                    href={item.permalink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Открыть
+                    <Icon name="external" size={13} />
+                  </a>
+                  <button
+                    type="button"
+                    className="iconbtn"
+                    aria-label={`Удалить ссылку ${item.title}`}
+                    onClick={() => void remove(item)}
+                  >
+                    <Icon name="trash" size={15} />
+                  </button>
+                </div>
+
+                {open && (
+                  <div className="external__player">
+                    <iframe
+                      title={`Плеер SoundCloud: ${item.title}`}
+                      width="100%"
+                      height={166}
+                      loading="lazy"
+                      allow="autoplay; encrypted-media"
+                      src={item.embedUrl}
+                    />
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
