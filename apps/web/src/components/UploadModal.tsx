@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { formatBytes, formatDuration } from '@vision/shared';
+import { formatBytes, formatDuration, VisionError } from '@vision/shared';
+import { analyze, isAudioFile, parseName } from '../audio';
 import { api } from '../api';
+import { filesFromDataTransfer } from '../bulk/drop';
+import { extractAudioFromZip, isZipFile } from '../bulk/zip';
 import { useLibrary } from '../state/library';
 import { Icon, useToast } from '../ui';
 
-type Status = 'decoding' | 'ready' | 'uploading' | 'done' | 'error';
+type Status = 'decoding' | 'ready' | 'uploading' | 'done' | 'duplicate' | 'error';
 
 type Item = {
   key: string;
@@ -17,71 +20,6 @@ type Item = {
   progress: number;
   error?: string;
 };
-
-const AUDIO_RE = /\.(mp3|wav|flac|ogg|oga|m4a|aac|webm|aiff|aif)$/i;
-
-function parseName(filename: string): { title: string; artist: string } {
-  const base = filename.replace(/\.[a-z0-9]+$/i, '').replace(/_/g, ' ').trim();
-  const parts = base.split(/\s+-\s+/);
-  if (parts.length >= 2) {
-    return { artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim() };
-  }
-  return { title: base || 'Без названия', artist: 'Unknown' };
-}
-
-/** Длительность + 180 нормализованных пиков через Web Audio API. */
-async function analyze(file: File): Promise<{ duration: number; peaks: number[] | null }> {
-  let duration = 0;
-  let peaks: number[] | null = null;
-
-  try {
-    const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (file.size < 160 * 1024 * 1024) {
-      const context = new Ctor();
-      const buffer = await context.decodeAudioData(await file.arrayBuffer());
-      const channel = buffer.getChannelData(0);
-      const count = 180;
-      const block = Math.max(1, Math.floor(channel.length / count));
-      const raw: number[] = [];
-      let max = 0;
-      for (let i = 0; i < count; i += 1) {
-        const start = i * block;
-        const end = Math.min(channel.length, start + block);
-        let sum = 0;
-        let samples = 0;
-        for (let j = start; j < end; j += 8) {
-          sum += channel[j] * channel[j];
-          samples += 1;
-        }
-        const rms = Math.sqrt(sum / Math.max(1, samples));
-        raw.push(rms);
-        if (rms > max) max = rms;
-      }
-      peaks = max > 0 ? raw.map((value) => Math.max(0.04, Number((value / max).toFixed(3)))) : raw;
-      duration = buffer.duration;
-      await context.close();
-    }
-  } catch {
-    peaks = null;
-  }
-
-  if (!duration) {
-    duration = await new Promise<number>((resolve) => {
-      const url = URL.createObjectURL(file);
-      const audio = new Audio();
-      audio.preload = 'metadata';
-      const done = (value: number) => {
-        URL.revokeObjectURL(url);
-        resolve(value);
-      };
-      audio.onloadedmetadata = () => done(Number.isFinite(audio.duration) ? audio.duration : 0);
-      audio.onerror = () => done(0);
-      audio.src = url;
-    });
-  }
-
-  return { duration, peaks };
-}
 
 export function UploadModal({
   open,
@@ -101,7 +39,9 @@ export function UploadModal({
   const [album, setAlbum] = useState('');
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [unpacking, setUnpacking] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
   useEffect(() => {
@@ -110,6 +50,7 @@ export function UploadModal({
       setGenre('');
       setAlbum('');
       setBusy(false);
+      setUnpacking(false);
     }
   }, [open]);
 
@@ -126,38 +67,69 @@ export function UploadModal({
     };
   }, [open, busy, onClose]);
 
-  const addFiles = useCallback(async (files: FileList | File[]) => {
-    const list = Array.from(files).filter((file) => AUDIO_RE.test(file.name) || file.type.startsWith('audio/'));
-    if (!list.length) {
-      push('Поддерживаются mp3, wav, flac, ogg, m4a', 'error');
-      return;
-    }
+  const addFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const incoming = Array.from(files);
+      const zips = incoming.filter(isZipFile);
+      const plain = incoming.filter((file) => !isZipFile(file) && isAudioFile(file));
 
-    const prepared: Item[] = list.map((file) => {
-      const { title, artist } = parseName(file.name);
-      return {
-        key: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 8)}`,
-        file,
-        title,
-        artist,
-        duration: 0,
-        peaks: null,
-        status: 'decoding',
-        progress: 0,
-      };
-    });
+      const expanded: File[] = [...plain];
+      const artistHints: Record<string, string> = {};
+      let skipped = 0;
 
-    setItems((prev) => [...prev, ...prepared]);
+      if (zips.length) {
+        setUnpacking(true);
+        try {
+          for (const zip of zips) {
+            try {
+              const result = await extractAudioFromZip(zip);
+              expanded.push(...result.files);
+              Object.assign(artistHints, result.artistHints);
+              skipped += result.skipped;
+              if (result.truncated) push(`Из ${zip.name} взяли первые 2000 треков`, 'error');
+            } catch (error) {
+              push(error instanceof Error ? error.message : `Не удалось прочитать ${zip.name}`, 'error');
+            }
+          }
+        } finally {
+          setUnpacking(false);
+        }
+      }
 
-    for (const item of prepared) {
-      const result = await analyze(item.file);
-      setItems((prev) =>
-        prev.map((entry) =>
-          entry.key === item.key ? { ...entry, ...result, status: 'ready' } : entry
-        )
-      );
-    }
-  }, [push]);
+      if (!expanded.length) {
+        push('Поддерживаются mp3, wav, flac, ogg, m4a — или .zip с ними', 'error');
+        return;
+      }
+      if (skipped) push(`В архивах пропущено файлов: ${skipped}`);
+
+      const prepared: Item[] = expanded.map((file, index) => {
+        const parsed = parseName(file.name);
+        const hint = artistHints[file.name];
+        const title = parsed.title;
+        const artist = parsed.artist === 'Unknown' && hint ? hint : parsed.artist;
+        return {
+          key: `${file.name}-${file.size}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+          file,
+          title,
+          artist,
+          duration: 0,
+          peaks: null,
+          status: 'decoding',
+          progress: 0,
+        };
+      });
+
+      setItems((prev) => [...prev, ...prepared]);
+
+      for (const item of prepared) {
+        const result = await analyze(item.file);
+        setItems((prev) =>
+          prev.map((entry) => (entry.key === item.key ? { ...entry, ...result, status: 'ready' } : entry))
+        );
+      }
+    },
+    [push]
+  );
 
   useEffect(() => {
     if (!open || !initialFiles?.length) return;
@@ -175,6 +147,8 @@ export function UploadModal({
     if (!ready.length) return;
     setBusy(true);
     let uploaded = 0;
+    let duplicates = 0;
+    let failed = 0;
 
     for (const item of ready) {
       patchItem(item.key, { status: 'uploading', progress: 0, error: undefined });
@@ -195,17 +169,29 @@ export function UploadModal({
         patchItem(item.key, { status: 'done', progress: 100 });
         uploaded += 1;
       } catch (error) {
-        patchItem(item.key, {
-          status: 'error',
-          error: error instanceof Error ? error.message : 'Ошибка загрузки',
-        });
+        if (error instanceof VisionError && error.code === 'duplicate') {
+          patchItem(item.key, { status: 'duplicate', error: 'Этот файл уже есть в библиотеке' });
+          duplicates += 1;
+        } else {
+          patchItem(item.key, {
+            status: 'error',
+            error: error instanceof Error ? error.message : 'Ошибка загрузки',
+          });
+          failed += 1;
+        }
       }
     }
 
     setBusy(false);
     await reload();
-    if (uploaded) push(uploaded === 1 ? 'Трек загружен' : `Загружено треков: ${uploaded}`);
-    if (uploaded === ready.length) setTimeout(onClose, 700);
+
+    const parts: string[] = [];
+    if (uploaded) parts.push(`загружено ${uploaded}`);
+    if (duplicates) parts.push(`дубликатов ${duplicates}`);
+    if (failed) parts.push(`ошибок ${failed}`);
+    if (parts.length) push(parts.join(' · '));
+
+    if (uploaded && !duplicates && !failed) setTimeout(onClose, 700);
   };
 
   if (!open) return null;
@@ -220,7 +206,7 @@ export function UploadModal({
         <header className="modal__head">
           <div>
             <h2>Загрузить треки</h2>
-            <p>mp3, wav, flac, ogg, m4a · до 500 МБ на файл</p>
+            <p>mp3, wav, flac, ogg, m4a · папка целиком или .zip · до 500 МБ на файл</p>
           </div>
           <button type="button" className="iconbtn" aria-label="Закрыть" onClick={onClose} disabled={busy}>
             <Icon name="close" size={20} />
@@ -229,7 +215,6 @@ export function UploadModal({
 
         <div
           className={`dropzone${dragging ? ' is-over' : ''}`}
-          onClick={() => inputRef.current?.click()}
           onDragEnter={(event) => {
             event.preventDefault();
             dragDepth.current += 1;
@@ -245,23 +230,52 @@ export function UploadModal({
             event.preventDefault();
             dragDepth.current = 0;
             setDragging(false);
-            void addFiles(event.dataTransfer.files);
-          }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') inputRef.current?.click();
+            const transfer = event.dataTransfer;
+            void filesFromDataTransfer(transfer).then((files) => addFiles(files));
           }}
         >
           <Icon name="upload" size={26} />
-          <strong>Перетащите файлы сюда</strong>
-          <span>или нажмите, чтобы выбрать на устройстве</span>
+          <strong>{unpacking ? 'Распаковываем архив…' : 'Перетащите файлы, папку или .zip'}</strong>
+          <span>или выберите на устройстве — можно сразу целую папку</span>
+          <div className="dropzone__actions">
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={(event) => {
+                event.stopPropagation();
+                inputRef.current?.click();
+              }}
+            >
+              Выбрать файлы
+            </button>
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={(event) => {
+                event.stopPropagation();
+                folderRef.current?.click();
+              }}
+            >
+              Папка
+            </button>
+          </div>
           <input
             ref={inputRef}
             type="file"
-            accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a"
+            accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.opus,.aiff,.zip"
             multiple
             hidden
+            onChange={(event) => {
+              if (event.target.files) void addFiles(event.target.files);
+              event.target.value = '';
+            }}
+          />
+          <input
+            ref={folderRef}
+            type="file"
+            multiple
+            hidden
+            {...({ webkitdirectory: 'true', directory: 'true' } as Record<string, string>)}
             onChange={(event) => {
               if (event.target.files) void addFiles(event.target.files);
               event.target.value = '';
@@ -323,6 +337,11 @@ export function UploadModal({
                     <Icon name="check" size={14} /> Готово
                   </div>
                 )}
+                {item.status === 'duplicate' && (
+                  <div className="upload-item__hint upload-item__hint--warn">
+                    <Icon name="check" size={14} /> {item.error ?? 'Уже в библиотеке'}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -342,6 +361,8 @@ export function UploadModal({
         <footer className="modal__foot">
           <span className="modal__summary">
             {items.length ? `${items.length} файлов · ${formatBytes(totalSize)}` : 'Файлы ещё не выбраны'}
+            {items.some((item) => item.status === 'duplicate') &&
+              ` · дубликатов ${items.filter((item) => item.status === 'duplicate').length}`}
           </span>
           <div className="modal__actions">
             <button type="button" className="btn" onClick={onClose} disabled={busy}>

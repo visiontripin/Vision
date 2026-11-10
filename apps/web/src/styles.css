@@ -2528,3 +2528,28 @@ select:focus {
     flex-wrap: wrap;
   }
 }
+
+/* ===================== массовый импорт (папка / ZIP) ==================== */
+
+.dropzone__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.dropzone__actions .btn {
+  pointer-events: auto;
+}
+
+.upload-item--duplicate {
+  border-color: rgba(255, 200, 90, 0.35);
+}
+
+.upload-item__hint--warn {
+  color: #ffd479;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

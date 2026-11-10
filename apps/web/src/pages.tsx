@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   formatBytes,
   formatDuration,
@@ -571,6 +571,7 @@ export function ExternalPage() {
   const [failed, setFailed] = useState<{ url: string; code: string; message: string }[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [loading, setLoading] = useState(!IS_LOCAL_MODE);
+  const listInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (IS_LOCAL_MODE) return;
@@ -618,6 +619,50 @@ export function ExternalPage() {
       if (!result.added.length && result.failed.length) push(result.failed[0].message, 'error');
     } catch (error) {
       push(error instanceof Error ? error.message : 'Не удалось добавить ссылки', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Массовый импорт из .txt/.csv: достаём ссылки, шлём пачками по 50. */
+  const importList = async (file: File) => {
+    setBusy(true);
+    setFailed([]);
+    try {
+      const text = await file.text();
+      const urls = Array.from(text.matchAll(/https?:\/\/[^\s,"']+/g)).map((match) => match[0]);
+      if (!urls.length) {
+        push('В файле не нашлось ссылок', 'error');
+        return;
+      }
+
+      let addedCount = 0;
+      const collected: ExternalTrack[] = [];
+      const problems: { url: string; code: string; message: string }[] = [];
+
+      for (let i = 0; i < urls.length; i += 50) {
+        try {
+          const result = await api.importExternal(urls.slice(i, i + 50));
+          collected.push(...result.added);
+          addedCount += result.added.length;
+          problems.push(...result.failed);
+        } catch (error) {
+          problems.push({
+            url: `${i + 1}–${Math.min(urls.length, i + 50)}`,
+            code: 'batch_failed',
+            message: error instanceof Error ? error.message : 'Пачка не загрузилась',
+          });
+        }
+      }
+
+      setItems((prev) => {
+        const known = new Set(prev.map((item) => item.id));
+        return [...collected.filter((item) => !known.has(item.id)), ...prev];
+      });
+      setFailed(problems);
+      push(`Из файла добавлено: ${addedCount} из ${urls.length}`);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось прочитать файл', 'error');
     } finally {
       setBusy(false);
     }
@@ -683,6 +728,25 @@ export function ExternalPage() {
             <Icon name="plus" size={16} />
             {busy ? 'Проверяем ссылки…' : 'Добавить'}
           </button>
+          <button
+            type="button"
+            className="btn btn--small"
+            disabled={busy}
+            onClick={() => listInput.current?.click()}
+          >
+            Список из .txt/.csv
+          </button>
+          <input
+            ref={listInput}
+            type="file"
+            accept=".txt,.csv,text/plain,text/csv"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void importList(file);
+              event.target.value = '';
+            }}
+          />
           <span className="import__hint">
             Сохраняются только название, автор и код официального плеера. Аудио не скачивается.
           </span>
