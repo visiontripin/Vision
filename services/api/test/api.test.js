@@ -545,3 +545,83 @@ test('метрики Prometheus и заголовки безопасности',
   assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
   assert.match(page.headers.get('referrer-policy') || '', /strict-origin/);
 });
+
+test('транскодинг: opus/aac/HLS появляются, если доступен ffmpeg', async () => {
+  const health = await (await fetch(`${BASE}/api/health`)).json();
+  assert.equal(typeof health.transcode.enabled, 'boolean');
+  assert.equal(typeof health.ffmpeg.available, 'boolean');
+
+  if (!health.ffmpeg.available) {
+    // без ffmpeg сервис обязан работать: отдаём оригинал, вариантов нет
+    const created = await upload(makeWav({ title: 'No Ffmpeg', artist: 'Test' }), {
+      title: 'No Ffmpeg',
+      filename: 'no-ffmpeg.wav',
+    });
+    assert.equal(created.status, 201);
+    const track = await created.json();
+    const media = await (
+      await fetch(`${BASE}/api/media?ids=${track.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json();
+    assert.deepEqual(Object.keys(media.items[track.id].streams), ['original']);
+    assert.equal(media.items[track.id].hls, null);
+    return;
+  }
+
+  const created = await upload(makeWav({ seconds: 2, title: 'Transcoded', artist: 'Test' }), {
+    title: 'Transcoded',
+    filename: 'transcoded.wav',
+    duration: '2',
+  });
+  assert.equal(created.status, 201);
+  const track = await created.json();
+
+  let item = null;
+  for (let i = 0; i < 60; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const media = await (
+      await fetch(`${BASE}/api/media?ids=${track.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json();
+    item = media.items[track.id];
+    if (item.streams.opus && item.streams.aac && item.hls) break;
+  }
+
+  assert.ok(item.streams.opus, 'opus-вариант готов');
+  assert.ok(item.streams.aac, 'aac-вариант готов');
+  assert.ok(item.hls, 'HLS-плейлист готов');
+
+  const opus = await fetch(`${BASE}${item.streams.opus}`, { headers: { Range: 'bytes=0-1023' } });
+  assert.equal(opus.status, 206);
+  assert.match(opus.headers.get('content-type'), /audio\/ogg/);
+
+  const aac = await fetch(`${BASE}${item.streams.aac}`, { headers: { Range: 'bytes=0-511' } });
+  assert.equal(aac.status, 206);
+  assert.match(aac.headers.get('content-type'), /audio\/mp4/);
+
+  const tampered = item.streams.opus.replace(/sig=[^&]+/, 'sig=deadbeef');
+  const denied = await fetch(`${BASE}${tampered}`);
+  assert.equal(denied.status, 401, 'подпись варианта защищена');
+
+  const detail = await (
+    await fetch(`${BASE}/api/tracks/${track.id}`, { headers: { Authorization: `Bearer ${token}` } })
+  ).json();
+  const kinds = detail.variants.map((variant) => variant.kind).sort();
+  assert.deepEqual(kinds, ['aac', 'hls', 'opus']);
+
+  const playlist = await fetch(`${BASE}${item.hls}`);
+  assert.equal(playlist.status, 200);
+  const body = await playlist.text();
+  assert.match(body, /#EXTM3U/);
+
+  const segmentLine = body.split('\n').find((line) => line.includes('/hls/seg-'));
+  assert.ok(segmentLine, 'в плейлисте есть сегменты с подписью');
+  assert.match(segmentLine, /exp=\d+&sig=/);
+
+  const segment = await fetch(`${BASE}${segmentLine}`);
+  assert.equal(segment.status, 200);
+  assert.match(segment.headers.get('content-type'), /video\/mp2t/);
+
+  await fetch(`${BASE}/api/tracks/${track.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+});

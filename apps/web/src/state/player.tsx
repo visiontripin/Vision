@@ -209,6 +209,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId]);
 
+  /* ---- прогрев следующего трека (первые 256 КБ в HTTP-кэш) ---- */
+  useEffect(() => {
+    if (!currentId || !playing || !queue.length) return;
+    const next = queue[(index + 1) % queue.length];
+    if (!next || next.id === currentId) return;
+
+    let cancelled = false;
+    void ensureMedia([next.id]).then(() => {
+      if (cancelled) return;
+      const url = getMedia(next.id)?.stream;
+      if (!url) return;
+      void fetch(url, { headers: { Range: 'bytes=0-262143' } }).catch(() => {});
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentId, playing, queue, index]);
+
   /* ---- прогресс прослушивания (питает «Продолжить слушать») ---- */
   useEffect(() => {
     if (!currentId || !playing) return;

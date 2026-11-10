@@ -101,7 +101,19 @@ export const OPENAPI = {
       MediaItem: {
         type: 'object',
         properties: {
-          stream: { type: 'string', description: 'Путь со свежей подписью (exp, sig)' },
+          stream: {
+            type: 'string',
+            description: 'Лучший доступный поток: opus → aac → оригинал',
+          },
+          streams: {
+            type: 'object',
+            description: 'Варианты по кодекам: original, opus, aac (готовые после транскодинга)',
+            additionalProperties: { type: 'string' },
+          },
+          hls: {
+            type: ['string', 'null'],
+            description: 'HLS-плейлист (сегменты по 6 с) или null, если нарезки нет',
+          },
           cover: { type: ['string', 'null'] },
           expiresAt: { type: 'string', format: 'date-time' },
         },
@@ -179,6 +191,25 @@ export const OPENAPI = {
                       properties: {
                         applied: { type: 'array', items: { type: 'string' } },
                         pending: { type: 'integer' },
+                      },
+                    },
+                    ffmpeg: {
+                      type: 'object',
+                      description: 'null-версия означает «бинарник не найден»; сервис работает с оригиналами',
+                      properties: {
+                        available: { type: 'boolean' },
+                        version: { type: ['string', 'null'] },
+                      },
+                    },
+                    transcode: {
+                      type: 'object',
+                      properties: {
+                        enabled: { type: 'boolean' },
+                        queued: { type: 'integer' },
+                        busy: { type: 'boolean' },
+                        processed: { type: 'integer' },
+                        failed: { type: 'integer' },
+                        lastError: { type: ['string', 'null'] },
                       },
                     },
                   },
@@ -355,6 +386,12 @@ export const OPENAPI = {
         security: [{ bearerAuth: [] }, { mediaSignature: [] }],
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          {
+            name: 'format',
+            in: 'query',
+            schema: { type: 'string', enum: ['original', 'opus', 'aac'] },
+            description: 'Если варианта нет, сервер отдаёт оригинал (заголовок X-Variant-Fallback)',
+          },
           { name: 'exp', in: 'query', schema: { type: 'integer' } },
           { name: 'sig', in: 'query', schema: { type: 'string' } },
           { name: 'Range', in: 'header', schema: { type: 'string' } },
@@ -365,6 +402,44 @@ export const OPENAPI = {
           304: { description: 'Не изменилось (ETag)' },
           401: { $ref: '#/components/responses/Unauthorized' },
           416: { description: 'Невозможный диапазон' },
+        },
+      },
+    },
+    '/tracks/{id}/hls.m3u8': {
+      get: {
+        tags: ['media'],
+        summary: 'HLS-плейлист (сегменты по 6 с, AAC)',
+        description:
+          'Требует ffmpeg. Строки-сегменты в ответе переписаны в абсолютные пути с той же подписью, '
+          + 'поэтому относительное разрешение URL не ломает авторизацию.',
+        security: [{ bearerAuth: [] }, { mediaSignature: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'exp', in: 'query', schema: { type: 'integer' } },
+          { name: 'sig', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          200: { description: 'Плейлист', content: { 'application/vnd.apple.mpegurl': { schema: { type: 'string' } } } },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'HLS ещё не нарезан (ffmpeg недоступен или трек в очереди)' },
+        },
+      },
+    },
+    '/tracks/{id}/hls/{segment}': {
+      get: {
+        tags: ['media'],
+        summary: 'HLS-сегмент (MPEG-TS)',
+        security: [{ bearerAuth: [] }, { mediaSignature: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'segment', in: 'path', required: true, schema: { type: 'string', examples: ['seg-000.ts'] } },
+          { name: 'exp', in: 'query', schema: { type: 'integer' } },
+          { name: 'sig', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          200: { description: 'Сегмент', content: { 'video/mp2t': { schema: { type: 'string', format: 'binary' } } } },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'Нет такого сегмента' },
         },
       },
     },

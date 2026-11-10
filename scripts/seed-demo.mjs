@@ -222,7 +222,7 @@ function toWav(data) {
   return buffer;
 }
 
-function peaks(data, count = 180) {
+function peaks(data, count = 320) {
   const block = Math.max(1, Math.floor(data.length / count));
   const raw = [];
   let max = 0;

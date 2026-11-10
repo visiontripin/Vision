@@ -48,7 +48,12 @@ export type TrackPage = {
 
 /** Короткоживущие подписанные ссылки на медиа (HMAC, ~30 минут). */
 export type MediaItem = {
+  /** лучший доступный вариант (сервер подставляет opus/aac, если они готовы) */
   stream: string;
+  /** варианты по кодекам: original, opus, aac */
+  streams?: Record<string, string>;
+  /** HLS-плейлист, если нарезка готова */
+  hls?: string | null;
   cover: string | null;
   expiresAt: string;
 };
@@ -268,9 +273,20 @@ export function createClient(options: ClientOptions = {}) {
       const payload = await request<MediaMap>(`/api/media?ids=${unique.join(',')}`);
       const items: Record<string, MediaItem> = {};
       for (const [id, item] of Object.entries(payload.items)) {
+        const absolute = (path: string | null | undefined) =>
+          !path ? null : path.startsWith('/') ? `${baseUrl}${path}` : path;
+
+        const streams: Record<string, string> = {};
+        for (const [kind, path] of Object.entries(item.streams ?? {})) {
+          const url = absolute(path);
+          if (url) streams[kind] = url;
+        }
+
         items[id] = {
-          stream: item.stream.startsWith('/') ? `${baseUrl}${item.stream}` : item.stream,
-          cover: item.cover ? (item.cover.startsWith('/') ? `${baseUrl}${item.cover}` : item.cover) : null,
+          stream: absolute(item.stream) ?? '',
+          streams,
+          hls: absolute(item.hls ?? null),
+          cover: absolute(item.cover),
           expiresAt: item.expiresAt,
         };
       }

@@ -312,6 +312,58 @@ export function genres() {
     .all();
 }
 
+/* ----------------------------- варианты аудио ---------------------------- */
+
+function toVariant(row) {
+  return {
+    kind: row.kind,
+    mime: row.mime,
+    ext: row.ext,
+    size: row.size,
+    bitrate: row.bitrate,
+    createdAt: row.created_at,
+  };
+}
+
+export function listVariants(trackId) {
+  return db
+    .prepare('SELECT * FROM track_variants WHERE track_id = ? ORDER BY kind')
+    .all(trackId)
+    .map(toVariant);
+}
+
+export function getVariant(trackId, kind) {
+  const row = db.prepare('SELECT * FROM track_variants WHERE track_id = ? AND kind = ?').get(trackId, kind);
+  return row ? toVariant(row) : null;
+}
+
+export function upsertVariant({ trackId, kind, mime, ext, size = 0, bitrate = null }) {
+  db.prepare(
+    `INSERT INTO track_variants (track_id, kind, mime, ext, size, bitrate, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(track_id, kind) DO UPDATE SET
+       mime = excluded.mime, ext = excluded.ext, size = excluded.size,
+       bitrate = excluded.bitrate, created_at = excluded.created_at`
+  ).run(trackId, kind, mime, ext, size, bitrate, new Date().toISOString());
+}
+
+export function deleteVariants(trackId) {
+  db.prepare('DELETE FROM track_variants WHERE track_id = ?').run(trackId);
+}
+
+/** Треки без транскодированных вариантов — для догона после включения ffmpeg. */
+export function tracksMissingVariants(limit = 50) {
+  return db
+    .prepare(
+      `SELECT t.id, t.mime, t.title FROM tracks t
+        LEFT JOIN track_variants v ON v.track_id = t.id AND v.kind = 'opus'
+       WHERE v.track_id IS NULL
+       ORDER BY t.created_at ASC
+       LIMIT ?`
+    )
+    .all(Math.min(Math.max(Number(limit) || 50, 1), 500));
+}
+
 /* --------------------------- внешние источники --------------------------- */
 
 function toExternal(row) {

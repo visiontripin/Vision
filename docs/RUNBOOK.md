@@ -99,6 +99,60 @@ scrape_configs:
 - `VISION_SECRET` должен быть стабильным: при его смене все выданные ссылки и
   токены входа становятся недействительными (это ещё и способ «разлогинить всё»).
 
+## 5.2 Транскодинг opus/aac/HLS (v0.6.0)
+
+Сервер сам перекодирует загруженные треки в фоне: opus 96 kbps (`.ogg`), aac 128 kbps
+(`.mp4`) и HLS-нарезку по 6 с, с нормализацией `loudnorm=I=-14:TP=-1.5:LRA=11`.
+Результат — в `$DATA_DIR/media/variants` и `$DATA_DIR/media/hls/<trackId>/`.
+
+**Без ffmpeg всё работает как раньше**: `/api/media` отдаёт только `original`,
+`/api/health` показывает `ffmpeg.available: false`. Ничего не падает и не ретраится.
+
+Откуда берётся бинарник (по порядку):
+
+1. `FFMPEG_PATH` — явный путь;
+2. пакет `ffmpeg-static` (зависимость в `optionalDependencies`; на musl/Alpine и без
+   доступа к GitHub при `npm install` он просто не скачивается — это не ошибка);
+3. системный `ffmpeg` из `PATH`.
+
+Установка на сервере:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y ffmpeg        # нужен libopus, aac, loudnorm
+# Alpine (база Docker-образа)
+apk add --no-cache ffmpeg
+# macOS
+brew install ffmpeg
+```
+
+Проверка после рестарта: `curl -s localhost:4000/api/health | jq .ffmpeg` →
+`{ "available": true, "version": "ffmpeg version …" }`.
+
+Переменные:
+
+| Переменная | По умолчанию | Смысл |
+| --- | --- | --- |
+| `FFMPEG_PATH` | — | путь к бинарнику, приоритетнее остальных |
+| `TRANSCODE` | `1` | `0` — выключить очередь целиком |
+| `TRANSCODE_CODECS` | `opus,aac` | какие варианты делать |
+| `TRANSCODE_NORMALIZE` | `1` | `0` — без `loudnorm` (быстрее, громче/тише) |
+| `HLS_ENABLED` | `1` | `0` — не нарезать HLS |
+| `HLS_SEGMENT_SECONDS` | `6` | длина сегмента |
+| `TRANSCODE_BACKFILL` | `0` | `1` — при старте догнать треки, загруженные до ffmpeg |
+| `FFMPEG_TIMEOUT_MS` | `600000` | таймаут одной задачи |
+
+Задачи выполняются по одной в процессе API (транскодинг не блокирует цикл: это
+дочерний процесс). После загрузки ответ клиенту не ждёт ffmpeg — трек сразу играет
+оригиналом, варианты подхватываются на следующем обновлении ссылок (`/api/media`).
+Метрики: `vision_transcode_total{result="opus|aac|hls|error"}`,
+`vision_transcode_seconds_total{kind}`.
+
+Место на диске: `media/variants/` (opus ~1/10 и aac ~1/3 веса wav) и `media/hls/`
+(примерно вес mp3). Это осознанный обмен: трафик при прослушивании падает в 3–10 раз.
+Если диск тесный — `HLS_ENABLED=0` (HLS самая тяжёлая часть), затем `TRANSCODE_CODECS=opus`.
+`vision_storage_bytes` считает только оригиналы, варианты в метрику не входят.
+
 ## 6. Типовые проблемы
 
 | Симптом | Причина | Решение |
@@ -111,6 +165,10 @@ scrape_configs:
 | Пустая волна | браузер не смог декодировать (flac в Safari) | peaks = null, рисуется псевдо-волна; конвертируйте в mp3 |
 | Seek возвращает 200, а не 206 | reverse proxy буферизует ответ | отключите буферизацию для `/api/tracks/*/stream` |
 | `SQLite is experimental` в логах | предупреждение Node 22 | безвредно; можно скрыть `--no-warnings` |
+| `/api/health` → `ffmpeg.available: false` | бинарника нет в `PATH`, `ffmpeg-static` не скачался | поставьте ffmpeg (см. 5.2) и перезапустите; треки догонятся при `TRANSCODE_BACKFILL=1` |
+| `X-Variant-Fallback` в ответе `/stream` | клиент попросил opus/aac, которого ещё нет | норма во время транскодинга или без ffmpeg |
+| `404 no_hls` | HLS выключен (`HLS_ENABLED=0`), ffmpeg нет или трек в очереди | проверьте `/api/health`, повторите позже |
+| `vision_transcode_total{result="error"}` растёт | ffmpeg падает на конкретном файле | смотрите `lastError` в `/api/health`, лог `transcode`; файл скорее всего битый |
 
 ## 7. Обновление версии
 
