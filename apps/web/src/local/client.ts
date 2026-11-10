@@ -24,7 +24,7 @@ import type {
 const DB_NAME = 'vision-audio-local';
 const DB_VERSION = 1;
 const LOCAL_TOKEN = 'local';
-const VERSION = '0.9.0-local';
+const VERSION = '0.10.0-local';
 
 type StoredTrack = Track & { blob: Blob };
 type StoredPlaylist = {

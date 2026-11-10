@@ -97,7 +97,12 @@ export type SeedAnnouncement = {
 
 export type BlobState = {
   blob: BlobInfo;
+  /** файл есть на этом узле (медиатека или каталог сида) */
   local: boolean;
+  /** файл лежит именно в каталоге сида, то есть это реплика — её можно удалить */
+  seeded?: boolean;
+  /** идентификатор этого узла в реестре */
+  deviceId?: string;
   seeds: BlobSeed[];
   stats: SeedStats;
 };
@@ -425,6 +430,11 @@ export function createClient(options: ClientOptions = {}) {
       return request<void>(`/api/blobs/${hash}/seed?deviceId=${encodeURIComponent(deviceId)}`, {
         method: 'DELETE',
       });
+    },
+
+    /** Удалить реплику с этого узла (origin-файлы не трогает). */
+    removeReplica(hash: string) {
+      return request<void>(`/api/blobs/${hash}/replica`, { method: 'DELETE' });
     },
 
     /** Забрать файл с живого сида на этот узел (с проверкой sha256). */

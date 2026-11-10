@@ -200,7 +200,16 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
                 playing={player.playing}
                 downloaded={downloads.has(item.id)}
                 progress={progress}
-                onPress={() => player.playTrack(item, visibleTracks)}
+                onPress={() => {
+                  if (item.available === false && !downloads.has(item.id)) {
+                    Alert.alert(
+                      'Нет источника',
+                      'Ни одно устройство сейчас не раздаёт этот файл. Включите Termux или ПК с копией и обновите библиотеку.'
+                    );
+                    return;
+                  }
+                  player.playTrack(item, visibleTracks);
+                }}
                 onLongPress={() =>
                   Alert.alert(item.title, `${item.artist}${item.genre ? ` · ${item.genre}` : ''}`, [
                     { text: 'Закрыть', style: 'cancel' },

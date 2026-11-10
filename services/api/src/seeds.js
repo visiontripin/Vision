@@ -233,6 +233,27 @@ export function localFileFor(hash) {
   return null;
 }
 
+/** Сброс кэша листинга: после записи/удаления реплики каталог изменился. */
+function invalidateSeedCache() {
+  seedDirCache = { at: 0, files: new Map() };
+}
+
+/** Файл блоба именно в каталоге сида (реплика, а не загруженный origin-файл). */
+export function replicaFileFor(hash) {
+  if (!isHash(hash)) return null;
+  const candidates = [seedFiles().get(hash)];
+  const blob = getBlob(hash);
+  if (blob) candidates.push(path.join(SEED_DIR, `${hash}.${extForMime(blob.mime)}`));
+
+  for (const file of candidates) {
+    if (!file) continue;
+    try {
+      if (existsSync(file)) return file;
+    } catch { /* файл исчез */ }
+  }
+  return null;
+}
+
 /** Все хеши, которые этот узел реально может отдать. */
 export function localBlobHashes() {
   const hashes = new Set();
@@ -352,6 +373,25 @@ export function resolveDownload(track, { selfBase = '' } = {}) {
   return url ? { url, local: false, seed: pick, hash } : null;
 }
 
+/* ---------------------------- удаление реплики --------------------------- */
+
+/**
+ * Убрать копию с этого узла: файл из каталога сида и свой сид в реестре трекера.
+ * Блоб остаётся (о нём знают другие сиды), origin-файлы в медиатеке не трогаем —
+ * для них есть DELETE /api/tracks/:id.
+ */
+export async function dropReplica(hash) {
+  if (!isHash(hash)) return { ok: false, reason: 'invalid_hash' };
+
+  const file = replicaFileFor(hash);
+  if (!file) return { ok: false, reason: 'not_a_replica' };
+
+  await rm(file, { force: true });
+  invalidateSeedCache();
+  db.prepare('DELETE FROM blob_seeds WHERE hash = ? AND device_id = ?').run(hash, DEVICE_ID);
+  return { ok: true, file, removed: true };
+}
+
 /* --------------------------- репликация на узел --------------------------- */
 
 /**
@@ -397,6 +437,7 @@ export async function adoptBlob(hash, { ttlMs = MEDIA_TTL_MS } = {}) {
       }
 
       await rename(tmp, target);
+      invalidateSeedCache();
       declareBlob({ hash, bytes: received, mime: blob.mime });
       registerSeed({ hash, deviceId: DEVICE_ID, kind: 'origin', baseUrl: PUBLIC_URL || null });
       return { ok: true, already: false, bytes: received, file: target, from: seed.deviceId };
