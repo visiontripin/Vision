@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { Track } from '@vision/shared';
 import { downloadFileName } from './lib/format';
+import { announceReplica, withdrawReplica } from './lib/seeds';
 
 /**
  * Скачанные треки: файл лежит в приватном каталоге приложения, запись о нём —
@@ -14,6 +15,8 @@ import { downloadFileName } from './lib/format';
 
 export type DownloadEntry = {
   id: string;
+  /** sha256 файла — адрес блоба в реестре реплик */
+  hash?: string;
   title: string;
   artist: string;
   uri: string;
@@ -60,6 +63,7 @@ function parseIndex(raw: string | null): Record<string, DownloadEntry> {
       if (!value || typeof value.uri !== 'string') continue;
       result[id] = {
         id,
+        hash: typeof value.hash === 'string' ? value.hash : undefined,
         title: String(value.title ?? ''),
         artist: String(value.artist ?? ''),
         uri: value.uri,
@@ -140,6 +144,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
 
         const entry: DownloadEntry = {
           id: track.id,
+          hash: track.checksum ?? undefined,
           title: track.title,
           artist: track.artist,
           uri: result.uri,
@@ -148,6 +153,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
           at: Date.now(),
         };
         await persist({ ...entriesRef.current, [track.id]: entry });
+        void announceReplica(track); // «копия есть у телефона» — best effort
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Не удалось скачать трек');
         throw cause;
@@ -186,13 +192,16 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       const next = { ...entriesRef.current };
       delete next[id];
       await persist(next);
+      void withdrawReplica(entry?.hash);
     },
     [persist]
   );
 
   const clear = useCallback(async () => {
-    await Promise.all(Object.values(entriesRef.current).map((entry) => FileSystem.deleteAsync(entry.uri, { idempotent: true }).catch(() => {})));
+    const removed = Object.values(entriesRef.current);
+    await Promise.all(removed.map((entry) => FileSystem.deleteAsync(entry.uri, { idempotent: true }).catch(() => {})));
     await persist({});
+    for (const entry of removed) void withdrawReplica(entry.hash);
   }, [persist]);
 
   const value = useMemo<DownloadsValue>(() => {

@@ -11,6 +11,9 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${DATA_DIR:-$HOME/vision-data}"
 PORT="${PORT:-4000}"
+# Трекер реплик: устройство само раздаёт свои файлы и говорит об этом трекеру.
+DEVICE_ID="${DEVICE_ID:-termux}"
+PUBLIC_URL="${PUBLIC_URL:-}"
 BOOT_DIR="$HOME/.termux/boot"
 BOOT_FILE="$BOOT_DIR/vision.sh"
 
@@ -54,6 +57,9 @@ export DATA_DIR="$DATA_DIR"
 export PORT="$PORT"
 export HOST=0.0.0.0
 export FFMPEG_PATH="$(command -v ffmpeg)"
+export DEVICE_ID="$DEVICE_ID"
+export SEED_ENABLED=1
+[ -n "$PUBLIC_URL" ] && export PUBLIC_URL="$PUBLIC_URL"
 exec node services/api/src/server.js >> "\$HOME/vision.log" 2>&1
 EOF
 
@@ -71,7 +77,8 @@ cat <<EOF
 
   1) запустить сейчас:
        cd "$REPO_DIR"
-       DATA_DIR="$DATA_DIR" PORT=$PORT HOST=0.0.0.0 FFMPEG_PATH="$(command -v ffmpeg)" npm start
+       DATA_DIR="$DATA_DIR" PORT=$PORT HOST=0.0.0.0 DEVICE_ID=$DEVICE_ID \
+         FFMPEG_PATH="$(command -v ffmpeg)" npm start
 
   2) открыть в браузере телефона или компьютера в той же Wi-Fi:
        http://$IP:$PORT      (пароль по умолчанию: vision)

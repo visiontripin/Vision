@@ -12,8 +12,14 @@ import {
   deleteTrackRecord, findByChecksum, recordListen, listHistory, clearHistory,
   setCoverMime, getCoverInfo, listPlaylists, getPlaylist, stats, genres, migrationStatus,
   listExternal, getExternal, upsertExternal, updateExternalNote, deleteExternal,
-  listVariants, getVariant, deleteVariants,
+  listVariants, getVariant, deleteVariants, trackByChecksum,
 } from './db.js';
+import {
+  STORAGE_MODE, SEED_ENABLED, DEVICE_ID, PUBLIC_URL, SEED_TTL_MS,
+  isHash, extForMime, declareBlob, getBlob, registerSeed, removeSeed, listSeeds,
+  seedSummary, withSources, resolveDownload, localFileFor, adoptBlob, heartbeatSelf,
+  reconcileSelf, pruneSeeds, seedUrl, verifySeedToken, trackerStats,
+} from './seeds.js';
 import {
   backfillVariants, enqueueTranscode, hlsPath, removeVariants, transcodeStatus, variantPath,
 } from './transcode.js';
@@ -36,11 +42,29 @@ const MAX_UPLOAD = 500 * 1024 * 1024;
 const MAX_COVER = 8 * 1024 * 1024;
 // Разрешаем только официальный виджет SoundCloud: он играет со своих серверов,
 // наших файлов и нашего трафика это не касается.
-const SECURITY_TXT = 'default-src \'self\'; img-src \'self\' data: blob:; media-src \'self\' blob:; '
-  + 'style-src \'self\' \'unsafe-inline\'; script-src \'self\'; connect-src \'self\'; font-src \'self\'; '
-  + 'worker-src \'self\'; manifest-src \'self\'; '
-  + 'frame-src https://w.soundcloud.com https://soundcloud.com; '
-  + 'frame-ancestors *; base-uri \'self\'; form-action \'self\'';
+// Остальные узлы роя (Termux/десктоп) живут на своих адресах — их нужно явно
+// разрешить в CSP и CORS-политике медиа, иначе браузер не даст проиграть файл.
+const EXTRA_ORIGINS = (process.env.EXTRA_ORIGINS || '')
+  .split(',')
+  .map((value) => value.trim().replace(/\/$/, ''))
+  .filter(Boolean)
+  .join(' ');
+
+const SECURITY_TXT = [
+  "default-src 'self'",
+  `img-src 'self' data: blob: ${EXTRA_ORIGINS}`.trim(),
+  `media-src 'self' blob: ${EXTRA_ORIGINS}`.trim(),
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self'",
+  `connect-src 'self' ${EXTRA_ORIGINS}`.trim(),
+  "font-src 'self'",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  'frame-src https://w.soundcloud.com https://soundcloud.com',
+  'frame-ancestors *',
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -74,11 +98,13 @@ function authoriseMedia(req, url, trackId, kind) {
 
 /** Медиа-путь → вид подписи. Возвращает null, если путь не медийный. */
 function signedMediaTarget(pathname, url) {
-  const stream = /^\/api\/tracks\/([a-f0-9]{32})\/(stream|cover|hls\.m3u8|hls\/seg-\d{3,5}\.ts)$/.exec(pathname);
+  const stream = /^\/api\/tracks\/([a-f0-9]{32})\/(stream|cover|download|hls\.m3u8|hls\/seg-\d{3,5}\.ts)$/.exec(pathname);
   if (!stream) return null;
   const [, id, tail] = stream;
 
   if (tail === 'cover') return { id, kinds: ['cover'] };
+  // редирект на живой сид: браузер должен уметь открыть его без заголовков
+  if (tail === 'download') return { id, kinds: ['download'] };
   if (tail === 'hls.m3u8' || tail.startsWith('hls/')) return { id, kinds: ['hls'] };
 
   const format = String(url.searchParams.get('format') || 'original').toLowerCase();
@@ -149,6 +175,117 @@ async function handleLogin(req, res) {
   json(res, 200, issueToken());
 }
 
+/* ----------------------------- сиды и трекер ----------------------------- */
+
+/** Свой публичный адрес: из PUBLIC_URL или из заголовков запроса. */
+function selfBaseUrl(req) {
+  if (PUBLIC_URL) return PUBLIC_URL;
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
+    || (req.socket.encrypted ? 'https' : 'http');
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return host ? `${proto}://${host}` : '';
+}
+
+const TRACK_URL = (id) => `/api/tracks/${id}`;
+
+/**
+ * Отдача блоба с этого устройства: `/seed/<sha256>?exp&sig`.
+ * Подпись общая для всех узлов роя (один VISION_SECRET), поэтому ссылку можно
+ * выдать с трекера и открыть на любом сиде. Живёт 30 минут.
+ */
+function handleSeed(req, res, url, pathname) {
+  const match = /^\/seed\/([a-f0-9]{64})$/.exec(pathname);
+  if (!match) return fail(res, 404, 'not_found', 'Неизвестный блоб.');
+  if (!SEED_ENABLED) {
+    return fail(res, 403, 'seed_disabled', 'Этот узел не раздаёт файлы (SEED_ENABLED=0).');
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return fail(res, 405, 'method_not_allowed', 'Только GET/HEAD.');
+  }
+
+  const hash = match[1];
+  const signed = verifySeedToken(hash, url.searchParams.get('exp'), url.searchParams.get('sig'));
+  if (!signed && !authorized(req)) return fail(res, 401, 'unauthorized', 'Ссылка истекла или неверна.');
+
+  const local = localFileFor(hash);
+  if (!local) return fail(res, 404, 'not_here', 'Этого файла нет на данном устройстве.');
+
+  registerSeed({ hash, deviceId: DEVICE_ID, kind: 'origin', baseUrl: PUBLIC_URL || selfBaseUrl(req) });
+  inc('vision_seed_served_total');
+  return sendFile(req, res, {
+    file: local.file,
+    mime: local.mime,
+    etagBase: `seed:${hash}`,
+    counters: { partial: 'vision_seed_partial_total', full: 'vision_seed_full_total' },
+  });
+}
+
+/** Трек «только метаданные»: файл остался у загрузившего, у нас адрес и сид. */
+async function handleMetadataUpload(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    return fail(res, 400, 'invalid_json', 'Ожидался JSON с метаданными трека.');
+  }
+
+  const hash = String(body.hash || '').toLowerCase();
+  if (!isHash(hash)) {
+    return fail(res, 400, 'invalid_hash', 'Нужен sha256 содержимого (64 hex-символа) в поле hash.');
+  }
+
+  const duplicate = findByChecksum(hash);
+  if (duplicate) {
+    return json(res, 409, {
+      error: { code: 'duplicate', message: 'Этот файл уже есть в библиотеке.' },
+      existing: { id: duplicate.id, title: duplicate.title, artist: duplicate.artist },
+    });
+  }
+
+  const mime = str(body.mime, 80) || 'audio/mpeg';
+  const bytes = Math.max(0, Number(body.bytes ?? body.size) || 0);
+  if (!bytes) return fail(res, 400, 'invalid_size', 'Нужен размер файла в байтах (поле bytes).');
+
+  const id = uid();
+  const peaks = Array.isArray(body.peaks)
+    ? body.peaks.slice(0, 400).map((value) => Math.max(0, Math.min(1, Number(value) || 0)))
+    : null;
+
+  try {
+    insertTrack({
+      id,
+      title: str(body.title, 300) || 'Без названия',
+      artist: str(body.artist, 120) || 'Unknown',
+      album: str(body.album, 160),
+      genre: str(body.genre, 80),
+      description: str(body.description, 2000),
+      mime,
+      ext: extForMime(mime),
+      size: bytes,
+      duration: Math.max(0, Number(body.duration) || 0),
+      peaks: peaks ? JSON.stringify(peaks) : null,
+      cover_mime: null,
+      checksum: hash,
+      created_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    log('error', 'metadata track insert failed', { error: error?.message });
+    return fail(res, 500, 'db_error', 'Не удалось сохранить трек.');
+  }
+
+  declareBlob({ hash, bytes, mime });
+  const kind = str(body.kind, 20) || 'node';
+  registerSeed({
+    hash,
+    deviceId: str(body.deviceId, 120) || DEVICE_ID,
+    kind,
+    baseUrl: str(body.baseUrl, 500) || (kind === 'origin' ? PUBLIC_URL || selfBaseUrl(req) : null),
+  });
+
+  inc('vision_track_metadata_total');
+  return json(res, 201, { ...withSources(getTrack(id, { withPeaks: true })), checksum: hash });
+}
+
 /* ------------------------------- стриминг -------------------------------- */
 
 function parseRange(header, size) {
@@ -173,15 +310,16 @@ function parseRange(header, size) {
   return { start, end: Math.min(end, size - 1) };
 }
 
-function streamAudio(req, res, track, variant = null) {
-  const meta = getTrackFile(track.id);
-  const file = variant?.file ?? path.join(MEDIA_DIR, `${track.id}.${meta?.ext}`);
-  if (!existsSync(file)) return fail(res, 404, 'file_missing', 'Файл трека не найден.');
+/**
+ * Отдача файла с Range/ETag — общая для треков (origin) и блобов (сид).
+ * `etagBase` делает ETag уникальным для источника.
+ */
+function sendFile(req, res, { file, mime, etagBase, cacheControl = 'private, max-age=3600', counters = null }) {
+  if (!existsSync(file)) return fail(res, 404, 'file_missing', 'Файл не найден.');
 
-  const mime = variant?.mime ?? meta?.mime ?? track.mime;
   const size = statSync(file).size;
   const range = parseRange(req.headers.range, size);
-  const etag = `"${createHash('sha1').update(`${track.id}:${variant?.kind ?? 'original'}:${size}`).digest('hex')}"`;
+  const etag = `"${createHash('sha1').update(`${etagBase}:${size}`).digest('hex')}"`;
 
   if (req.headers['if-none-match'] === etag && !req.headers.range) {
     res.writeHead(304, { ETag: etag });
@@ -195,22 +333,39 @@ function streamAudio(req, res, track, variant = null) {
   const headers = {
     'Content-Type': mime,
     'Accept-Ranges': 'bytes',
-    'Cache-Control': 'private, max-age=3600',
+    'Cache-Control': cacheControl,
     ETag: etag,
   };
+
+  if (req.method === 'HEAD') {
+    headers['Content-Length'] = size;
+    res.writeHead(200, headers);
+    return res.end();
+  }
 
   if (range) {
     headers['Content-Range'] = `bytes ${range.start}-${range.end}/${size}`;
     headers['Content-Length'] = range.end - range.start + 1;
     res.writeHead(206, headers);
     createReadStream(file, { start: range.start, end: range.end }).pipe(res);
-    inc('vision_stream_partial_total');
+    inc(counters?.partial ?? 'vision_stream_partial_total');
   } else {
     headers['Content-Length'] = size;
     res.writeHead(200, headers);
     createReadStream(file).pipe(res);
-    inc('vision_stream_full_total');
+    inc(counters?.full ?? 'vision_stream_full_total');
   }
+}
+
+function streamAudio(req, res, track, variant = null) {
+  const meta = getTrackFile(track.id);
+  const file = variant?.file ?? path.join(MEDIA_DIR, `${track.id}.${meta?.ext}`);
+  const mime = variant?.mime ?? meta?.mime ?? track.mime;
+  return sendFile(req, res, {
+    file,
+    mime,
+    etagBase: `${track.id}:${variant?.kind ?? 'original'}`,
+  });
 }
 
 function serveCover(req, res, track) {
@@ -405,9 +560,12 @@ async function handleUpload(req, res, url) {
   }
 
   inc('vision_upload_success_total');
+  // файл на этом узле = блоб + живой сид: трекер сразу знает, у кого он есть
+  declareBlob({ hash: checksum, bytes: received, mime: detected.mime });
+  registerSeed({ hash: checksum, deviceId: DEVICE_ID, kind: 'origin', baseUrl: PUBLIC_URL || selfBaseUrl(req) });
   // транскодинг — в фоне: ответ клиенту не ждёт ffmpeg
   enqueueTranscode(id);
-  json(res, 201, { ...getTrack(id, { withPeaks: true }), checksum });
+  json(res, 201, { ...withSources(getTrack(id, { withPeaks: true })), checksum });
 }
 
 async function handleCoverUpload(req, res, track) {
@@ -489,6 +647,19 @@ async function handleApi(req, res, url) {
         termux: Boolean(process.env.TERMUX_VERSION),
       },
       transcode: transcodeStatus(),
+      storage: {
+        mode: STORAGE_MODE,
+        seedEnabled: SEED_ENABLED,
+        deviceId: DEVICE_ID,
+        publicUrl: PUBLIC_URL || null,
+      },
+      tracker: (() => {
+        const t = trackerStats();
+        setGauge('vision_seeds_online', t.seeds);
+        setGauge('vision_blobs_total', t.blobs);
+        setGauge('vision_blobs_no_source', t.noSource);
+        return { blobs: t.blobs, seeds: t.seeds, servableBlobs: t.servableBlobs, noSource: t.noSource, ttlMs: t.ttlMs };
+      })(),
     });
   }
 
@@ -646,7 +817,10 @@ async function handleApi(req, res, url) {
 
       const stream = signMedia(id, 'stream');
       const cover = track.cover ? signMedia(id, 'cover') : null;
-      const streams = { original: `/api/tracks/${id}/stream?exp=${stream.exp}&sig=${stream.sig}` };
+      const local = track.checksum ? Boolean(localFileFor(track.checksum)) : true;
+      const streams = local
+        ? { original: `/api/tracks/${id}/stream?exp=${stream.exp}&sig=${stream.sig}` }
+        : {};
 
       for (const codec of ['opus', 'aac']) {
         if (!kinds.has(codec)) continue;
@@ -660,8 +834,16 @@ async function handleApi(req, res, url) {
         hls = `/api/tracks/${id}/hls.m3u8?exp=${signed.exp}&sig=${signed.sig}`;
       }
 
+      // файла на этом узле нет — отдаём подписанную ссылку на /download,
+      // сервер сам сделает 302 на первое живое устройство
+      let best = streams.opus ?? streams.aac ?? streams.original ?? null;
+      if (!best) {
+        const dl = signMedia(id, 'download');
+        best = `/api/tracks/${id}/download?exp=${dl.exp}&sig=${dl.sig}`;
+      }
+
       items[id] = {
-        stream: streams.opus ?? streams.aac ?? streams.original,
+        stream: best,
         streams,
         hls,
         cover: cover ? `/api/tracks/${id}/cover?exp=${cover.exp}&sig=${cover.sig}` : null,
@@ -670,6 +852,101 @@ async function handleApi(req, res, url) {
     }
 
     return json(res, 200, { ttlMs: MEDIA_TTL_MS, items });
+  }
+
+  /* ---- трекер реплик: блобы и сиды ---- */
+  if (pathname === '/api/seeds' && method === 'GET') {
+    return json(res, 200, trackerStats());
+  }
+
+  if (pathname === '/api/blobs' && method === 'POST') {
+    const body = await readJson(req).catch(() => ({}));
+    const hash = String(body.hash || '').toLowerCase();
+    if (!isHash(hash)) return fail(res, 400, 'invalid_hash', 'Нужен sha256 содержимого (64 hex).');
+    const blob = declareBlob({
+      hash,
+      bytes: Number(body.bytes ?? body.size) || 0,
+      mime: str(body.mime, 80) || 'application/octet-stream',
+    });
+    if (body.deviceId || body.kind) {
+      registerSeed({
+        hash,
+        deviceId: str(body.deviceId, 120) || DEVICE_ID,
+        kind: str(body.kind, 20) || 'node',
+        baseUrl: str(body.baseUrl, 500),
+      });
+    }
+    return json(res, 201, { blob, seeds: listSeeds(hash) });
+  }
+
+  const blobMatch = /^\/api\/blobs\/([a-f0-9]{64})(\/[a-z]+)?$/.exec(pathname);
+  if (blobMatch) {
+    const [, hash, action] = blobMatch;
+    const blob = getBlob(hash);
+    const local = localFileFor(hash);
+
+    if (!action && method === 'GET') {
+      if (!blob) return fail(res, 404, 'not_found', 'Блоб неизвестен.');
+      return json(res, 200, {
+        blob,
+        local: Boolean(local),
+        seeds: listSeeds(hash),
+        stats: seedSummary([hash]).get(hash),
+      });
+    }
+
+    if (!action && method === 'DELETE') {
+      const removed = db.prepare('DELETE FROM blobs WHERE hash = ?').run(hash).changes > 0;
+      if (!removed) return fail(res, 404, 'not_found', 'Блоб неизвестен.');
+      inc('vision_blob_deleted_total');
+      res.writeHead(204);
+      return res.end();
+    }
+
+    if (action === '/seeds' && method === 'GET') {
+      const seeds = listSeeds(hash);
+      const base = selfBaseUrl(req);
+      return json(res, 200, {
+        hash,
+        ttlMs: SEED_TTL_MS,
+        stats: seedSummary([hash]).get(hash),
+        local: Boolean(local),
+        seeds: seeds.map((seed) => ({
+          ...seed,
+          url: seed.servable ? seedUrl(seed.deviceId === DEVICE_ID ? base : seed.baseUrl, hash) : null,
+        })),
+      });
+    }
+
+    if (action === '/seed' && (method === 'POST' || method === 'DELETE')) {
+      if (method === 'DELETE') {
+        const deviceId = url.searchParams.get('deviceId') || DEVICE_ID;
+        const removed = removeSeed(hash, deviceId);
+        if (!removed) return fail(res, 404, 'not_found', 'Сид не найден.');
+        res.writeHead(204);
+        return res.end();
+      }
+
+      const body = await readJson(req).catch(() => ({}));
+      const kind = str(body.kind, 20) || 'node';
+      const registered = registerSeed({
+        hash,
+        deviceId: str(body.deviceId, 120) || DEVICE_ID,
+        kind,
+        baseUrl: str(body.baseUrl, 500) || (kind === 'origin' ? PUBLIC_URL || selfBaseUrl(req) : null),
+        ttlHint: true,
+      });
+      return json(res, 200, { ...registered, stats: seedSummary([hash]).get(hash) });
+    }
+
+    if (action === '/replicate' && method === 'POST') {
+      const result = await adoptBlob(hash);
+      if (!result.ok) return fail(res, 409, result.reason || 'replicate_failed', 'Не удалось забрать файл с сидов.');
+      inc('vision_blob_replicated_total');
+      return json(res, 200, { ...result, stats: seedSummary([hash]).get(hash) });
+    }
+
+    return fail(res, 404, 'not_found', 'Неизвестное действие с блобом.');
   }
 
   /* ---- треки ---- */
@@ -683,7 +960,7 @@ async function handleApi(req, res, url) {
         limit: url.searchParams.get('limit') || 50,
         offset: url.searchParams.get('offset') || 0,
       };
-      const items = listTracks(filters);
+      const items = withSources(listTracks(filters), { selfBase: selfBaseUrl(req) });
       const total = countTracks(filters);
       return json(res, 200, items, {
         'X-Total-Count': String(total),
@@ -691,7 +968,18 @@ async function handleApi(req, res, url) {
         'X-Offset': String(filters.offset),
       });
     }
-    if (method === 'POST') return handleUpload(req, res, url);
+    if (method === 'POST') {
+      const type = String(req.headers['content-type'] || '').toLowerCase();
+      const json = type.includes('application/json');
+      if (json && STORAGE_MODE !== 'metadata') {
+        return fail(
+          res, 415, 'upload_expected',
+          'Сервер хранит файлы сам (STORAGE_MODE=local) — загрузите аудио. Метаданные без файла принимаются в режиме metadata.'
+        );
+      }
+      if (json) return handleMetadataUpload(req, res);
+      return handleUpload(req, res, url);
+    }
     return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
   }
 
@@ -701,7 +989,12 @@ async function handleApi(req, res, url) {
     const track = getTrack(id, { withPeaks: true });
     if (!track) return fail(res, 404, 'not_found', 'Трек не найден.');
 
-    if (!action && method === 'GET') return json(res, 200, { ...track, variants: listVariants(id) });
+    if (!action && method === 'GET') {
+      return json(res, 200, {
+        ...withSources(track, { selfBase: selfBaseUrl(req) }),
+        variants: listVariants(id),
+      });
+    }
 
     if (!action && method === 'PATCH') {
       let body;
@@ -723,7 +1016,7 @@ async function handleApi(req, res, url) {
       if ('liked' in body) patch.liked = Boolean(body.liked);
       if (!Object.keys(patch).length) return fail(res, 400, 'nothing_to_update', 'Нет полей для обновления.');
 
-      return json(res, 200, updateTrackFields(id, patch));
+      return json(res, 200, withSources(updateTrackFields(id, patch), { selfBase: selfBaseUrl(req) }));
     }
 
     if (!action && method === 'DELETE') {
@@ -770,6 +1063,34 @@ async function handleApi(req, res, url) {
       }
     }
 
+    if (action === '/download' && (method === 'GET' || method === 'HEAD')) {
+      const allowed = authoriseMedia(req, url, id, 'download');
+      if (!allowed) return fail(res, 401, 'unauthorized', 'Ссылка истекла.');
+
+      const resolved = resolveDownload(track, { selfBase: selfBaseUrl(req) });
+      const wantsJson = url.searchParams.get('json') === '1'
+        || String(req.headers.accept || '').includes('application/json');
+
+      if (!resolved) {
+        inc('vision_download_no_source_total');
+        return fail(res, 409, 'no_source', 'Ни одно устройство сейчас не раздаёт этот файл.');
+      }
+
+      if (wantsJson) {
+        const blob = track.checksum ? getBlob(track.checksum) : null;
+        return json(res, 200, {
+          ...resolved,
+          bytes: blob?.bytes ?? track.size,
+          mime: blob?.mime ?? track.mime,
+          seeds: track.checksum ? listSeeds(track.checksum) : [],
+        });
+      }
+
+      inc('vision_download_redirect_total');
+      res.writeHead(302, { Location: resolved.url, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+
     if (action === '/play' && method === 'POST') {
       db.prepare('UPDATE tracks SET plays = plays + 1 WHERE id = ?').run(id);
       inc('vision_play_total');
@@ -793,7 +1114,11 @@ async function handleApi(req, res, url) {
   /* ---- история ---- */
   if (pathname === '/api/history') {
     if (method === 'GET') {
-      return json(res, 200, listHistory(url.searchParams.get('limit') || 12));
+      const history = listHistory(url.searchParams.get('limit') || 12).map((entry) => ({
+        ...entry,
+        track: withSources(entry.track, { selfBase: selfBaseUrl(req) }),
+      }));
+      return json(res, 200, history);
     }
     if (method === 'DELETE') {
       clearHistory();
@@ -847,7 +1172,7 @@ async function handleApi(req, res, url) {
 
     if (sub === '/tracks' && method === 'GET') {
       const filters = { playlistId, limit: 500, offset: 0 };
-      return json(res, 200, listTracks(filters), {
+      return json(res, 200, withSources(listTracks(filters), { selfBase: selfBaseUrl(req) }), {
         'X-Total-Count': String(countTracks(filters)),
       });
     }
@@ -945,6 +1270,7 @@ const server = createServer(async (req, res) => {
       if (provided !== metricsToken) return fail(res, 401, 'unauthorized', 'Нужен METRICS_TOKEN.');
     }
     const s = stats();
+    const tracker = trackerStats();
     const free = freeDiskMb();
     res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
     return res.end(renderMetrics({
@@ -954,6 +1280,9 @@ const server = createServer(async (req, res) => {
       vision_playlists_total: s.playlists,
       vision_storage_bytes: s.bytes,
       vision_disk_free_bytes: free === null ? null : free * 1024 * 1024,
+      vision_blobs_total: tracker.blobs,
+      vision_seeds_online: tracker.seeds,
+      vision_blobs_no_source: tracker.noSource,
     }));
   }
 
@@ -976,6 +1305,9 @@ const server = createServer(async (req, res) => {
   res.on('finish', finish);
 
   try {
+    if (url.pathname.startsWith('/seed/')) {
+      return handleSeed(req, res, url, url.pathname);
+    }
     if (url.pathname.startsWith('/api/')) {
       const internal = versionedPath(url.pathname);
       const target = internal === url.pathname ? url : new URL(`${internal}${url.search}`, 'http://internal');
@@ -992,7 +1324,31 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  log('info', 'server started', { host: HOST, port: PORT, data: DATA_DIR, version: VERSION });
+  log('info', 'server started', {
+    host: HOST,
+    port: PORT,
+    data: DATA_DIR,
+    version: VERSION,
+    storage: STORAGE_MODE,
+    seeding: SEED_ENABLED,
+    device: DEVICE_ID,
+  });
+
+  // Трекер знает про этот узел, только пока идёт heartbeat: раз в минуту.
+  const beat = () => {
+    try {
+      const count = heartbeatSelf();
+      const stale = reconcileSelf();
+      const pruned = pruneSeeds();
+      if (count || stale || pruned) {
+        log('info', 'seed heartbeat', { blobs: count, reconciled: stale, pruned });
+      }
+    } catch (error) {
+      log('error', 'seed heartbeat failed', { error: error?.message });
+    }
+  };
+  beat();
+  setInterval(beat, 60_000).unref();
   if (process.env.TRANSCODE_BACKFILL === '1') {
     void backfillVariants().then((count) => {
       if (count) log('info', 'transcode backfill queued', { tracks: count });

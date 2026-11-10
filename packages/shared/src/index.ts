@@ -17,7 +17,28 @@ export type Track = {
   cover: boolean;
   plays: number;
   liked: boolean;
+  /** sha256 содержимого — адрес блоба в распределённом хранилище */
+  checksum?: string | null;
+  /** кто и как может отдать файл (трекер реплик) */
+  sources?: TrackSources;
+  /** можно ли воспроизвести: файл локально или есть живой сид */
+  available?: boolean;
   createdAt: string;
+};
+
+/**
+ * Реплики трека по данным трекера.
+ * `servable` — устройства, которые реально отдадут файл по HTTP;
+ * `replicas` — копии, которые есть, но раздавать не умеют (браузер, телефон);
+ * `local` — файл лежит на узле, к которому обращается клиент.
+ */
+export type TrackSources = {
+  hash: string | null;
+  local: boolean;
+  servable: number;
+  replicas: number;
+  devices: number;
+  kinds: Record<string, number>;
 };
 
 export type Playlist = {
@@ -39,6 +60,80 @@ export type Stats = {
   diskFreeMb: number | null;
   version: string;
   genres: { genre: string; count: number }[];
+};
+
+/** Сид блоба: устройство, которое раздаёт конкретный файл. */
+export type BlobSeed = {
+  deviceId: string;
+  kind: 'origin' | 'node' | 'desktop' | 'mobile' | 'browser' | string;
+  baseUrl: string | null;
+  servable: boolean;
+  onlineAt: string;
+  ageMs: number;
+  /** подписанная ссылка на файл (только для раздающих) */
+  url?: string | null;
+};
+
+export type BlobInfo = {
+  hash: string;
+  bytes: number;
+  mime: string;
+  createdAt: string;
+};
+
+export type SeedStats = {
+  servable: number;
+  replicas: number;
+  devices: number;
+  kinds: Record<string, number>;
+};
+
+export type SeedAnnouncement = {
+  hash: string;
+  deviceId?: string;
+  kind?: 'origin' | 'node' | 'desktop' | 'mobile' | 'browser' | string;
+  baseUrl?: string | null;
+};
+
+export type BlobState = {
+  blob: BlobInfo;
+  local: boolean;
+  seeds: BlobSeed[];
+  stats: SeedStats;
+};
+
+export type SeedList = {
+  hash: string;
+  ttlMs: number;
+  stats: SeedStats;
+  local: boolean;
+  seeds: BlobSeed[];
+};
+
+export type TrackerStats = {
+  mode: 'local' | 'metadata';
+  seedEnabled: boolean;
+  deviceId: string;
+  publicUrl: string | null;
+  seedDir: string;
+  ttlMs: number;
+  blobs: number;
+  seeds: number;
+  replicas: number;
+  servableBlobs: number;
+  localBlobs: number;
+  noSource: number;
+};
+
+/** Куда идти за файлом: свой узел или конкретный сид. */
+export type DownloadTarget = {
+  url: string;
+  local: boolean;
+  seed: BlobSeed | null;
+  hash: string;
+  bytes?: number;
+  mime?: string;
+  seeds?: BlobSeed[];
 };
 
 export type TrackPage = {
@@ -291,6 +386,62 @@ export function createClient(options: ClientOptions = {}) {
         };
       }
       return { ttlMs: payload.ttlMs, items };
+    },
+
+    /* ---------------- трекер реплик: блобы и сиды ---------------- */
+
+    /** Сводка трекера этого узла: сколько блобов, сидов и треков без источника. */
+    tracker() {
+      return request<TrackerStats>('/api/seeds');
+    },
+
+    /** Состояние блоба: размер, mime, живые сиды. */
+    blob(hash: string) {
+      return request<BlobState>(`/api/blobs/${hash}`);
+    },
+
+    /** Сиды блоба с подписанными ссылками (30 минут). */
+    blobSeeds(hash: string) {
+      return request<SeedList>(`/api/blobs/${hash}/seeds`);
+    },
+
+    /**
+     * Объявить себя сидом (heartbeat). Для браузера/телефона — `kind: 'browser'`
+     * без baseUrl: это «у меня есть копия», раздавать по HTTP они не умеют.
+     */
+    announceSeed(seed: SeedAnnouncement) {
+      return request<BlobSeed & { stats: SeedStats }>(`/api/blobs/${seed.hash}/seed`, {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: seed.deviceId,
+          kind: seed.kind,
+          baseUrl: seed.baseUrl ?? undefined,
+        }),
+      });
+    },
+
+    /** Убрать себя из реестра (удалили копию). */
+    withdrawSeed(hash: string, deviceId: string) {
+      return request<void>(`/api/blobs/${hash}/seed?deviceId=${encodeURIComponent(deviceId)}`, {
+        method: 'DELETE',
+      });
+    },
+
+    /** Забрать файл с живого сида на этот узел (с проверкой sha256). */
+    replicateBlob(hash: string) {
+      return request<{ ok: boolean; bytes?: number; already?: boolean; from?: string; stats: SeedStats }>(
+        `/api/blobs/${hash}/replicate`,
+        { method: 'POST', body: '{}' }
+      );
+    },
+
+    /**
+     * Куда идти за файлом: локальный стрим, живой сид или «нет источника» (409).
+     * Возвращает абсолютную подписанную ссылку.
+     */
+    async downloadTarget(trackId: string): Promise<DownloadTarget> {
+      const target = await request<DownloadTarget>(`/api/tracks/${trackId}/download?json=1`);
+      return { ...target, url: target.url.startsWith('/') ? `${baseUrl}${target.url}` : target.url };
     },
 
     /**

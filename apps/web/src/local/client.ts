@@ -1,12 +1,16 @@
 import type {
+  BlobSeed,
+  DownloadTarget,
   ExternalTrack,
   HistoryEntry,
   ImportResult,
   MediaMap,
   Playlist,
+  SeedStats,
   Stats,
   Track,
   TrackQuery,
+  TrackerStats,
   UploadMeta,
   VisionClient,
 } from '@vision/shared';
@@ -20,7 +24,7 @@ import type {
 const DB_NAME = 'vision-audio-local';
 const DB_VERSION = 1;
 const LOCAL_TOKEN = 'local';
-const VERSION = '0.8.1-local';
+const VERSION = '0.9.0-local';
 
 type StoredTrack = Track & { blob: Blob };
 type StoredPlaylist = {
@@ -253,6 +257,80 @@ export class LocalClient {
       if (url) items[id] = { stream: url, cover: null, expiresAt: new Date(Date.now() + 86400000).toISOString() };
     }
     return { ttlMs: 86400000, items };
+  }
+
+  /* --------- трекер реплик: в локальном режиме его нет ---------
+     Вся библиотека уже в IndexedDB, поэтому «источники» не нужны: интерфейс
+     получает пустые значения и просто не показывает значки распределённого
+     хранилища. Так Pages-версия остаётся работоспособной без сервера. */
+
+  async tracker(): Promise<TrackerStats> {
+    const tracks = await this.tracks({ limit: 2000 });
+    return {
+      mode: 'local',
+      seedEnabled: false,
+      deviceId: 'browser-local',
+      publicUrl: null,
+      seedDir: 'indexeddb',
+      ttlMs: 0,
+      blobs: tracks.length,
+      seeds: 0,
+      replicas: 0,
+      servableBlobs: 0,
+      localBlobs: tracks.length,
+      noSource: 0,
+    };
+  }
+
+  async blob(hash: string) {
+    return {
+      blob: { hash, bytes: 0, mime: 'application/octet-stream', createdAt: new Date().toISOString() },
+      local: true,
+      seeds: [] as BlobSeed[],
+      stats: { servable: 1, replicas: 0, devices: 1, kinds: { browser: 1 } } as SeedStats,
+    };
+  }
+
+  async blobSeeds(hash: string) {
+    return {
+      hash,
+      ttlMs: 0,
+      stats: { servable: 1, replicas: 0, devices: 1, kinds: { browser: 1 } } as SeedStats,
+      local: true,
+      seeds: [] as BlobSeed[],
+    };
+  }
+
+  async announceSeed(seed: { hash: string; deviceId?: string; kind?: string; baseUrl?: string | null }) {
+    return {
+      hash: seed.hash,
+      deviceId: seed.deviceId ?? 'browser-local',
+      kind: seed.kind ?? 'browser',
+      baseUrl: null,
+      servable: false,
+      onlineAt: new Date().toISOString(),
+      ageMs: 0,
+      stats: { servable: 1, replicas: 0, devices: 1, kinds: { browser: 1 } } as SeedStats,
+    };
+  }
+
+  async withdrawSeed(): Promise<void> {
+    /* в локальном режиме реестра нет */
+  }
+
+  async replicateBlob(_hash: string) {
+    return {
+      ok: true,
+      already: true,
+      stats: { servable: 1, replicas: 0, devices: 1, kinds: { browser: 1 } } as SeedStats,
+    };
+  }
+
+  async downloadTarget(id: string): Promise<DownloadTarget> {
+    const map = await this.media([id]);
+    const item = map.items[id];
+    if (!item?.stream) throw new Error('Файл ещё не готов.');
+    return { url: item.stream, local: true, seed: null, hash: '' };
   }
 
   async tracksPage(query: TrackQuery = {}) {

@@ -1,4 +1,4 @@
-# API v0.4.0
+# API v0.9.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -44,6 +44,70 @@ TTL задаётся `MEDIA_URL_TTL_MS` (по умолчанию 30 минут).
 `HMAC-SHA256(secret, "<trackId>:<stream|cover>:<exp>")` в base64url и проверяется
 через `timingSafeEqual`; просроченная или изменённая подпись → `401`.
 
+## Трекер реплик и сиды
+
+Файлы могут лежать не на сервере, а на устройствах: сервер хранит метаданные,
+реестр реплик и выдаёт подписанные ссылки на сидов. Подробная модель —
+`docs/DISTRIBUTED.md`.
+
+### GET /api/tracks/:id/download
+→ `302 Location: <сид>` на подписанную ссылку `/seed/<hash>?exp&sig` (свой узел или
+живое устройство). Если файла сейчас нет ни у кого — `409 no_source`.
+С `?json=1` или `Accept: application/json` вместо редиректа возвращается объект:
+
+```json
+{ "url": "http://node-a:4000/seed/a2c9…?exp=1794319680&sig=…",
+  "local": false, "hash": "a2c9…", "bytes": 7340032, "mime": "audio/mpeg",
+  "seed": { "deviceId": "node-a", "kind": "node", "servable": true, "ageMs": 1200 },
+  "seeds": [ … ] }
+```
+
+### GET /seed/:hash?exp&sig
+Отдача файла **этим** устройством: `200/206` (Range, ETag, HEAD), `401` — подпись
+неверна, `403` — `SEED_ENABLED=0`, `404 not_here` — файла нет на этом устройстве.
+Подпись живёт 30 минут и общая для всех узлов (один `VISION_SECRET`).
+
+### POST /api/blobs
+```json
+{ "hash": "sha256", "bytes": 7340032, "mime": "audio/mpeg" }
+```
+→ `201 { blob, seeds }`. Если передан `deviceId`/`kind`/`baseUrl` — сразу создаётся
+запись сида.
+
+### GET /api/blobs/:hash → `{ blob, local, seeds, stats }`
+### DELETE /api/blobs/:hash → `204`
+
+### GET /api/blobs/:hash/seeds
+```json
+{ "hash": "…", "ttlMs": 180000, "local": true,
+  "stats": { "servable": 1, "replicas": 2, "devices": 3, "kinds": { "node": 1, "browser": 2 } },
+  "seeds": [ { "deviceId": "node-a", "kind": "node", "baseUrl": "http://…",
+               "servable": true, "onlineAt": "…", "ageMs": 900, "url": "http://…/seed/…?exp&sig" } ] }
+```
+
+### POST /api/blobs/:hash/seed
+Heartbeat устройства: `{ "deviceId": "termux", "kind": "node", "baseUrl": "http://…" }`.
+Виды: `origin` (узел, где загрузили файл), `node`, `desktop` — раздают; `mobile` и
+`browser` — только «копия есть» (раздавать по HTTP не умеют). Живёт `SEED_TTL_MS`
+(3 минуты) для раздающих и 30 дней для реплик.
+
+### DELETE /api/blobs/:hash/seed?deviceId=termux → `204`
+### POST /api/blobs/:hash/replicate
+Забирает файл с первого живого сида, сверяет `sha256` и начинает раздавать его сам.
+→ `200 { ok, bytes, already, from, stats }`, `409 no_source` — брать не у кого.
+
+### GET /api/seeds
+```json
+{ "mode": "local", "seedEnabled": true, "deviceId": "origin", "publicUrl": null,
+  "seedDir": "/data/seed", "ttlMs": 180000, "blobs": 9, "seeds": 3, "replicas": 2,
+  "servableBlobs": 9, "localBlobs": 9, "noSource": 0 }
+```
+
+### Поля трека, связанные с репликами
+`checksum` — sha256 содержимого; `sources` — `{ hash, local, servable, replicas,
+devices, kinds }`; `available` — `false`, если файла нет ни локально, ни у живых сидов
+(в интерфейсе такой трек помечается «нет источника»).
+
 ## Auth
 
 ### POST /api/auth/login
@@ -71,6 +135,15 @@ Query: `q`, `genre`, `liked=1`, `sort`, `limit` (1–2000, по умолчани
 `GET /api/tracks/:id`.
 
 ### POST /api/tracks
+Два режима по `Content-Type`:
+- `audio/*`, `application/octet-stream` — загрузка файла (тело запроса), сервер сам
+  становится `origin`-сидом. Метаданные — в query: `?title=&artist=&album=&genre=&duration=&peaks=`.
+- `application/json` — **только метаданные** (`STORAGE_MODE=metadata`):
+  `{ "hash": "sha256", "bytes": 7340032, "mime": "audio/mpeg", "title": "…",
+     "artist": "…", "duration": 214, "peaks": [0.1, …],
+     "deviceId": "laptop", "kind": "desktop", "baseUrl": "http://192.168.1.20:4000" }`
+  → `201` с треком и `sources`; `415 upload_expected`, если сервер в режиме `local`.
+
 Query: `title`, `artist`, `album`, `genre`, `description`, `duration`, `filename`,
 `peaks` (JSON-строка, до 16 КБ).
 Body: сырые байты аудио.
