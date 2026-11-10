@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { formatDuration, type Playlist, type Track } from '@vision/shared';
-import { api } from './api';
+import { formatBytes, formatDuration, type HistoryEntry, type Playlist, type Track } from '@vision/shared';
+import { api, IS_LOCAL_MODE } from './api';
 import { TrackList } from './components/TrackList';
 import { useLibrary } from './state/library';
 import { usePlayer } from './state/player';
-import { Icon, useToast } from './ui';
+import { Cover, Icon, useToast } from './ui';
 
 type LibraryProps = {
   search: string;
@@ -41,12 +41,49 @@ function useFilteredTracks(tracks: Track[], search: string, genre: string | null
   }, [tracks, search, genre, sort]);
 }
 
+/**
+ * Поиск на сервере (FTS5) — используется, когда запрос осмысленный и мы не
+ * в локальном режиме. Локальная фильтрация остаётся фолбэком и живёт в
+ * IndexedDB-режиме, где сервера нет вовсе.
+ */
+function useServerSearch(search: string, sort: SortValue) {
+  const [result, setResult] = useState<{ items: Track[]; total: number } | null>(null);
+  const query = search.trim();
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE || query.length < 2) {
+      setResult(null);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      api
+        .tracksPage({ q: query, sort: sort === 'recent' ? 'recent' : sort, limit: 100 })
+        .then((page) => {
+          if (alive) setResult(page);
+        })
+        .catch(() => {
+          if (alive) setResult(null);
+        });
+    }, 180);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [query, sort]);
+
+  return result;
+}
+
 export function LibraryPage({ search, onUpload }: LibraryProps) {
   const { tracks, stats, loading } = useLibrary();
   const player = usePlayer();
   const [genre, setGenre] = useState<string | null>(null);
   const [sort, setSort] = useState<SortValue>('recent');
-  const filtered = useFilteredTracks(tracks, search, genre, sort);
+  const localFiltered = useFilteredTracks(tracks, search, genre, sort);
+  const remote = useServerSearch(search, sort);
+  const filtered = remote && !genre ? remote.items : localFiltered;
+  const searching = Boolean(remote && !genre);
 
   const genres = stats?.genres ?? [];
 
@@ -56,7 +93,8 @@ export function LibraryPage({ search, onUpload }: LibraryProps) {
         <div>
           <h1>Библиотека</h1>
           <p>
-            {tracks.length} треков · {formatDuration(stats?.duration ?? 0)} звучания
+            {searching ? `Найдено: ${remote?.total ?? 0}` : `${tracks.length} треков`} ·{' '}
+            {formatDuration(stats?.duration ?? 0)} звучания
           </p>
         </div>
         <div className="page__tools">
@@ -102,6 +140,8 @@ export function LibraryPage({ search, onUpload }: LibraryProps) {
         </div>
       )}
 
+      {!search && !genre && <ContinueListening />}
+
       {loading ? (
         <div className="skeleton-list">
           {Array.from({ length: 6 }).map((_, index) => (
@@ -121,6 +161,79 @@ export function LibraryPage({ search, onUpload }: LibraryProps) {
           emptyAction={search ? undefined : { label: 'Загрузить трек', onClick: onUpload }}
         />
       )}
+    </section>
+  );
+}
+
+/** Блок «Продолжить слушать»: последние прослушивания с позицией. */
+function ContinueListening() {
+  const { tracks } = useLibrary();
+  const player = usePlayer();
+  const [items, setItems] = useState<HistoryEntry[]>([]);
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) return;
+    let alive = true;
+    api
+      .history(12)
+      .then((entries) => {
+        if (!alive) return;
+        setItems(entries.filter((entry) => !entry.completed && entry.position > 3));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [player.current?.id]);
+
+  if (!items.length) return null;
+
+  const list = items
+    .map((entry) => tracks.find((track) => track.id === entry.track.id))
+    .filter((track): track is Track => Boolean(track));
+
+  return (
+    <section className="continue" aria-labelledby="continue-title">
+      <div className="continue__head">
+        <h2 id="continue-title">Продолжить слушать</h2>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={() => {
+            setItems([]);
+            void api.clearHistory().catch(() => {});
+          }}
+        >
+          Очистить
+        </button>
+      </div>
+      <div className="continue__row">
+        {items.map((entry) => {
+          const track = tracks.find((item) => item.id === entry.track.id);
+          if (!track) return null;
+          const percent = entry.duration ? Math.min(100, (entry.position / entry.duration) * 100) : 0;
+          return (
+            <button
+              key={entry.track.id}
+              type="button"
+              className="continue-card"
+              onClick={() => player.playAt(track, list, entry.position)}
+            >
+              <Cover track={track} size={64} />
+              <span className="continue-card__body">
+                <strong>{track.title}</strong>
+                <span className="muted">{track.artist}</span>
+                <span className="continue-card__bar" aria-hidden="true">
+                  <i style={{ width: `${percent}%` }} />
+                </span>
+                <span className="continue-card__time">
+                  {formatDuration(entry.position)} / {formatDuration(entry.duration || track.duration)}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -407,6 +520,10 @@ export function StatsPage() {
             <div>
               <dt>Общее звучание</dt>
               <dd>{formatDuration(stats?.duration ?? 0)}</dd>
+            </div>
+            <div>
+              <dt>Размер медиатеки</dt>
+              <dd>{formatBytes(stats?.bytes ?? 0)}</dd>
             </div>
             <div>
               <dt>Свободно на диске</dt>

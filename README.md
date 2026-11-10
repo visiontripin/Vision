@@ -42,7 +42,7 @@ Web-версия умеет работать **полностью в брауз�
 | Платформа | Технология | Состояние |
 |-----------|-----------|-----------|
 | Web | React 19 + TS + Vite | ✅ MVP работает: вход, загрузка с волной, библиотека, поиск, плеер, плейлисты, лайки, статистика. Есть локальный режим (IndexedDB) для GitHub Pages |
-| API | Node 22 (`node:http` + `node:sqlite`) | ✅ стриминг с Range/206, загрузка с проверкой magic bytes, контрактные тесты |
+| API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.2.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics` |
 | Android / iOS | React Native (Expo) | 🟡 каркас + вход/библиотека/плеер, нужны сборки и фоновое аудио |
 | Windows / Linux | Tauri 2 | 🟡 каркас + медиа-клавиши, нужна сборка на целевых ОС |
 
@@ -73,7 +73,7 @@ npm run dev              # Vite на :5173, проксирует /api
 Тесты API:
 
 ```bash
-npm test                 # 9 контрактных тестов API: auth, upload, range, playlists, delete
+npm test                 # 14 контрактных тестов API: auth, upload+теги, дедуп, FTS, media, range, history, metrics
 npm run test:local       # 3 теста локального режима (IndexedDB через fake-indexeddb)
 npm run test:all         # всё вместе
 ```
@@ -111,14 +111,18 @@ data/             runtime: медиа, обложки, БД (в git не поп�
 | `PORT` | `4000` | порт API |
 | `HOST` | `0.0.0.0` | интерфейс |
 | `VISION_PASSWORD` | `vision` | пароль владельца |
-| `VISION_SECRET` | HMAC от пароля | ключ подписи токенов (задайте свой в продакшене) |
+| `VISION_SECRET` | HMAC от пароля | ключ подписи токенов и медиа-ссылок (задайте свой в продакшене) |
+| `MEDIA_URL_TTL_MS` | `1800000` | срок жизни подписанных ссылок на поток и обложку |
+| `METRICS_TOKEN` | — | если задан, `/metrics` требует Bearer |
 | `DATA_DIR` | `./data` | медиа, обложки, SQLite |
 | `DB_FILE` | `$DATA_DIR/vision.db` | путь к БД |
 
 ## Заметки по безопасности
 
-- Токен — HMAC-SHA256, живёт 30 дней, передаётся в `Authorization: Bearer`;
-  для `<audio>`/`<img>` (они не умеют заголовки) разрешён `?token=`.
+- Токен — HMAC-SHA256, живёт 30 дней, передаётся только в `Authorization: Bearer`;
+  для `<audio>`/`<img>` (они не умеют заголовки) выдаются короткоживущие
+  подписанные ссылки `GET /api/media?ids=` (HMAC + TTL, по умолчанию 30 минут).
+  Токен в URL не попадает — в v0.2.0 `?token=` удалён.
 - Загрузка проверяется по magic bytes, а не по расширению; имена файлов на диске — UUID.
 - `path.resolve` + проверка префикса исключают path traversal в статике.
 - Rate limit на вход: 10 попыток / 5 минут на IP.

@@ -108,8 +108,12 @@ function LibraryScreen() {
 
   const open = useCallback(async (track: Track) => {
     await soundRef.current?.unloadAsync();
+    // ссылки подписанные и короткоживущие — запрашиваем свежую перед стартом
+    const media = await client.media([track.id]).catch(() => null);
+    const uri = media?.items[track.id]?.stream;
+    if (!uri) return;
     const { sound } = await Audio.Sound.createAsync(
-      { uri: client.streamUrl(track.id) },
+      { uri },
       { shouldPlay: true },
       (status: AVPlaybackStatus) => {
         if (!status.isLoaded) return;

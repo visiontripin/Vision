@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const PASSWORD = process.env.VISION_PASSWORD || 'vision';
 export const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -124,6 +124,55 @@ export async function readJson(req) {
   } catch {
     throw new Error('invalid_json');
   }
+}
+
+/* ----------------------------- подписанные URL ---------------------------- */
+
+export const MEDIA_TTL_MS = Number(process.env.MEDIA_URL_TTL_MS || 30 * 60 * 1000);
+
+/**
+ * Короткоживущая подпись для медиа. Нужна потому, что <audio>/<img> не умеют
+ * отправлять Authorization. В отличие от «вечного» токена в query, подпись
+ * привязана к конкретному треку и ресурсу и истекает.
+ */
+export function signMedia(trackId, kind, ttlMs = MEDIA_TTL_MS) {
+  const exp = Date.now() + ttlMs;
+  const payload = `${trackId}:${kind}:${exp}`;
+  const sig = createHmac('sha256', SECRET).update(payload).digest('base64url');
+  return { exp, sig };
+}
+
+export function verifyMedia(trackId, kind, exp, sig) {
+  if (!exp || !sig) return false;
+  const expires = Number(exp);
+  if (!Number.isFinite(expires) || expires < Date.now()) return false;
+
+  const expected = createHmac('sha256', SECRET).update(`${trackId}:${kind}:${exp}`).digest('base64url');
+  const a = Buffer.from(String(sig));
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+export function mediaUrls(track, base = '') {
+  const stream = signMedia(track.id, 'stream');
+  const cover = signMedia(track.id, 'cover');
+  return {
+    stream: `${base}/api/tracks/${track.id}/stream?exp=${stream.exp}&sig=${stream.sig}`,
+    cover: track.cover ? `${base}/api/tracks/${track.id}/cover?exp=${cover.exp}&sig=${cover.sig}` : null,
+    expiresAt: new Date(stream.exp).toISOString(),
+  };
+}
+
+/* --------------------------------- логи ---------------------------------- */
+
+const isProd = process.env.NODE_ENV === 'production';
+
+export function log(level, message, fields = {}) {
+  const entry = { ts: new Date().toISOString(), level, msg: message, ...fields };
+  const line = isProd ? JSON.stringify(entry) : `${entry.ts} ${level.toUpperCase()} ${message} ${Object.keys(fields).length ? JSON.stringify(fields) : ''}`;
+  if (level === 'error') console.error(line);
+  else console.log(line);
 }
 
 export function uid() {

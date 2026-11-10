@@ -1,60 +1,12 @@
-import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, existsSync } from 'node:fs';
-import path from 'node:path';
+import { db, DATA_DIR, MEDIA_DIR, COVER_DIR } from './connection.js';
+import { runMigrations, migrationStatus } from './migrations/index.js';
 
-const ROOT = path.resolve(import.meta.dirname, '..', '..', '..');
-export const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
-export const MEDIA_DIR = path.join(DATA_DIR, 'media');
-export const COVER_DIR = path.join(DATA_DIR, 'covers');
+await runMigrations();
 
-for (const dir of [DATA_DIR, MEDIA_DIR, COVER_DIR]) {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-}
+export { db, DATA_DIR, MEDIA_DIR, COVER_DIR, migrationStatus };
 
-export const db = new DatabaseSync(process.env.DB_FILE || path.join(DATA_DIR, 'vision.db'));
+/* ------------------------------- маппинг -------------------------------- */
 
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
-
-  CREATE TABLE IF NOT EXISTS tracks (
-    id          TEXT PRIMARY KEY,
-    title       TEXT NOT NULL,
-    artist      TEXT NOT NULL DEFAULT 'Unknown',
-    album       TEXT,
-    genre       TEXT,
-    description TEXT,
-    mime        TEXT NOT NULL,
-    ext         TEXT NOT NULL,
-    size        INTEGER NOT NULL,
-    duration    REAL NOT NULL DEFAULT 0,
-    peaks       TEXT,
-    cover_mime  TEXT,
-    plays       INTEGER NOT NULL DEFAULT 0,
-    liked       INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS playlists (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT,
-    created_at  TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS playlist_tracks (
-    playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
-    track_id    TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    position    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (playlist_id, track_id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_tracks_created ON tracks(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_tracks_liked ON tracks(liked);
-  CREATE INDEX IF NOT EXISTS idx_playlist_tracks ON playlist_tracks(playlist_id, position);
-`);
-
-/** @param {any} row */
 export function toTrack(row, { withPeaks = false } = {}) {
   if (!row) return null;
   return {
@@ -75,42 +27,86 @@ export function toTrack(row, { withPeaks = false } = {}) {
   };
 }
 
+/* --------------------------------- поиск --------------------------------- */
+
 const SORTS = {
-  recent: 'created_at DESC',
-  oldest: 'created_at ASC',
-  title: 'title COLLATE NOCASE ASC',
-  plays: 'plays DESC, created_at DESC',
-  duration: 'duration DESC',
+  relevance: 'f.rank',
+  recent: 't.created_at DESC',
+  oldest: 't.created_at ASC',
+  title: 't.title COLLATE NOCASE ASC',
+  plays: 't.plays DESC, t.created_at DESC',
+  duration: 't.duration DESC',
 };
 
-export function listTracks({ q, genre, liked, sort = 'recent', limit = 500, playlistId }) {
-  const where = [];
+/** Экранирует пользовательский ввод в FTS5-запрос: префиксный поиск по словам. */
+export function toMatchQuery(input) {
+  const tokens = String(input)
+    .replace(/["'^*:()\-]/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .slice(0, 8);
+  if (!tokens.length) return null;
+  return tokens.map((token) => `"${token}"*`).join(' AND ');
+}
+
+function buildQuery({ q, genre, liked, playlistId, sort = 'recent' }) {
+  const joins = [];
+  const joinParams = [];
+
+  if (playlistId) {
+    joins.push('JOIN playlist_tracks pt ON pt.track_id = t.id AND pt.playlist_id = ?');
+    joinParams.push(playlistId);
+  }
+
+  const match = q ? toMatchQuery(q) : null;
+  if (match) joins.push('JOIN tracks_fts f ON f.id = t.id');
+
+  const clauses = [];
   const params = [];
-  if (q) {
-    where.push('(title LIKE ? OR artist LIKE ? OR album LIKE ? OR genre LIKE ?)');
+
+  if (match) {
+    clauses.push('tracks_fts MATCH ?');
+    params.push(match);
+  } else if (q) {
+    clauses.push('(t.title LIKE ? OR t.artist LIKE ? OR t.album LIKE ? OR t.genre LIKE ?)');
     const like = `%${q}%`;
     params.push(like, like, like, like);
   }
+
   if (genre) {
-    where.push('genre = ?');
+    clauses.push('t.genre = ?');
     params.push(genre);
   }
-  if (liked) where.push('liked = 1');
+  if (liked) clauses.push('t.liked = 1');
 
-  let join = '';
-  if (playlistId) {
-    join = 'JOIN playlist_tracks pt ON pt.track_id = t.id AND pt.playlist_id = ?';
-    params.unshift(playlistId);
-  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const order = playlistId
     ? 'pt.position ASC, t.created_at DESC'
-    : SORTS[sort] || SORTS.recent;
+    : SORTS[match ? (sort === 'recent' ? 'relevance' : sort) : sort] || SORTS.recent;
 
-  const sql = `SELECT t.* FROM tracks t ${join}
-    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY ${order} LIMIT ?`;
-  params.push(Math.min(Number(limit) || 500, 2000));
-  return db.prepare(sql).all(...params).map((r) => toTrack(r));
+  return {
+    from: `FROM tracks t ${joins.join(' ')} ${where}`,
+    params: [...joinParams, ...params],
+    order,
+  };
+}
+
+export function listTracks(filters = {}) {
+  const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 2000);
+  const offset = Math.max(Number(filters.offset) || 0, 0);
+  const { from, params, order } = buildQuery(filters);
+
+  const rows = db
+    .prepare(`SELECT t.* ${from} ORDER BY ${order} LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset);
+
+  return rows.map((row) => toTrack(row));
+}
+
+export function countTracks(filters = {}) {
+  const { from, params } = buildQuery(filters);
+  return db.prepare(`SELECT COUNT(*) AS n ${from}`).get(...params).n;
 }
 
 export function getTrack(id, opts) {
@@ -122,6 +118,138 @@ export function getTrackFile(id) {
   const row = db.prepare('SELECT ext, mime FROM tracks WHERE id = ?').get(id);
   return row ? { ext: row.ext, mime: row.mime } : null;
 }
+
+export function getCoverInfo(id) {
+  return db.prepare('SELECT cover_mime FROM tracks WHERE id = ?').get(id) ?? null;
+}
+
+export function findByChecksum(checksum) {
+  if (!checksum) return null;
+  const row = db.prepare('SELECT * FROM tracks WHERE checksum = ?').get(checksum);
+  return toTrack(row);
+}
+
+/* --------------------------- запись и FTS-индекс -------------------------- */
+
+function indexTrack(track, database = db) {
+  database.prepare('DELETE FROM tracks_fts WHERE id = ?').run(track.id);
+  database
+    .prepare('INSERT INTO tracks_fts (id, title, artist, album, genre, description) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(track.id, track.title ?? '', track.artist ?? '', track.album ?? '', track.genre ?? '', track.description ?? '');
+}
+
+export function insertTrack(track) {
+  db.exec('BEGIN');
+  try {
+    db.prepare(
+      `INSERT INTO tracks
+        (id, title, artist, album, genre, description, mime, ext, size, duration, peaks,
+         cover_mime, plays, liked, checksum, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`
+    ).run(
+      track.id, track.title, track.artist, track.album, track.genre, track.description,
+      track.mime, track.ext, track.size, track.duration, track.peaks,
+      track.cover_mime ?? null, track.checksum ?? null, track.created_at
+    );
+    indexTrack(track);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+const EDITABLE_FIELDS = ['title', 'artist', 'album', 'genre', 'description'];
+
+export function updateTrackFields(id, patch) {
+  const fields = [];
+  const values = [];
+
+  for (const field of EDITABLE_FIELDS) {
+    if (field in patch) {
+      fields.push(`${field} = ?`);
+      values.push(patch[field]);
+    }
+  }
+  if ('liked' in patch) {
+    fields.push('liked = ?');
+    values.push(patch.liked ? 1 : 0);
+  }
+  if (!fields.length) return getTrack(id);
+
+  db.exec('BEGIN');
+  try {
+    values.push(id);
+    db.prepare(`UPDATE tracks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    const row = db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
+    if (row) indexTrack(row);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  return getTrack(id);
+}
+
+export function setCoverMime(id, mime) {
+  db.prepare('UPDATE tracks SET cover_mime = ? WHERE id = ?').run(mime, id);
+}
+
+export function deleteTrackRecord(id) {
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
+    db.prepare('DELETE FROM tracks_fts WHERE id = ?').run(id);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/* -------------------------------- история -------------------------------- */
+
+export function recordListen(trackId, { position = 0, duration = 0, completed = false } = {}) {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO listens (track_id, position, duration, completed, plays, updated_at)
+     VALUES (?, ?, ?, ?, 1, ?)
+     ON CONFLICT(track_id) DO UPDATE SET
+       position   = excluded.position,
+       duration   = excluded.duration,
+       completed  = MAX(listens.completed, excluded.completed),
+       plays      = listens.plays + 1,
+       updated_at = excluded.updated_at`
+  ).run(trackId, Math.max(0, Number(position) || 0), Math.max(0, Number(duration) || 0), completed ? 1 : 0, now);
+}
+
+export function listHistory(limit = 12) {
+  const rows = db.prepare(
+    `SELECT t.*, l.position AS listen_position, l.duration AS listen_duration,
+            l.completed AS listen_completed, l.plays AS listen_plays,
+            l.updated_at AS listen_updated_at
+     FROM listens l
+     JOIN tracks t ON t.id = l.track_id
+     ORDER BY l.updated_at DESC
+     LIMIT ?`
+  ).all(Math.min(Math.max(Number(limit) || 12, 1), 100));
+
+  return rows.map((row) => ({
+    track: toTrack(row),
+    position: row.listen_position,
+    duration: row.listen_duration,
+    completed: Boolean(row.listen_completed),
+    plays: row.listen_plays,
+    listenedAt: row.listen_updated_at,
+  }));
+}
+
+export function clearHistory() {
+  db.exec('DELETE FROM listens');
+}
+
+/* -------------------------------- плейлисты ------------------------------ */
 
 export function listPlaylists() {
   const rows = db
@@ -135,35 +263,50 @@ export function listPlaylists() {
        ORDER BY p.created_at DESC`
     )
     .all();
-  return rows.map((p) => ({
-    id: p.id,
-    name: p.name,
-    description: p.description ?? null,
-    createdAt: p.created_at,
-    trackCount: p.track_count,
-    duration: p.duration,
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    description: row.description ?? null,
+    createdAt: row.created_at,
+    trackCount: row.track_count,
+    duration: row.duration,
   }));
 }
 
 export function getPlaylist(id) {
-  return listPlaylists().find((p) => p.id === id) || null;
+  return listPlaylists().find((playlist) => playlist.id === id) || null;
 }
 
+/* ------------------------------- статистика ------------------------------ */
+
 export function stats() {
-  const t = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(plays),0) plays,
-      COALESCE(SUM(duration),0) duration, COALESCE(SUM(liked),0) liked FROM tracks`).get();
-  const p = db.prepare('SELECT COUNT(*) n FROM playlists').get();
+  const t = db
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(plays), 0) AS plays,
+              COALESCE(SUM(duration), 0) AS duration, COALESCE(SUM(liked), 0) AS liked,
+              COALESCE(SUM(size), 0) AS bytes
+       FROM tracks`
+    )
+    .get();
+  const p = db.prepare('SELECT COUNT(*) AS n FROM playlists').get();
+
   return {
     tracks: t.n,
     plays: t.plays,
     duration: t.duration,
     liked: t.liked,
+    bytes: t.bytes,
     playlists: p.n,
   };
 }
 
 export function genres() {
   return db
-    .prepare('SELECT genre, COUNT(*) AS count FROM tracks WHERE genre IS NOT NULL AND length(genre) > 0 GROUP BY genre ORDER BY count DESC')
+    .prepare(
+      `SELECT genre, COUNT(*) AS count FROM tracks
+       WHERE genre IS NOT NULL AND length(genre) > 0
+       GROUP BY genre ORDER BY count DESC`
+    )
     .all();
 }

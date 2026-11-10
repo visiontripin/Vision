@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { pseudoPeaks, type Track } from '@vision/shared';
-import { api } from './api';
+import { useMedia } from './media';
 
 /* --------------------------------- иконки --------------------------------- */
 
@@ -214,6 +214,7 @@ export function hashHue(seed: string): number {
 
 export function Cover({ track, size = 48 }: { track: Pick<Track, 'id' | 'title' | 'cover'>; size?: number }) {
   const [failed, setFailed] = useState(false);
+  const media = useMedia(track.cover ? track.id : null);
   const hue = hashHue(track.title + track.id);
   const style = {
     width: size,
@@ -222,12 +223,12 @@ export function Cover({ track, size = 48 }: { track: Pick<Track, 'id' | 'title' 
     fontSize: Math.max(12, size * 0.34),
   };
 
-  if (track.cover && !failed) {
+  if (track.cover && media?.cover && !failed) {
     return (
       <img
         className="cover"
         style={{ width: size, height: size }}
-        src={api.coverUrl(track.id)}
+        src={media.cover}
         alt=""
         loading="lazy"
         onError={() => setFailed(true)}
