@@ -153,7 +153,29 @@ brew install ffmpeg
 Если диск тесный — `HLS_ENABLED=0` (HLS самая тяжёлая часть), затем `TRANSCODE_CODECS=opus`.
 `vision_storage_bytes` считает только оригиналы, варианты в метрику не входят.
 
-## 5.3 Android / Termux
+## 5.3 PWA и офлайн-копии
+
+`apps/web/public/sw.js` кэширует оболочку и список треков; офлайн-копии аудио
+хранит само приложение в Cache Storage (`vision-media-v1`, лимит 512 МБ,
+вытеснение по LRU).
+
+Что важно при развёртывании:
+
+- service worker и Cache Storage требуют **secure context**: HTTPS или `localhost`.
+  Обратный прокси обязан отдавать TLS — иначе офлайн-функции просто не появятся;
+- `/sw.js` и `/manifest.webmanifest` должны отдаваться с правильными типами
+  (`text/javascript`, `application/manifest+json`) — сервер это уже делает;
+- обновление версии: новый `sw.js` подхватывается при следующем визите, старые
+  кэши `vision-shell-*`/`vision-api-*` удаляются в `activate`; `vision-media-*`
+  не трогаются никогда (это данные пользователя);
+- после смены `VISION_SECRET` подписанные URL меняются, но офлайн-копии играют
+  по синтетическому ключу — перекачивать их не нужно.
+
+Проверка руками: DevTools → Application → Service Workers (статус `activated`),
+Application → Cache Storage (`vision-shell-v1`, `vision-api-v1`, `vision-media-v1`),
+Network → Offline → перезагрузить страницу (должна открыться библиотека).
+
+## 5.4 Android / Termux
 
 Домашний сервер на телефоне: установка, автозапуск (Termux:Boot), доступ по
 Wi-Fi и через Tailscale, экономный профиль транскодинга и диагностика —
@@ -177,6 +199,9 @@ Wi-Fi и через Tailscale, экономный профиль транско�
 | `vision_transcode_total{result="error"}` растёт | ffmpeg падает на конкретном файле | смотрите `lastError` в `/api/health`, лог `transcode`; файл скорее всего битый |
 | `ffmpeg.available: true`, но `path` указывает на `ffmpeg-static` | бинарник запускается, значит платформа совпала | норма; на Android такого быть не должно — там glibc-сборка не запускается и резолв уходит в `PATH` |
 | `node:sqlite` не найден | Node < 22.5 или нестандартная сборка | обновите Node; на Termux — `pkg upgrade nodejs` |
+| Нет кнопки «Скачать офлайн» | страница открыта по http:// (не secure context) | откройте через HTTPS/Tailscale или localhost |
+| Service worker в статусе `redundant`/не регистрируется | CSP или MIME для `/sw.js` | проверьте `Content-Type: text/javascript` и `worker-src 'self'` |
+| Офлайн-копия есть, но трек не играет офлайн | браузер почистил Storage | перекачайте копию; проверить `navigator.storage.estimate()` |
 
 ## 7. Обновление версии
 

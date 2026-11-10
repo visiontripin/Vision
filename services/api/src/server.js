@@ -38,6 +38,7 @@ const MAX_COVER = 8 * 1024 * 1024;
 // наших файлов и нашего трафика это не касается.
 const SECURITY_TXT = 'default-src \'self\'; img-src \'self\' data: blob:; media-src \'self\' blob:; '
   + 'style-src \'self\' \'unsafe-inline\'; script-src \'self\'; connect-src \'self\'; font-src \'self\'; '
+  + 'worker-src \'self\'; manifest-src \'self\'; '
   + 'frame-src https://w.soundcloud.com https://soundcloud.com; '
   + 'frame-ancestors *; base-uri \'self\'; form-action \'self\'';
 
@@ -46,6 +47,7 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
