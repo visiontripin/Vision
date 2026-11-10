@@ -1,0 +1,145 @@
+name: Android APK
+
+# Собирает подписанный .apk и (по умолчанию) выкладывает его в GitHub Release —
+# оттуда получается постоянная прямая ссылка для установки на телефон.
+#
+#   Actions → Android APK → Run workflow        (release = true: создать Release)
+#   git tag android-v0.2.0 && git push origin android-v0.2.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Создать GitHub Release с APK'
+        type: boolean
+        default: true
+  push:
+    tags:
+      - 'android-v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPO_NO_TELEMETRY: '1'
+  CI: '1'
+  GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false'
+
+jobs:
+  apk:
+    name: assembleRelease
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Кэш Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('apps/mobile/package-lock.json') }}
+
+      - name: Зависимости
+        run: npm ci --no-audit --no-fund
+
+      - name: Типы
+        run: npx tsc --noEmit
+
+      - name: Нативный проект (prebuild)
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Подпись и версия
+        run: node ../../scripts/android-prepare.mjs
+
+      - name: Сборка APK
+        run: cd android && ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: APK, размер и SHA-256
+        id: apk
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./app.json').expo.version")
+          NAME="VisionAudio-${VERSION}-android.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/$NAME"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum "$NAME" | tee "$NAME.sha256"
+          SIZE=$(du -h "$NAME" | cut -f1)
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Vision Audio ${VERSION} — Android APK"
+            echo ""
+            echo "- файл: \`${NAME}\` (${SIZE})"
+            echo "- versionCode: ${GITHUB_RUN_NUMBER}"
+            echo "- установка: скачать APK на телефон → «Установить из неизвестного источника»"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Артефакт сборки
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-audio-apk
+          path: |
+            VisionAudio-*.apk
+            VisionAudio-*.apk.sha256
+          retention-days: 90
+
+      - name: Публикация Release
+        if: startsWith(github.ref, 'refs/tags/android-v') || inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          NAME='${{ steps.apk.outputs.name }}'
+          VERSION='${{ steps.apk.outputs.version }}'
+          TAG="android-v${VERSION}"
+          NOTES=$(cat <<EOF
+          Готовый установочный файл мобильного приложения Vision Audio ${VERSION}.
+
+          ## Установка
+
+          1. Скачайте \`${NAME}\` на телефон (Android 8+).
+          2. Откройте файл и разрешите установку из этого источника.
+          3. В приложении укажите адрес сервера, например \`http://192.168.1.10:4000\`
+             (или ваш Tailscale / Cloudflare-адрес) и войдите паролем \`vision\`.
+
+          ## Проверка целостности
+
+          Рядом лежит \`${NAME}.sha256\`; размер файла — ${{ steps.apk.outputs.size }}.
+
+          ## Обновления
+
+          Пакет \`app.vision.audio\`, versionCode ${GITHUB_RUN_NUMBER}. Новая сборка ставится
+          поверх предыдущей — настройки, вход и скачанные треки сохраняются. Ключ подписи
+          постоянный (см. docs/ANDROID.md), поэтому переустанавливать приложение не нужно.
+          EOF
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
+          else
+            gh release create "$TAG" "$NAME" "$NAME.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "Vision Audio ${VERSION} — Android APK" \
+              --notes "$NOTES"
+          fi
+          gh release view "$TAG" --json url,assets --jq '"release: \(.url)", (.assets[] | "asset: \(.name) \(.size) байт → \(.url)")'
