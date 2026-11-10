@@ -4,8 +4,8 @@
 (`.github/workflows/android.yml`) — без Expo-аккаунта, EAS и локального Android SDK.
 
 ```
-Actions → «Android APK» → Run workflow  →  Release android-v0.2.0
-https://github.com/visiontripin/Vision/releases/tag/android-v0.2.0
+Actions → «Android APK» → Run workflow  →  Release android-v<версия>
+https://github.com/visiontripin/Vision/releases/latest
 ```
 
 ## Что делает workflow
@@ -25,8 +25,11 @@ https://github.com/visiontripin/Vision/releases/tag/android-v0.2.0
 Артефакт workflow живёт 90 дней, релиз — бессрочно, поэтому ссылкой можно делиться:
 
 ```
-https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.0-android.apk
+https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk
 ```
+
+Кроме версионного `VisionAudio-<версия>-android.apk` в релиз кладётся копия
+`VisionAudio-latest.apk` — ссылка на неё не меняется при выходе новых версий.
 
 Повторный запуск с тем же тегом не падает: workflow обновляет ассеты (`--clobber`).
 
@@ -91,7 +94,8 @@ Release-сборка Android по умолчанию блокирует `http://
 
 ## Установка на телефон
 
-1. Открыть ссылку релиза на телефоне, скачать `VisionAudio-<версия>-android.apk`
+1. Открыть ссылку релиза на телефоне, скачать `VisionAudio-latest.apk`
+   (или `VisionAudio-<версия>-android.apk` из списка ассетов)
    (нужен Android 7.0+ — `minSdk 24`)
    (Chrome предупредит про «файл может быть опасен» — это обычная подпись
    самоподписанного APK, не из Play Store).
@@ -107,7 +111,7 @@ Release-сборка Android по умолчанию блокирует `http://
 Проверка целостности файла (по желанию, на ПК):
 
 ```bash
-sha256sum -c VisionAudio-0.2.0-android.apk.sha256
+sha256sum VisionAudio-latest.apk     # сверьте с .sha256 версионного файла
 ```
 
 ## Сборка вручную (если нужен локальный APK)

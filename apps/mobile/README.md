@@ -10,9 +10,9 @@ React Native (Expo) + общий клиент `@vision/shared`. Отдельны
 Ставить ничего не нужно — установочный файл собирается в CI и лежит в релизах:
 
 ```
-https://github.com/visiontripin/Vision/releases/tag/android-v0.2.0
-прямая ссылка на файл:
-https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.0-android.apk
+https://github.com/visiontripin/Vision/releases/latest
+прямая ссылка на актуальную сборку (не меняется от версии к версии):
+https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk
 ```
 
 - Нужен Android 7.0+ (`minSdk 24`), файл универсальный (все ABI), ~57 МБ.
