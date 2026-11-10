@@ -30,7 +30,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CI: '1'
+  # Tauri CLI разбирает CI как bool: '1' роняет сборку с «invalid value '1' for '--ci'»
+  CI: 'true'
 
 jobs:
   linux:
