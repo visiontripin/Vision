@@ -25,6 +25,9 @@
   добавлены `expo-build-properties` (`android.usesCleartextTraffic: true`) и
   `expo-system-ui` (тёмная тема без мигания); `android-prepare.mjs` проверяет
   атрибут в манифесте и патчит его сам, если плагин не сработал.
+- **Проверка перед публикацией**: `apksigner verify --print-certs`, `aapt2 dump
+  badging` (package/version/ABI), наличие `assets/index.android.bundle`; результаты —
+  аннотациями на странице job-а. Сборка не публикуется, если подпись не подтверждена.
 - `apps/mobile/android`, `ios`, `dist` — в `.gitignore` (генерируются prebuild-ом).
 
 ### Документация
@@ -32,6 +35,8 @@
 - **`docs/ANDROID.md`** — как устроена сборка, подпись и её оговорки, установка
   на телефон, проверка SHA-256, ручная сборка, ограничения.
 - `apps/mobile/README.md` — раздел «Готовая APK и ссылка».
+- Первый релиз: `android-v0.2.0` — `VisionAudio-0.2.0-android.apk` (57 МБ,
+  `Verifies`/v2, `package app.vision.audio`, targetSdk 36, versionCode 5).
 
 ## 0.8.0 — 2026-11-10
 

@@ -15,6 +15,7 @@ https://github.com/visiontripin/Vision/releases/tag/android-v0.2.0
 https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.0-android.apk
 ```
 
+- Нужен Android 7.0+ (`minSdk 24`), файл универсальный (все ABI), ~57 МБ.
 - Скачать `.apk` на телефон → «Установить из неизвестного источника»
   (Chrome: «Всё равно скачать» — это нормально для самоподписанного APK).
 - Открыть приложение, ввести адрес сервера (`http://192.168.1.10:4000`,
