@@ -782,6 +782,33 @@ select:focus {
   white-space: nowrap;
 }
 
+.track__offline {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent, #ff5a1f);
+  opacity: 0.75;
+}
+
+.offline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-top: 14px;
+}
+
+.field--inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted, #9a9aa5);
+}
+
+.field--inline input {
+  width: 92px;
+}
+
 .track__time {
   font-size: 12.5px;
   color: var(--muted);
@@ -2121,6 +2148,11 @@ select:focus {
   .track__genre,
   .track__time {
     display: none;
+  }
+
+  /* офлайн-метка остаётся: на узком экране это единственный индикатор копии */
+  .track__offline {
+    justify-self: center;
   }
 
   .track__play {

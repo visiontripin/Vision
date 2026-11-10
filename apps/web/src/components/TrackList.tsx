@@ -2,6 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Track } from '@vision/shared';
 import { formatDuration } from '@vision/shared';
 import { api } from '../api';
+import { ensureMedia, getDownloadUrl } from '../media';
+import {
+  cacheTrack, formatBytes, isOfflineCached, offlineSupported, removeOffline, useOffline,
+} from '../offline';
 import { useLibrary } from '../state/library';
 import { usePlayer } from '../state/player';
 import { Cover, Icon, useToast } from '../ui';
@@ -132,7 +136,11 @@ function TrackRow({
   const { push } = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
   const [newPlaylist, setNewPlaylist] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  useOffline(); // подписка: перерисоваться, когда копия появится или исчезнет
+  const cached = isOfflineCached(track.id);
 
   const isCurrent = current?.id === track.id;
 
@@ -186,6 +194,35 @@ function TrackRow({
       push(`Плейлист «${name}» создан`);
     } catch (error) {
       push(error instanceof Error ? error.message : 'Не удалось создать плейлист', 'error');
+    }
+  };
+
+  const downloadOffline = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    setProgress(null);
+    try {
+      await ensureMedia([track.id]);
+      const url = getDownloadUrl(track.id);
+      if (!url) throw new Error('Ссылка на файл ещё не готова — попробуйте через секунду');
+      const entry = await cacheTrack(track, url, { onProgress: (ratio) => setProgress(ratio) });
+      push(`Офлайн-копия готова: ${formatBytes(entry.bytes)}`);
+      setMenuOpen(false);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось сохранить копию', 'error');
+    } finally {
+      setDownloading(false);
+      setProgress(null);
+    }
+  };
+
+  const dropOffline = async () => {
+    try {
+      await removeOffline(track.id);
+      push('Офлайн-копия удалена');
+      setMenuOpen(false);
+    } catch {
+      push('Не удалось удалить копию', 'error');
     }
   };
 
@@ -251,6 +288,12 @@ function TrackRow({
         <Icon name="play" size={11} />
         {track.plays}
       </span>
+
+      {cached && (
+        <span className="track__offline" title="Есть офлайн-копия">
+          <Icon name="download" size={12} />
+        </span>
+      )}
 
       <span className="track__time">{formatDuration(track.duration)}</span>
 
@@ -325,6 +368,42 @@ function TrackRow({
                 <Icon name="plus" size={16} />
               </button>
             </div>
+            {offlineSupported() && (
+              cached ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="menu__item"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void dropOffline();
+                  }}
+                >
+                  <Icon name="check" size={15} />
+                  <span>Удалить офлайн-копию</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="menu__item"
+                  disabled={downloading}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void downloadOffline();
+                  }}
+                >
+                  <Icon name="download" size={15} />
+                  <span>
+                    {downloading
+                      ? progress === null
+                        ? 'Скачиваю…'
+                        : `Скачиваю… ${Math.round(progress * 100)}%`
+                      : 'Скачать офлайн'}
+                  </span>
+                </button>
+              )
+            )}
             <button type="button" role="menuitem" className="menu__item menu__item--danger" onClick={remove}>
               <Icon name="trash" size={15} />
               <span>{onRemove ? 'Убрать из плейлиста' : 'Удалить трек'}</span>

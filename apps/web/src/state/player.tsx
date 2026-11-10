@@ -4,6 +4,7 @@ import {
 import type { Track } from '@vision/shared';
 import { api } from '../api';
 import { ensureMedia, getMedia, invalidateMedia } from '../media';
+import { offlinePlayableUrl } from '../offline';
 import { useLibrary } from './library';
 
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -186,7 +187,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       retried.current.delete(currentId);
       audio.dataset.trackId = currentId;
-      audio.src = url;
+      // офлайн-копия важнее сети: играем без запросов и без трафика
+      const cached = await offlinePlayableUrl(currentId).catch(() => null);
+      if (cancelled) return;
+      audio.src = cached ?? url;
       audio.load();
       setPosition(0);
       setDuration(current?.duration ?? 0);
@@ -216,8 +220,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!next || next.id === currentId) return;
 
     let cancelled = false;
-    void ensureMedia([next.id]).then(() => {
+    void ensureMedia([next.id]).then(async () => {
       if (cancelled) return;
+      // уже скачано офлайн — греть нечего
+      if (await offlinePlayableUrl(next.id).catch(() => null)) return;
       const url = getMedia(next.id)?.stream;
       if (!url) return;
       void fetch(url, { headers: { Range: 'bytes=0-262143' } }).catch(() => {});

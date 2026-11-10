@@ -8,6 +8,7 @@ import {
   type Track,
 } from '@vision/shared';
 import { api, IS_LOCAL_MODE } from './api';
+import { clearOffline, formatBytes as formatOfflineBytes, setOfflineLimitMb, useOffline } from './offline';
 import { TrackList } from './components/TrackList';
 import { useLibrary } from './state/library';
 import { usePlayer } from './state/player';
@@ -473,6 +474,8 @@ export function PlaylistPage({ id, search }: { id: string; search: string }) {
 
 export function StatsPage() {
   const { stats, tracks } = useLibrary();
+  const offline = useOffline();
+  const [limit, setLimit] = useState(() => String(offline.limitMb));
 
   const cards = [
     { label: 'Треков', value: String(stats?.tracks ?? 0), icon: 'music' },
@@ -551,6 +554,68 @@ export function StatsPage() {
               <dd>{tracks.filter((track) => track.liked).length} из {tracks.length}</dd>
             </div>
           </dl>
+        </div>
+
+        <div className="panel">
+          <h2>Офлайн-копии</h2>
+          {!offline.supported && (
+            <p className="muted">
+              Браузер отдаёт кэш только на HTTPS или localhost. Откройте сервер через Tailscale
+              или Cloudflare Tunnel — и кнопка «Скачать офлайн» появится в меню трека.
+            </p>
+          )}
+          {offline.supported && (
+            <>
+              <dl className="facts">
+                <div>
+                  <dt>Треков в кэше</dt>
+                  <dd>
+                    {offline.entries.length} из {tracks.length}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Занято</dt>
+                  <dd>
+                    {formatOfflineBytes(offline.bytes)} из {offline.limitMb} МБ
+                  </dd>
+                </div>
+                <div>
+                  <dt>Что скачивать</dt>
+                  <dd>Меню трека → «Скачать офлайн»</dd>
+                </div>
+              </dl>
+
+              <div className="offline-actions">
+                <label className="field field--inline">
+                  <span>Лимит, МБ</span>
+                  <input
+                    type="number"
+                    min={32}
+                    max={8192}
+                    step={32}
+                    value={limit}
+                    onChange={(event) => setLimit(event.target.value)}
+                    onBlur={() => {
+                      const value = Number(limit);
+                      if (Number.isFinite(value) && value > 0) setOfflineLimitMb(value);
+                      else setLimit(String(offline.limitMb));
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  disabled={offline.entries.length === 0}
+                  onClick={() => {
+                    if (!window.confirm('Удалить все офлайн-копии с этого устройства?')) return;
+                    void clearOffline();
+                  }}
+                >
+                  Очистить офлайн-кэш
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </section>

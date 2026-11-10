@@ -54,7 +54,25 @@ const isFresh = (entry: Entry | undefined) => Boolean(entry && entry.staleAt > D
 export function getMedia(id: string | null | undefined): MediaItem | null {
   if (!id) return null;
   const entry = cache.get(id);
-  return entry && entry.stream ? { stream: entry.stream, cover: entry.cover, expiresAt: entry.expiresAt } : null;
+  if (!entry || !entry.stream) return null;
+  return {
+    stream: entry.stream,
+    streams: entry.streams,
+    hls: entry.hls ?? null,
+    cover: entry.cover,
+    expiresAt: entry.expiresAt,
+  };
+}
+
+/**
+ * Ссылка на сам файл (не HLS-плейлист) — для офлайн-копии.
+ * HLS не годится: это набор сегментов, а не один файл.
+ */
+export function getDownloadUrl(id: string | null | undefined): string | null {
+  if (!id) return null;
+  const entry = cache.get(id);
+  if (!entry) return null;
+  return entry.streams?.original ?? entry.streams?.opus ?? entry.streams?.aac ?? null;
 }
 
 /** Гарантирует актуальные ссылки для перечисленных треков. */
