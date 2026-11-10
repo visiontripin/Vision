@@ -58,7 +58,8 @@ ${MARKER}
 android {
     signingConfigs {
         visionRelease {
-            storeFile file(System.getenv("VISION_KEYSTORE_PATH") ?: "../vision-release.p12")
+            // абсолютный путь: relative storeFile Gradle считает от android/app
+            storeFile new File(System.getenv("VISION_KEYSTORE_PATH") ?: (rootProject.projectDir.parentFile.absolutePath + "/vision-release.p12"))
             storeType "PKCS12"
             storePassword System.getenv("VISION_KEYSTORE_PASSWORD") ?: "vision-audio"
             keyAlias System.getenv("VISION_KEY_ALIAS") ?: "vision"
