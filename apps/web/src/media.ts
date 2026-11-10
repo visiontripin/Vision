@@ -12,6 +12,30 @@ import { api } from './api';
 
 const SAFETY_MARGIN_MS = 60_000;
 
+/** Какой кодек браузер реально умеет играть. Считаем один раз. */
+function pickStream(
+  streams: Record<string, string> | undefined,
+  fallback: string,
+  hls?: string | null
+): string {
+  try {
+    const audio = document.createElement('audio');
+    // Safari играет HLS нативно — там это лучший вариант (сегменты по 6 с)
+    if (hls && audio.canPlayType('application/vnd.apple.mpegurl')) return hls;
+
+    if (streams) {
+      const opus = audio.canPlayType('audio/ogg; codecs=opus');
+      const aac = audio.canPlayType('audio/mp4; codecs="mp4a.40.2"') || audio.canPlayType('audio/aac');
+      if (streams.opus && opus) return streams.opus;
+      if (streams.aac && aac) return streams.aac;
+      if (streams.original) return streams.original;
+    }
+  } catch {
+    /* SSR или экзотический браузер */
+  }
+  return fallback;
+}
+
 type Entry = MediaItem & { staleAt: number };
 
 const cache = new Map<string, Entry>();
@@ -47,7 +71,11 @@ export async function ensureMedia(ids: string[]): Promise<void> {
       const lifetime = Number(payload.ttlMs) || 30 * 60 * 1000;
       let updated = false;
       for (const [id, item] of Object.entries(payload.items)) {
-        cache.set(id, { ...item, staleAt: Date.now() + Math.max(0, lifetime - SAFETY_MARGIN_MS) });
+        cache.set(id, {
+          ...item,
+          stream: pickStream(item.streams, item.stream, item.hls),
+          staleAt: Date.now() + Math.max(0, lifetime - SAFETY_MARGIN_MS),
+        });
         updated = true;
       }
       if (updated) notify();

@@ -34,10 +34,10 @@ export function parseName(filename: string): { title: string; artist: string } {
   return { title: base || 'Без названия', artist: 'Unknown' };
 }
 
-const PEAK_COUNT = 180;
+const PEAK_COUNT = 320;
 const MAX_DECODE_BYTES = 160 * 1024 * 1024;
 
-/** Длительность + нормализованные пики. Никогда не бросает. */
+/** Длительность + 320 нормализованных пиков. Никогда не бросает. */
 export async function analyze(file: File): Promise<{ duration: number; peaks: number[] | null }> {
   let duration = 0;
   let peaks: number[] | null = null;

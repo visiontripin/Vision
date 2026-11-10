@@ -23,13 +23,23 @@
   "ttlMs": 1800000,
   "items": {
     "0b4d…": {
-      "stream": "/api/tracks/0b4d…/stream?exp=1794300931213&sig=SEBSK1wX…",
+      "stream": "/api/tracks/0b4d…/stream?format=opus&exp=1794300931213&sig=…",
+      "streams": {
+        "original": "/api/tracks/0b4d…/stream?exp=1794300931213&sig=…",
+        "opus": "/api/tracks/0b4d…/stream?format=opus&exp=…&sig=…",
+        "aac": "/api/tracks/0b4d…/stream?format=aac&exp=…&sig=…"
+      },
+      "hls": "/api/tracks/0b4d…/hls.m3u8?exp=1794300931213&sig=…",
       "cover": "/api/tracks/0b4d…/cover?exp=1794300931213&sig=…",
       "expiresAt": "2026-11-10T08:55:31.213Z"
     }
   }
 }
 ```
+`streams` содержит только готовые варианты (`original` есть всегда, `opus`/`aac` — после
+транскодинга); `hls` — `null`, пока нарезки нет. `stream` — лучший доступный вариант,
+клиент всё равно перепроверяет поддержку кодека через `canPlayType()`.
+Подпись варианта считается по виду `stream:opus` / `stream:aac`, HLS — по виду `hls`.
 TTL задаётся `MEDIA_URL_TTL_MS` (по умолчанию 30 минут). Подпись считается как
 `HMAC-SHA256(secret, "<trackId>:<stream|cover>:<exp>")` в base64url и проверяется
 через `timingSafeEqual`; просроченная или изменённая подпись → `401`.
@@ -84,10 +94,24 @@ JSON: `title, artist, album, genre, description, liked`. Поисковый ин
 Удаляет файл, обложку, связи с плейлистами и историю (каскад). → `204`
 
 ### GET /api/tracks/:id/stream
-Требует `exp`/`sig` **или** Bearer-токен.
+Требует `exp`/`sig` **или** Bearer-токен. Параметр `format=opus|aac` отдаёт
+транскодированный вариант; если его ещё нет (ffmpeg недоступен или трек в очереди),
+сервер отдаёт оригинал и ставит заголовок `X-Variant-Fallback: opus`.
 Range-запросы → `206` + `Content-Range`; без Range → `200`; невозможный диапазон → `416`.
 Заголовки: `Accept-Ranges: bytes`, `ETag`, `Cache-Control: private, max-age=3600`.
 `If-None-Match` → `304`.
+
+### GET /api/tracks/:id/hls.m3u8
+HLS-плейлист (сегменты по 6 с, AAC 128k, нормализация −14 LUFS). Требует ту же
+подпись, что и медиа (вид `hls`). Строки-сегменты переписаны в абсолютные пути с
+`exp`/`sig`, поэтому плеер не теряет авторизацию при разрешении относительных URL.
+`404 no_hls` — ffmpeg нет или трек ещё не нарезан.
+
+### GET /api/tracks/:id/hls/:segment
+Сегмент `seg-000.ts`, `Content-Type: video/mp2t`. Подпись та же, что у плейлиста.
+
+### GET /api/tracks/:id
+Кроме полей трека отдаёт `variants`: `[{ kind: "opus" | "aac" | "hls", mime, ext, size, bitrate, createdAt }]`.
 
 ### PUT /api/tracks/:id/cover
 Body: изображение (jpeg/png/webp, ≤ 8 МБ). → `204`
@@ -168,14 +192,19 @@ Body: изображение (jpeg/png/webp, ≤ 8 МБ). → `204`
 ## System
 
 ### GET /api/health
-→ `200 { "ok": true, "tracks": 42, "diskFreeMb": 18234, "version": "0.2.0",
-"migrations": { "applied": [...], "pending": 0 } }`
+→ `200 { "ok": true, "tracks": 42, "diskFreeMb": 18234, "version": "0.6.0",
+"migrations": { "applied": [...], "pending": 0 },
+"ffmpeg": { "available": true, "version": "ffmpeg version 7.1 …" },
+"transcode": { "enabled": true, "queued": 0, "busy": false, "processed": 12, "failed": 0, "lastError": null } }`
+
+`ffmpeg.available: false` — штатное состояние: сервис работает на оригиналах, без вариантов и HLS.
 
 ### GET /metrics
 Формат Prometheus (text exposition 0.0.4): `vision_tracks_total`, `vision_plays_total`,
 `vision_storage_bytes`, `vision_disk_free_bytes`, `vision_uptime_seconds`,
 счётчики `vision_http_requests_total{method,route,status}`, `vision_auth_*`,
-`vision_upload_*`, `vision_stream_partial_total` и гистограмма
+`vision_upload_*`, `vision_stream_partial_total`, `vision_transcode_total{result}`
+(`opus`/`aac`/`hls`/`error`), `vision_transcode_seconds_total{kind}` и гистограмма
 `vision_http_request_duration_seconds{route}`.
 Если задан `METRICS_TOKEN`, нужен `Authorization: Bearer <METRICS_TOKEN>`.
 

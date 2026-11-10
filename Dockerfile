@@ -18,7 +18,9 @@ ENV NODE_ENV=production \
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/services/api ./services/api
 COPY --from=build /app/apps/web/dist ./apps/web/dist
-RUN mkdir -p /app/data/media /app/data/covers && chown -R node:node /app
+# ffmpeg из apk: даёт opus/aac, loudnorm и HLS-нарезку (см. docs/RUNBOOK.md)
+RUN apk add --no-cache ffmpeg \
+ && mkdir -p /app/data/media /app/data/covers && chown -R node:node /app
 USER node
 EXPOSE 4000
 VOLUME ["/app/data"]

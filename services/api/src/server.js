@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createReadStream, createWriteStream, existsSync, statSync, statfsSync, rmSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, readFileSync, statSync, statfsSync, rmSync } from 'node:fs';
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
@@ -12,7 +12,12 @@ import {
   deleteTrackRecord, findByChecksum, recordListen, listHistory, clearHistory,
   setCoverMime, getCoverInfo, listPlaylists, getPlaylist, stats, genres, migrationStatus,
   listExternal, getExternal, upsertExternal, updateExternalNote, deleteExternal,
+  listVariants, getVariant, deleteVariants,
 } from './db.js';
+import {
+  backfillVariants, enqueueTranscode, hlsPath, removeVariants, transcodeStatus, variantPath,
+} from './transcode.js';
+import { ffmpegAvailable, ffmpegVersion } from './ffmpeg.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
@@ -63,6 +68,20 @@ function authorized(req) {
 function authoriseMedia(req, url, trackId, kind) {
   if (verifyMedia(trackId, kind, url.searchParams.get('exp'), url.searchParams.get('sig'))) return true;
   return authorized(req);
+}
+
+/** Медиа-путь → вид подписи. Возвращает null, если путь не медийный. */
+function signedMediaTarget(pathname, url) {
+  const stream = /^\/api\/tracks\/([a-f0-9]{32})\/(stream|cover|hls\.m3u8|hls\/seg-\d{3,5}\.ts)$/.exec(pathname);
+  if (!stream) return null;
+  const [, id, tail] = stream;
+
+  if (tail === 'cover') return { id, kinds: ['cover'] };
+  if (tail === 'hls.m3u8' || tail.startsWith('hls/')) return { id, kinds: ['hls'] };
+
+  const format = String(url.searchParams.get('format') || 'original').toLowerCase();
+  const kinds = ['opus', 'aac'].includes(format) ? [`stream:${format}`, 'stream'] : ['stream', 'stream:original'];
+  return { id, kinds };
 }
 
 function clientIp(req) {
@@ -152,14 +171,15 @@ function parseRange(header, size) {
   return { start, end: Math.min(end, size - 1) };
 }
 
-function streamAudio(req, res, track) {
+function streamAudio(req, res, track, variant = null) {
   const meta = getTrackFile(track.id);
-  const file = path.join(MEDIA_DIR, `${track.id}.${meta?.ext}`);
+  const file = variant?.file ?? path.join(MEDIA_DIR, `${track.id}.${meta?.ext}`);
   if (!existsSync(file)) return fail(res, 404, 'file_missing', 'Файл трека не найден.');
 
+  const mime = variant?.mime ?? meta?.mime ?? track.mime;
   const size = statSync(file).size;
   const range = parseRange(req.headers.range, size);
-  const etag = `"${createHash('sha1').update(`${track.id}:${size}`).digest('hex')}"`;
+  const etag = `"${createHash('sha1').update(`${track.id}:${variant?.kind ?? 'original'}:${size}`).digest('hex')}"`;
 
   if (req.headers['if-none-match'] === etag && !req.headers.range) {
     res.writeHead(304, { ETag: etag });
@@ -171,7 +191,7 @@ function streamAudio(req, res, track) {
   }
 
   const headers = {
-    'Content-Type': meta?.mime || track.mime,
+    'Content-Type': mime,
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, max-age=3600',
     ETag: etag,
@@ -383,6 +403,8 @@ async function handleUpload(req, res, url) {
   }
 
   inc('vision_upload_success_total');
+  // транскодинг — в фоне: ответ клиенту не ждёт ffmpeg
+  enqueueTranscode(id);
   json(res, 201, { ...getTrack(id, { withPeaks: true }), checksum });
 }
 
@@ -453,6 +475,8 @@ async function handleApi(req, res, url) {
       diskFreeMb: free,
       version: VERSION,
       migrations: migrationStatus(),
+      ffmpeg: { available: await ffmpegAvailable(), version: await ffmpegVersion() },
+      transcode: transcodeStatus(),
     });
   }
 
@@ -465,9 +489,10 @@ async function handleApi(req, res, url) {
   if (!authorized(req)) {
     // <audio>/<img> не умеют присылать заголовок Authorization — для них
     // достаточно короткоживущей HMAC-подписи в query.
-    const signedMedia = /^\/api\/tracks\/([a-f0-9]{32})\/(stream|cover)$/.exec(pathname);
-    const signed = signedMedia
-      && verifyMedia(signedMedia[1], signedMedia[2], url.searchParams.get('exp'), url.searchParams.get('sig'));
+    const target = signedMediaTarget(pathname, url);
+    const exp = url.searchParams.get('exp');
+    const sig = url.searchParams.get('sig');
+    const signed = Boolean(target && target.kinds.some((kind) => verifyMedia(target.id, kind, exp, sig)));
     if (!signed) return fail(res, 401, 'unauthorized', 'Требуется вход.');
   }
 
@@ -547,6 +572,50 @@ async function handleApi(req, res, url) {
     }
   }
 
+  /* ---- HLS: плейлист и сегменты (подпись та же, что для медиа) ---- */
+  const hlsPlaylistMatch = /^\/api\/tracks\/([a-f0-9]{32})\/hls\.m3u8$/.exec(pathname);
+  if (hlsPlaylistMatch && method === 'GET') {
+    const id = hlsPlaylistMatch[1];
+    if (!authoriseMedia(req, url, id, 'hls')) return fail(res, 401, 'unauthorized', 'Ссылка истекла.');
+    const playlist = path.join(hlsPath(id), 'index.m3u8');
+    if (!existsSync(playlist)) return fail(res, 404, 'no_hls', 'HLS ещё не нарезан.');
+
+    const exp = url.searchParams.get('exp');
+    const sig = url.searchParams.get('sig');
+    const suffix = exp && sig ? `?exp=${encodeURIComponent(exp)}&sig=${encodeURIComponent(sig)}` : '';
+    const body = readFileSync(playlist, 'utf8')
+      .split('\n')
+      .map((line) => {
+        const value = line.trim();
+        if (!value || value.startsWith('#')) return line;
+        // относительные сегменты нельзя отдавать как есть: query-подпись
+        // потеряется при разрешении относительного пути
+        return `/api/tracks/${id}/hls/${value}${suffix}`;
+      })
+      .join('\n');
+
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.apple.mpegurl',
+      'Cache-Control': 'private, max-age=60',
+    });
+    return res.end(body);
+  }
+
+  const hlsSegmentMatch = /^\/api\/tracks\/([a-f0-9]{32})\/hls\/(seg-\d{3,5}\.ts)$/.exec(pathname);
+  if (hlsSegmentMatch && method === 'GET') {
+    const [, id, segment] = hlsSegmentMatch;
+    if (!authoriseMedia(req, url, id, 'hls')) return fail(res, 401, 'unauthorized', 'Ссылка истекла.');
+    const file = path.join(hlsPath(id), segment);
+    if (!existsSync(file)) return fail(res, 404, 'not_found', 'Сегмент не найден.');
+
+    res.writeHead(200, {
+      'Content-Type': 'video/mp2t',
+      'Content-Length': statSync(file).size,
+      'Cache-Control': 'private, max-age=3600',
+    });
+    return createReadStream(file).pipe(res);
+  }
+
   if (pathname === '/api/media' && method === 'GET') {
     const ids = (url.searchParams.get('ids') || '')
       .split(',')
@@ -560,10 +629,29 @@ async function handleApi(req, res, url) {
     for (const id of ids) {
       const track = getTrack(id);
       if (!track) continue;
+      const variants = listVariants(id);
+      const kinds = new Set(variants.map((variant) => variant.kind));
+
       const stream = signMedia(id, 'stream');
       const cover = track.cover ? signMedia(id, 'cover') : null;
+      const streams = { original: `/api/tracks/${id}/stream?exp=${stream.exp}&sig=${stream.sig}` };
+
+      for (const codec of ['opus', 'aac']) {
+        if (!kinds.has(codec)) continue;
+        const signed = signMedia(id, `stream:${codec}`);
+        streams[codec] = `/api/tracks/${id}/stream?format=${codec}&exp=${signed.exp}&sig=${signed.sig}`;
+      }
+
+      let hls = null;
+      if (kinds.has('hls')) {
+        const signed = signMedia(id, 'hls');
+        hls = `/api/tracks/${id}/hls.m3u8?exp=${signed.exp}&sig=${signed.sig}`;
+      }
+
       items[id] = {
-        stream: `/api/tracks/${id}/stream?exp=${stream.exp}&sig=${stream.sig}`,
+        stream: streams.opus ?? streams.aac ?? streams.original,
+        streams,
+        hls,
         cover: cover ? `/api/tracks/${id}/cover?exp=${cover.exp}&sig=${cover.sig}` : null,
         expiresAt: new Date(stream.exp).toISOString(),
       };
@@ -601,7 +689,7 @@ async function handleApi(req, res, url) {
     const track = getTrack(id, { withPeaks: true });
     if (!track) return fail(res, 404, 'not_found', 'Трек не найден.');
 
-    if (!action && method === 'GET') return json(res, 200, track);
+    if (!action && method === 'GET') return json(res, 200, { ...track, variants: listVariants(id) });
 
     if (!action && method === 'PATCH') {
       let body;
@@ -633,13 +721,32 @@ async function handleApi(req, res, url) {
       for (const ext of Object.values(COVER_EXT)) {
         rm(path.join(COVER_DIR, `${track.id}.${ext}`), { force: true }).catch(() => {});
       }
+      deleteVariants(track.id);
+      void removeVariants(track.id);
       inc('vision_track_deleted_total');
       res.writeHead(204);
       return res.end();
     }
 
     if (action === '/stream' && method === 'GET') {
-      if (!authoriseMedia(req, url, id, 'stream')) return fail(res, 401, 'unauthorized', 'Ссылка истекла.');
+      const format = String(url.searchParams.get('format') || 'original').toLowerCase();
+      const normalised = ['opus', 'aac'].includes(format) ? format : 'original';
+      const kind = normalised === 'original' ? 'stream' : `stream:${normalised}`;
+
+      const allowed = normalised === 'original'
+        ? authoriseMedia(req, url, id, 'stream') || authoriseMedia(req, url, id, 'stream:original')
+        : authoriseMedia(req, url, id, kind);
+      if (!allowed) return fail(res, 401, 'unauthorized', 'Ссылка истекла.');
+
+      if (normalised !== 'original') {
+        const variant = getVariant(id, normalised);
+        const file = variantPath(id, normalised);
+        if (variant && file && existsSync(file)) {
+          return streamAudio(req, res, track, { file, mime: variant.mime, kind: normalised });
+        }
+        // варианта ещё нет (транскодинг идёт) — отдаём оригинал, клиенту это норм
+        res.setHeader('X-Variant-Fallback', normalised);
+      }
       return streamAudio(req, res, track);
     }
 
@@ -874,6 +981,11 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   log('info', 'server started', { host: HOST, port: PORT, data: DATA_DIR, version: VERSION });
+  if (process.env.TRANSCODE_BACKFILL === '1') {
+    void backfillVariants().then((count) => {
+      if (count) log('info', 'transcode backfill queued', { tracks: count });
+    });
+  }
 });
 
 const shutdown = () => {

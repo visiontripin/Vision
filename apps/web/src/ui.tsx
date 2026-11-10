@@ -299,8 +299,28 @@ export function Waveform({
     const barWidth = Math.max(1, (width - gap * (bars - 1)) / bars);
     const played = Math.max(0, Math.min(1, progress));
 
+    // Пиков (320) больше, чем баров: берём среднее по окну и слегка сглаживаем
+    // соседние бары — иначе волна «дребезжит» на тихих участках.
+    const span = values.length / bars;
+    const sampled = Array.from({ length: bars }, (_, i) => {
+      const start = Math.floor(i * span);
+      const end = Math.max(start + 1, Math.floor((i + 1) * span));
+      let sum = 0;
+      let count = 0;
+      for (let j = start; j < end && j < values.length; j += 1) {
+        sum += values[j] ?? 0;
+        count += 1;
+      }
+      return count ? sum / count : 0.2;
+    });
+    const smoothed = sampled.map((value, i) => {
+      const prev = sampled[i - 1] ?? value;
+      const next = sampled[i + 1] ?? value;
+      return Math.max(0.04, (prev + value * 2 + next) / 4);
+    });
+
     for (let i = 0; i < bars; i += 1) {
-      const value = values[Math.min(values.length - 1, Math.round((i / bars) * values.length))] ?? 0.2;
+      const value = smoothed[i] ?? 0.2;
       const h = Math.max(2, value * (height - (compact ? 6 : 8)));
       const x = i * (barWidth + gap);
       const y = (height - h) / 2;
