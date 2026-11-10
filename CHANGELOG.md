@@ -22,6 +22,8 @@
 - **Сборка исправлена**: убрана несуществующая `[lib]`-цель Cargo, `beforeDevCommand`/
   `beforeBuildCommand` больше не зависят от npm-workspace из каталога `apps/desktop`
   (`npm --prefix ../web …`), версия оболочки — 0.2.0.
+- **Релиз `desktop-v0.2.0`**: `Vision.Audio_0.2.0_amd64.deb` (~5 МБ) и
+  `Vision.Audio_0.2.0_amd64.AppImage` (~83 МБ) собраны CI и лежат в GitHub Releases.
 - **CI `.github/workflows/desktop.yml`**: `ubuntu-22.04`, WebKitGTK 4.1,
   `libayatana-appindicator3-dev`, Rust stable + `rust-cache`; при падении компиляции
   ошибки `error[E…]` вытаскиваются в аннотации run-а; артефакт `vision-desktop-linux`

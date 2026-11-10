@@ -131,8 +131,17 @@ cd apps/mobile && npm install && npx expo start   # Expo Go на телефон�
 https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk
 ```
 
-Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`. План распределённого
-хранения (сервер без файлов, сиды на устройствах) — `docs/DISTRIBUTED.md`.
+Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`.
+
+**Готовое приложение для Linux** (Tauri, тот же интерфейс плюс трей и медиа-клавиши) —
+релиз `desktop-v<версия>`: `.deb` и `.AppImage`. Собирается в CI
+(`.github/workflows/desktop.yml`), подробности — `docs/DESKTOP.md`:
+
+```
+https://github.com/visiontripin/Vision/releases/tag/desktop-v0.2.0
+```
+
+План распределённого хранения (сервер без файлов, сиды на устройствах) — `docs/DISTRIBUTED.md`.
 
 ## Распределённое хранение: трекер и сиды
 

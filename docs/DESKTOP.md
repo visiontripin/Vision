@@ -49,6 +49,20 @@ apps/web/src/components/DesktopBridge.tsx  связка моста с плеер
 GitHub Pages мост выключен, а `@tauri-apps/api` подгружается динамическим импортом
 (в основном бандле его нет).
 
+## Готовые сборки
+
+Релиз `desktop-v0.2.0` (собран CI на `ubuntu-22.04`):
+
+```
+https://github.com/visiontripin/Vision/releases/tag/desktop-v0.2.0
+  Vision.Audio_0.2.0_amd64.deb        ~5 МБ   (Debian/Ubuntu 22.04+)
+  Vision.Audio_0.2.0_amd64.AppImage   ~83 МБ  (любой дистрибутив, без установки)
+```
+
+Установка: `sudo apt install ./Vision.Audio_0.2.0_amd64.deb`, либо
+`chmod +x Vision.Audio_0.2.0_amd64.AppImage && ./Vision.Audio_0.2.0_amd64.AppImage`.
+Сервер (API) должен быть доступен — адрес задаётся на экране входа.
+
 ## Сборка
 
 ```bash
