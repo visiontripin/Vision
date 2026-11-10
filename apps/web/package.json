@@ -1,7 +1,7 @@
 {
   "name": "@vision/web",
   "private": true,
-  "version": "0.10.1",
+  "version": "0.11.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.1.1",
     "@vision/shared": "*",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

@@ -30,10 +30,12 @@
 - [ ] Android: подпись AAB, внутреннее тестирование; iOS: TestFlight, background audio capability.
 
 ## Этап 3 — Десктоп (2–3 недели, `DSK`)
-- [ ] Tauri 2 в `apps/desktop`, сборка из `apps/web/dist`.
-- [ ] Трей, глобальные медиа-клавиши, drag&drop файлов в окно, автозапуск.
+- [x] Tauri 2 в `apps/desktop`, сборка из `apps/web/dist` — v0.11.0, `docs/DESKTOP.md`.
+- [x] Трей, глобальные медиа-клавиши, drag&drop файлов, «свернуть в трей» — v0.11.0;
+  автозапуск при входе — дальше.
 - [ ] Локальный кэш метаданных (SQLite) и предзагрузка треков.
-- [ ] Инсталляторы Windows `.msi/.exe`, Linux `.AppImage/.deb`, автообновление.
+- [~] Linux `.AppImage/.deb` и релиз по тегу `desktop-v*` — v0.11.0;
+  Windows `.msi/.exe` и автообновление — дальше.
 
 ## Этап 4 — Углубление (по запросу, `PO` решает)
 - [ ] Транскодирование в opus/aac + HLS-адаптив, серверный ffmpeg-воркер.

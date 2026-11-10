@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { DesktopBridge } from './components/DesktopBridge';
 import { QueueDrawer, PlayerBar } from './components/PlayerBar';
 import { Sidebar } from './components/Sidebar';
 import { UploadModal } from './components/UploadModal';
@@ -48,6 +49,7 @@ function Root() {
   return (
     <LibraryProvider>
       <PlayerProvider>
+        <DesktopBridge />
         <Shell />
       </PlayerProvider>
     </LibraryProvider>
