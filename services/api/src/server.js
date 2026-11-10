@@ -17,7 +17,7 @@ import {
 import {
   backfillVariants, enqueueTranscode, hlsPath, removeVariants, transcodeStatus, variantPath,
 } from './transcode.js';
-import { ffmpegAvailable, ffmpegVersion } from './ffmpeg.js';
+import { ffmpegAvailable, ffmpegVersion, resolveFfmpeg } from './ffmpeg.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
@@ -475,7 +475,17 @@ async function handleApi(req, res, url) {
       diskFreeMb: free,
       version: VERSION,
       migrations: migrationStatus(),
-      ffmpeg: { available: await ffmpegAvailable(), version: await ffmpegVersion() },
+      ffmpeg: {
+        available: await ffmpegAvailable(),
+        version: await ffmpegVersion(),
+        path: await resolveFfmpeg(),
+      },
+      runtime: {
+        platform: process.platform,
+        arch: process.arch,
+        node: process.version,
+        termux: Boolean(process.env.TERMUX_VERSION),
+      },
       transcode: transcodeStatus(),
     });
   }

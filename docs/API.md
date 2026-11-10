@@ -192,12 +192,17 @@ Body: изображение (jpeg/png/webp, ≤ 8 МБ). → `204`
 ## System
 
 ### GET /api/health
-→ `200 { "ok": true, "tracks": 42, "diskFreeMb": 18234, "version": "0.6.0",
+→ `200 { "ok": true, "tracks": 42, "diskFreeMb": 18234, "version": "0.6.1",
 "migrations": { "applied": [...], "pending": 0 },
-"ffmpeg": { "available": true, "version": "ffmpeg version 7.1 …" },
-"transcode": { "enabled": true, "queued": 0, "busy": false, "processed": 12, "failed": 0, "lastError": null } }`
+"ffmpeg": { "available": true, "version": "ffmpeg version 7.1 …", "path": "/usr/bin/ffmpeg" },
+"runtime": { "platform": "linux", "arch": "x64", "node": "v22.20.0", "termux": false },
+"transcode": { "enabled": true, "queued": 0, "busy": false, "processed": 12, "failed": 0,
+  "lastError": null,
+  "settings": { "codecs": ["opus", "aac"], "hls": true, "normalize": true, "threads": null } } }`
 
 `ffmpeg.available: false` — штатное состояние: сервис работает на оригиналах, без вариантов и HLS.
+`ffmpeg.path` — какой кандидат реально запустился (`FFMPEG_PATH` → `ffmpeg-static` → `PATH`);
+`null` — ни один. `runtime` помогает диагностировать Termux/ARM-сборки.
 
 ### GET /metrics
 Формат Prometheus (text exposition 0.0.4): `vision_tracks_total`, `vision_plays_total`,

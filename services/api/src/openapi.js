@@ -199,6 +199,20 @@ export const OPENAPI = {
                       properties: {
                         available: { type: 'boolean' },
                         version: { type: ['string', 'null'] },
+                        path: {
+                          type: ['string', 'null'],
+                          description: 'Кандидат, который реально запустился: FFMPEG_PATH → ffmpeg-static → PATH',
+                        },
+                      },
+                    },
+                    runtime: {
+                      type: 'object',
+                      description: 'Платформа запуска; termux=true включает экономный профиль',
+                      properties: {
+                        platform: { type: 'string', examples: ['linux', 'android'] },
+                        arch: { type: 'string' },
+                        node: { type: 'string' },
+                        termux: { type: 'boolean' },
                       },
                     },
                     transcode: {
@@ -210,6 +224,15 @@ export const OPENAPI = {
                         processed: { type: 'integer' },
                         failed: { type: 'integer' },
                         lastError: { type: ['string', 'null'] },
+                        settings: {
+                          type: 'object',
+                          properties: {
+                            codecs: { type: 'array', items: { type: 'string' } },
+                            hls: { type: 'boolean' },
+                            normalize: { type: 'boolean' },
+                            threads: { type: ['integer', 'null'] },
+                          },
+                        },
                       },
                     },
                   },

@@ -43,8 +43,9 @@ Web-версия умеет работать **полностью в брауз�
 | Платформа | Технология | Состояние |
 |-----------|-----------|-----------|
 | Web | React 19 + TS + Vite | ✅ MVP работает: вход, загрузка с волной, библиотека, поиск, плеер, плейлисты, лайки, статистика. Есть локальный режим (IndexedDB) для GitHub Pages |
-| API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.6.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, OpenAPI, закладки SoundCloud, транскодинг opus/aac + HLS |
-| Android / iOS | React Native (Expo) | 🟡 каркас + вход/библиотека/плеер, нужны сборки и фоновое аудио |
+| API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.6.1: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, OpenAPI, закладки SoundCloud, транскодинг opus/aac + HLS |
+| Android (сервер) | Termux + Node 22 + ffmpeg | ✅ v0.6.1: экономный профиль, автозапуск, доступ через Tailscale — `docs/TERMUX.md` |
+| Android / iOS (приложение) | React Native (Expo) | 🟡 каркас + вход/библиотека/плеер, нужны сборки и фоновое аудио |
 | Windows / Linux | Tauri 2 | 🟡 каркас + медиа-клавиши, нужна сборка на целевых ОС |
 
 ## Быстрый старт
@@ -111,6 +112,21 @@ data/             runtime: медиа, обложки, БД (в git не поп�
 - **Плейлисты**: создание из меню трека и из раздела, «Слушать всё», удаление треков.
 - **Доступность**: управление с клавиатуры, ARIA для плеера и волны, контраст AA, адаптив до 360 px.
 
+## Сервер на телефоне (Termux)
+
+Домашний сервер можно держать на Android — телефон в роли мини-ПК:
+
+```bash
+pkg install -y git
+git clone https://github.com/visiontripin/Vision.git ~/Vision && cd ~/Vision
+bash scripts/termux-setup.sh
+```
+
+Скрипт ставит `nodejs`/`ffmpeg`, собирает web, создаёт автозапуск через Termux:Boot
+и печатает адрес для браузера. На Android сервис сам включает экономный режим:
+только opus, без HLS, 2 потока ffmpeg. Доступ извне — через Tailscale или
+Cloudflare Tunnel, не пробросом порта. Полная инструкция: **`docs/TERMUX.md`**.
+
 ## Переменные окружения
 
 | Переменная | По умолчанию | Назначение |
@@ -125,6 +141,9 @@ data/             runtime: медиа, обложки, БД (в git не поп�
 | `TRANSCODE` | `1` | `0` — не транскодировать (только оригиналы) |
 | `HLS_ENABLED` | `1` | `0` — без HLS-нарезки |
 | `TRANSCODE_BACKFILL` | `0` | `1` — догнать старые треки при старте |
+| `TRANSCODE_CODECS` | `opus,aac` (`opus` на Android) | какие варианты готовить |
+| `HLS_ENABLED` | `1` (`0` на Android) | HLS-нарезка |
+| `FFMPEG_THREADS` | — (`2` на Android) | потоки ffmpeg, `0` — на усмотрение ffmpeg |
 | `DATA_DIR` | `./data` | медиа, обложки, SQLite |
 | `DB_FILE` | `$DATA_DIR/vision.db` | путь к БД |
 

@@ -153,6 +153,12 @@ brew install ffmpeg
 Если диск тесный — `HLS_ENABLED=0` (HLS самая тяжёлая часть), затем `TRANSCODE_CODECS=opus`.
 `vision_storage_bytes` считает только оригиналы, варианты в метрику не входят.
 
+## 5.3 Android / Termux
+
+Домашний сервер на телефоне: установка, автозапуск (Termux:Boot), доступ по
+Wi-Fi и через Tailscale, экономный профиль транскодинга и диагностика —
+в отдельном документе **`docs/TERMUX.md`**. Кратко: `bash scripts/termux-setup.sh`.
+
 ## 6. Типовые проблемы
 
 | Симптом | Причина | Решение |
@@ -169,6 +175,8 @@ brew install ffmpeg
 | `X-Variant-Fallback` в ответе `/stream` | клиент попросил opus/aac, которого ещё нет | норма во время транскодинга или без ffmpeg |
 | `404 no_hls` | HLS выключен (`HLS_ENABLED=0`), ffmpeg нет или трек в очереди | проверьте `/api/health`, повторите позже |
 | `vision_transcode_total{result="error"}` растёт | ffmpeg падает на конкретном файле | смотрите `lastError` в `/api/health`, лог `transcode`; файл скорее всего битый |
+| `ffmpeg.available: true`, но `path` указывает на `ffmpeg-static` | бинарник запускается, значит платформа совпала | норма; на Android такого быть не должно — там glibc-сборка не запускается и резолв уходит в `PATH` |
+| `node:sqlite` не найден | Node < 22.5 или нестандартная сборка | обновите Node; на Termux — `pkg upgrade nodejs` |
 
 ## 7. Обновление версии
 

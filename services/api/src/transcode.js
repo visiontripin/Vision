@@ -2,7 +2,9 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { MEDIA_DIR, getTrackFile, getVariant, upsertVariant, tracksMissingVariants } from './db.js';
 import { inc } from './metrics.js';
-import { DEFAULT_BITRATES, codecInfo, ffmpegAvailable, transcodeAudio, transcodeToHls } from './ffmpeg.js';
+import {
+  DEFAULT_BITRATES, codecInfo, ffmpegAvailable, ffmpegThreads, isAndroid, transcodeAudio, transcodeToHls,
+} from './ffmpeg.js';
 
 /**
  * Очередь фонового транскодинга.
@@ -16,12 +18,16 @@ export const VARIANTS_DIR = path.join(MEDIA_DIR, 'variants');
 export const HLS_DIR = path.join(MEDIA_DIR, 'hls');
 
 const enabled = () => process.env.TRANSCODE !== '0';
+
+// На телефоне (Termux) по умолчанию делаем только opus и без HLS: это в разы
+// меньше CPU, батареи и места. Всё включается обратно явными переменными.
 const codecs = () =>
-  String(process.env.TRANSCODE_CODECS || 'opus,aac')
+  String(process.env.TRANSCODE_CODECS || (isAndroid() ? 'opus' : 'opus,aac'))
     .split(',')
     .map((value) => value.trim())
     .filter((value) => codecInfo(value));
-const hlsEnabled = () => process.env.HLS_ENABLED !== '0';
+const hlsEnabled = () =>
+  process.env.HLS_ENABLED === undefined ? !isAndroid() : process.env.HLS_ENABLED !== '0';
 
 const queue = [];
 const queued = new Set();
@@ -38,6 +44,12 @@ export function transcodeStatus() {
     processed,
     failed,
     lastError,
+    settings: {
+      codecs: codecs(),
+      hls: hlsEnabled(),
+      normalize: process.env.TRANSCODE_NORMALIZE !== '0',
+      threads: ffmpegThreads(),
+    },
   };
 }
 

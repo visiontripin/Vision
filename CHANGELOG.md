@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.6.1 — 2026-11-09
+
+Подготовка к домашнему серверу на Android (Termux) и починка резолва ffmpeg.
+
+### Исправлено
+
+- **Резолв ffmpeg теперь проверяет запуск, а не наличие файла.** `ffmpeg-static`
+  на Android/Termux ставится как glibc-бинарник, который не запускается; раньше
+  сервис выбирал его по `existsSync` и молча оставался без транскодинга при живом
+  `ffmpeg` в `PATH`. Теперь кандидаты (`FFMPEG_PATH` → `ffmpeg-static` → `PATH`)
+  пробуются по очереди до первого рабочего.
+
+### Добавлено
+
+- **Экономный профиль на Android**: `process.platform === 'android'` (или
+  `TERMUX_VERSION`) включает только opus, выключает HLS и ограничивает ffmpeg
+  двумя потоками. Всё переопределяется `TRANSCODE_CODECS`, `HLS_ENABLED`,
+  `FFMPEG_THREADS`.
+- **`FFMPEG_THREADS`** — ограничение потоков ffmpeg (полезно и на слабых серверах).
+- **`scripts/termux-setup.sh`** — установка `nodejs`/`ffmpeg`/`git`, сборка web,
+  каталог данных, автозапуск через Termux:Boot с `termux-wake-lock`.
+- **`docs/TERMUX.md`** — установка, доступ по Wi-Fi, HTTPS через Tailscale/Cloudflare
+  Tunnel, автозапуск, обновление, бэкап и таблица типовых проблем.
+- **Понятные ошибки старта** (`services/api/src/start.js`): вместо стека — подсказка
+  про `node:sqlite`, занятый порт и права на `/sdcard`. `npm start` и Docker
+  используют его как точку входа.
+- `/api/health` отдаёт `runtime` (platform/arch/node/termux), `ffmpeg.path` и
+  `transcode.settings`.
+- 4 юнит-теста на резолв ffmpeg: приоритет `FFMPEG_PATH`, пропуск нерабочего
+  бинарника, полное отсутствие ffmpeg, Android-профиль потоков.
+
 ## 0.6.0 — 2026-11-09
 
 Фаза 2 «Аудио 2.0»: лёгкий поток, ровная громкость, HLS и прогрев следующего трека.
