@@ -26,6 +26,17 @@ export function PlayerBar() {
 
   return (
     <div className="player" role="region" aria-label="Плеер">
+      {/* на мобильных волна скрыта — оставляем тонкий перетаскиваемый прогресс */}
+      <input
+        className="player__mobileSeek"
+        type="range"
+        min={0}
+        max={Math.max(1, Math.round(player.duration || current.duration))}
+        step={0.5}
+        value={Math.min(player.position, player.duration || current.duration || 1)}
+        aria-label="Позиция воспроизведения"
+        onChange={(event) => player.seek(Number(event.target.value))}
+      />
       <div className="player__now">
         <Cover track={current} size={52} />
         <div className="player__meta">

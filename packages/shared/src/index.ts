@@ -35,17 +35,45 @@ export type Stats = {
   duration: number;
   liked: number;
   playlists: number;
+  bytes: number;
   diskFreeMb: number | null;
   version: string;
   genres: { genre: string; count: number }[];
+};
+
+export type TrackPage = {
+  items: Track[];
+  total: number;
+};
+
+/** Короткоживущие подписанные ссылки на медиа (HMAC, ~30 минут). */
+export type MediaItem = {
+  stream: string;
+  cover: string | null;
+  expiresAt: string;
+};
+
+export type MediaMap = {
+  ttlMs: number;
+  items: Record<string, MediaItem>;
+};
+
+export type HistoryEntry = {
+  track: Track;
+  position: number;
+  duration: number;
+  completed: boolean;
+  plays: number;
+  listenedAt: string;
 };
 
 export type TrackQuery = {
   q?: string;
   genre?: string;
   liked?: boolean;
-  sort?: 'recent' | 'oldest' | 'title' | 'plays' | 'duration';
+  sort?: 'relevance' | 'recent' | 'oldest' | 'title' | 'plays' | 'duration';
   limit?: number;
+  offset?: number;
 };
 
 export type UploadMeta = {
@@ -142,6 +170,22 @@ export function createClient(options: ClientOptions = {}) {
     tracks(query: TrackQuery = {}) {
       return request<Track[]>(`/api/tracks${qs({ ...query, liked: query.liked ? 1 : undefined } as any)}`);
     },
+    /** То же, но с общим количеством записей из заголовка X-Total-Count. */
+    async tracksPage(query: TrackQuery = {}) {
+      const headers = new Headers();
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      const response = await fetch(
+        `${baseUrl}/api/tracks${qs({ ...query, liked: query.liked ? 1 : undefined } as any)}`,
+        { headers }
+      );
+      const items = (await response.json()) as Track[];
+      if (!response.ok) {
+        const err = (items as any)?.error ?? {};
+        throw new VisionError(response.status, err.code || 'http_error', err.message || `HTTP ${response.status}`);
+      }
+      const total = Number(response.headers.get('x-total-count') ?? items.length);
+      return { items, total: Number.isFinite(total) ? total : items.length } satisfies TrackPage;
+    },
     track(id: string) {
       return request<Track>(`/api/tracks/${id}`);
     },
@@ -157,12 +201,38 @@ export function createClient(options: ClientOptions = {}) {
     registerPlay(id: string) {
       return request<void>(`/api/tracks/${id}/play`, { method: 'POST' });
     },
-
-    streamUrl(id: string) {
-      return `${baseUrl}/api/tracks/${id}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    /** Прогресс прослушивания — питает «Продолжить слушать». */
+    listen(id: string, payload: { position: number; duration?: number; completed?: boolean }) {
+      return request<void>(`/api/tracks/${id}/listen`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
     },
-    coverUrl(id: string) {
-      return `${baseUrl}/api/tracks/${id}/cover${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    history(limit = 12) {
+      return request<HistoryEntry[]>(`/api/history?limit=${limit}`);
+    },
+    clearHistory() {
+      return request<void>('/api/history', { method: 'DELETE' });
+    },
+
+    /**
+     * Подписанные ссылки на поток и обложку. Токен в URL не передаём:
+     * <audio>/<img> не умеют слать заголовки, поэтому сервер выдаёт HMAC-подпись
+     * с коротким сроком жизни.
+     */
+    async media(ids: string[]): Promise<MediaMap> {
+      const unique = Array.from(new Set(ids.filter(Boolean))).slice(0, 200);
+      if (!unique.length) return { ttlMs: 0, items: {} };
+      const payload = await request<MediaMap>(`/api/media?ids=${unique.join(',')}`);
+      const items: Record<string, MediaItem> = {};
+      for (const [id, item] of Object.entries(payload.items)) {
+        items[id] = {
+          stream: item.stream.startsWith('/') ? `${baseUrl}${item.stream}` : item.stream,
+          cover: item.cover ? (item.cover.startsWith('/') ? `${baseUrl}${item.cover}` : item.cover) : null,
+          expiresAt: item.expiresAt,
+        };
+      }
+      return { ttlMs: payload.ttlMs, items };
     },
 
     /**

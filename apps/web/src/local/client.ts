@@ -1,4 +1,13 @@
-import type { Playlist, Stats, Track, TrackQuery, UploadMeta, VisionClient } from '@vision/shared';
+import type {
+  HistoryEntry,
+  MediaMap,
+  Playlist,
+  Stats,
+  Track,
+  TrackQuery,
+  UploadMeta,
+  VisionClient,
+} from '@vision/shared';
 
 /**
  * Локальный (client-side) клиент: вся библиотека живёт в IndexedDB браузера.
@@ -9,7 +18,7 @@ import type { Playlist, Stats, Track, TrackQuery, UploadMeta, VisionClient } fro
 const DB_NAME = 'vision-audio-local';
 const DB_VERSION = 1;
 const LOCAL_TOKEN = 'local';
-const VERSION = '0.1.0-local';
+const VERSION = '0.2.0-local';
 
 type StoredTrack = Track & { blob: Blob };
 type StoredPlaylist = {
@@ -233,6 +242,34 @@ export class LocalClient {
     return '';
   }
 
+  /** Локальный режим: URL-объекты живут столько же, сколько вкладка. */
+  async media(ids: string[]): Promise<MediaMap> {
+    await this.init();
+    const items: MediaMap['items'] = {};
+    for (const id of ids) {
+      const url = this.urls.get(id);
+      if (url) items[id] = { stream: url, cover: null, expiresAt: new Date(Date.now() + 86400000).toISOString() };
+    }
+    return { ttlMs: 86400000, items };
+  }
+
+  async tracksPage(query: TrackQuery = {}) {
+    const items = await this.tracks(query);
+    return { items, total: items.length };
+  }
+
+  async listen(_id: string, _payload: { position: number; duration?: number; completed?: boolean }) {
+    /* прогресс в локальном режиме хранит сам плеер в localStorage */
+  }
+
+  async history(_limit = 12): Promise<HistoryEntry[]> {
+    return [];
+  }
+
+  async clearHistory() {
+    /* noop */
+  }
+
   async uploadTrack(blob: Blob, meta: UploadMeta, onProgress?: (percent: number) => void) {
     await this.init();
 
@@ -374,6 +411,7 @@ export class LocalClient {
       duration: this.trackStore.reduce((sum, track) => sum + track.duration, 0),
       liked: this.trackStore.filter((track) => track.liked).length,
       playlists: this.playlistStore.length,
+      bytes: this.trackStore.reduce((sum, track) => sum + (track.size || 0), 0),
       diskFreeMb: null,
       version: VERSION,
       genres: [...genres.entries()]

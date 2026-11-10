@@ -3,6 +3,7 @@ import {
 } from 'react';
 import type { Track } from '@vision/shared';
 import { api } from '../api';
+import { ensureMedia, getMedia, invalidateMedia } from '../media';
 import { useLibrary } from './library';
 
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -31,6 +32,8 @@ type PlayerValue = {
   repeat: RepeatMode;
   queueOpen: boolean;
   play: (track: Track, list?: Track[]) => void;
+  /** Воспроизведение с сохранённой позиции — для «Продолжить слушать». */
+  playAt: (track: Track, list: Track[] | undefined, position: number) => void;
   playQueue: (list: Track[], startIndex?: number) => void;
   toggle: () => void;
   next: () => void;
@@ -87,6 +90,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const restored = useRef(false);
   const lastPersist = useRef(0);
   const endedRef = useRef<() => void>(() => {});
+  const retried = useRef(new Set<string>());
 
   const current = queue[index] ?? null;
   const currentId = current?.id ?? null;
@@ -116,6 +120,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       onDuration();
     };
     const onEnded = () => endedRef.current();
+    const onError = () => {
+      // подпись могла истечь (вкладка спала) — переподписываем один раз
+      const id = audio.dataset.trackId;
+      if (!id || retried.current.has(id)) return;
+      retried.current.add(id);
+      invalidateMedia(id);
+      void ensureMedia([id]).then(() => {
+        const fresh = getMedia(id)?.stream;
+        if (!fresh) return;
+        const at = audio.currentTime;
+        audio.src = fresh;
+        audio.load();
+        if (at > 0) {
+          try {
+            audio.currentTime = at;
+          } catch {
+            /* noop */
+          }
+        }
+        if (playingRef.current) audio.play().catch(() => setPlaying(false));
+      });
+    };
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
 
@@ -123,6 +149,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     audio.addEventListener('loadedmetadata', onLoaded);
     audio.addEventListener('durationchange', onDuration);
     audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
 
@@ -134,6 +161,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.removeEventListener('loadedmetadata', onLoaded);
       audio.removeEventListener('durationchange', onDuration);
       audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
       audioRef.current = null;
@@ -145,11 +173,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio || !currentId) return;
     if (audio.dataset.trackId === currentId) return;
-    audio.dataset.trackId = currentId;
-    audio.src = api.streamUrl(currentId);
-    audio.load();
-    setPosition(0);
-    setDuration(current?.duration ?? 0);
+
+    let cancelled = false;
+    const attach = async () => {
+      // ссылки подписанные и короткоживущие — берём свежую перед загрузкой
+      await ensureMedia([currentId]);
+      if (cancelled) return;
+      const url = getMedia(currentId)?.stream;
+      if (!url) {
+        setPlaying(false);
+        return;
+      }
+      retried.current.delete(currentId);
+      audio.dataset.trackId = currentId;
+      audio.src = url;
+      audio.load();
+      setPosition(0);
+      setDuration(current?.duration ?? 0);
+      if (playingRef.current) audio.play().catch(() => setPlaying(false));
+    };
+
+    void attach();
 
     if (!counted.current.has(currentId)) {
       counted.current.add(currentId);
@@ -159,11 +203,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
     }
 
-    if (playingRef.current) {
-      audio.play().catch(() => setPlaying(false));
-    }
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId]);
+
+  /* ---- прогресс прослушивания (питает «Продолжить слушать») ---- */
+  useEffect(() => {
+    if (!currentId || !playing) return;
+    let alive = true;
+
+    const report = (completed = false) => {
+      if (!alive) return;
+      const audio = audioRef.current;
+      const pos = audio?.currentTime ?? 0;
+      if (pos < 2) return;
+      const total = Number.isFinite(audio?.duration) ? (audio?.duration ?? 0) : duration;
+      api.listen(currentId, { position: pos, duration: total, completed }).catch(() => {});
+    };
+
+    const timer = window.setInterval(() => report(), 10000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      report(position > 0 && duration > 0 && position / duration > 0.9);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId, playing]);
 
   /* ---- play / pause ---- */
   useEffect(() => {
@@ -263,6 +330,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setPlaying(true);
     },
     [queue]
+  );
+
+  const playAt = useCallback(
+    (track: Track, list: Track[] | undefined, position: number) => {
+      pendingSeek.current = Math.max(0, position);
+      if (list && list.length) {
+        setQueue(list);
+        setIndex(Math.max(0, list.findIndex((t) => t.id === track.id)));
+      } else {
+        setQueue((prev) => (prev.some((t) => t.id === track.id) ? prev : [...prev, track]));
+      }
+      setQueueOpen(false);
+      setPlaying(true);
+    },
+    []
   );
 
   const playQueue = useCallback((list: Track[], startIndex = 0) => {
@@ -401,11 +483,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const value = useMemo<PlayerValue>(
     () => ({
       queue, index, current, playing, position, duration, volume, muted, shuffle, repeat, queueOpen,
-      play, playQueue, toggle, next: () => next(false), prev, seek, seekFraction, setVolume, toggleMute,
+      play, playAt, playQueue, toggle, next: () => next(false), prev, seek, seekFraction, setVolume, toggleMute,
       toggleShuffle, cycleRepeat, setQueueOpen, removeFromQueue, replaceTrack,
     }),
     [queue, index, current, playing, position, duration, volume, muted, shuffle, repeat, queueOpen,
-      play, playQueue, toggle, next, prev, seek, seekFraction, setVolume, toggleMute, toggleShuffle,
+      play, playAt, playQueue, toggle, next, prev, seek, seekFraction, setVolume, toggleMute, toggleShuffle,
       cycleRepeat, removeFromQueue, replaceTrack]
   );
 
