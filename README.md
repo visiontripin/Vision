@@ -45,7 +45,7 @@ Web-версия умеет работать **полностью в брауз�
 | Web | React 19 + TS + Vite | ✅ PWA: вход, загрузка с волной, библиотека, поиск, плеер, плейлисты, лайки, статистика. Есть локальный режим (IndexedDB) для GitHub Pages |
 | API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.8.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, OpenAPI, закладки SoundCloud, транскодинг opus/aac + HLS |
 | Android (сервер) | Termux + Node 22 + ffmpeg | ✅ v0.6.1: экономный профиль, автозапуск, доступ через Tailscale — `docs/TERMUX.md` |
-| Android / iOS (приложение) | React Native (Expo 54) | ✅ v0.2.0: вход с любым адресом сервера, библиотека, плейлисты, плеер с фоном, офлайн-копии. Нужны сборки (EAS) и dev build для экрана блокировки |
+| Android / iOS (приложение) | React Native (Expo 54) | ✅ v0.2.0: вход с любым адресом сервера, библиотека, плейлисты, плеер с фоном, офлайн-копии; **готовый APK в CI** — `docs/ANDROID.md`. Экран блокировки — dev build |
 | Windows / Linux | Tauri 2 | 🟡 каркас + медиа-клавиши, нужна сборка на целевых ОС |
 
 ## Быстрый старт
@@ -119,10 +119,17 @@ data/             runtime: медиа, обложки, БД (в git не поп�
 треков/плейлистов на устройство.
 
 ```bash
-cd apps/mobile && npm install && npx expo start
+cd apps/mobile && npm install && npx expo start   # Expo Go на телефоне
 ```
 
-Подробности и ограничения — `apps/mobile/README.md`. План распределённого
+**Готовый APK** (CI, без Expo-аккаунта) — Actions → «Android APK» → Run workflow;
+файл появляется в релизе `android-v<версия>`:
+
+```
+https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.0-android.apk
+```
+
+Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`. План распределённого
 хранения (сервер без файлов, сиды на устройствах) — `docs/DISTRIBUTED.md`.
 
 ## Офлайн и установка как приложение

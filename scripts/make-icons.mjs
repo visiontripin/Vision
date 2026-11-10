@@ -12,7 +12,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const OUT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../apps/web/public');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const WEB_DIR = path.join(ROOT, 'apps/web/public');
+const MOBILE_DIR = path.join(ROOT, 'apps/mobile/assets');
 
 const BG = [255, 90, 31]; // #ff5a1f — акцент приложения
 const INK = [8, 8, 11]; // #08080b
@@ -42,8 +44,11 @@ function chunk(type, data) {
   return Buffer.concat([length, body, crc]);
 }
 
-/** Простейший растеризатор: покрытие пикселя по аналитической форме. */
-function render(size, { padding, rounded }) {
+/**
+ * Простейший растеризатор по аналитическим формам.
+ * `transparent` — фон прозрачный (нужно для adaptive icon и splash).
+ */
+function render(size, { padding, rounded, background = BG, ink = INK, transparent = false }) {
   const px = Buffer.alloc(size * size * 4);
   const radius = rounded ? size * 0.22 : 0;
   const pad = size * padding;
@@ -73,12 +78,32 @@ function render(size, { padding, rounded }) {
         continue;
       }
 
-      let color = BG;
+      if (transparent) {
+        // прозрачный фон: рисуем только «волну»
+        let hit = false;
+        const nx = (x + 0.5 - pad) / inner;
+        const ny = (y + 0.5 - pad) / inner;
+        for (const bar of bars) {
+          const half = bar.h / 2;
+          if (nx >= bar.x && nx <= bar.x + bar.w && ny >= 0.5 - half && ny <= 0.5 + half) hit = true;
+        }
+        if (!hit) {
+          px[i + 3] = 0;
+          continue;
+        }
+        px[i] = background[0];
+        px[i + 1] = background[1];
+        px[i + 2] = background[2];
+        px[i + 3] = 255;
+        continue;
+      }
+
+      let color = background;
       const nx = (x + 0.5 - pad) / inner;
       const ny = (y + 0.5 - pad) / inner;
       for (const bar of bars) {
         const half = bar.h / 2;
-        if (nx >= bar.x && nx <= bar.x + bar.w && ny >= 0.5 - half && ny <= 0.5 + half) color = INK;
+        if (nx >= bar.x && nx <= bar.x + bar.w && ny >= 0.5 - half && ny <= 0.5 + half) color = ink;
       }
 
       px[i] = color[0];
@@ -107,17 +132,22 @@ function render(size, { padding, rounded }) {
   ]);
 }
 
-mkdirSync(OUT_DIR, { recursive: true });
-
 const targets = [
-  { file: 'icon-192.png', size: 192, padding: 0.14, rounded: true },
-  { file: 'icon-512.png', size: 512, padding: 0.14, rounded: true },
+  // ---- PWA (apps/web/public) ----
+  { dir: WEB_DIR, file: 'icon-192.png', size: 192, padding: 0.14, rounded: true },
+  { dir: WEB_DIR, file: 'icon-512.png', size: 512, padding: 0.14, rounded: true },
   // maskable: без скруглений и с большим отступом — Android обрежет сам
-  { file: 'icon-maskable-512.png', size: 512, padding: 0.24, rounded: false },
+  { dir: WEB_DIR, file: 'icon-maskable-512.png', size: 512, padding: 0.24, rounded: false },
+  // ---- Android/iOS (apps/mobile/assets) ----
+  { dir: MOBILE_DIR, file: 'icon.png', size: 1024, padding: 0.16, rounded: false },
+  // adaptive icon: прозрачный фон + акцентная волна (Android накладывает маску сам)
+  { dir: MOBILE_DIR, file: 'adaptive-icon.png', size: 1024, padding: 0.3, rounded: false, transparent: true },
+  { dir: MOBILE_DIR, file: 'splash-icon.png', size: 1024, padding: 0.34, rounded: false, transparent: true },
 ];
 
 for (const target of targets) {
+  mkdirSync(target.dir, { recursive: true });
   const png = render(target.size, target);
-  writeFileSync(path.join(OUT_DIR, target.file), png);
-  console.log(`✓ ${target.file} — ${(png.length / 1024).toFixed(1)} КБ`);
+  writeFileSync(path.join(target.dir, target.file), png);
+  console.log(`✓ ${path.relative(ROOT, path.join(target.dir, target.file))} — ${(png.length / 1024).toFixed(1)} КБ`);
 }

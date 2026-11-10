@@ -7,7 +7,9 @@
     "scheme": "visionaudio",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07070A",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash-icon.png",
       "backgroundColor": "#07070A",
       "resizeMode": "contain"
     },
@@ -28,18 +30,27 @@
     },
     "android": {
       "package": "app.vision.audio",
+      "versionCode": 1,
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#07070A"
       },
       "permissions": [
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "INTERNET"
-      ],
-      "usesCleartextTraffic": true
+      ]
     },
     "plugins": [
-      "expo-av"
+      "expo-av",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "extra": {
       "apiUrl": "http://10.0.2.2:4000"

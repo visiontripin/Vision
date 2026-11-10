@@ -5,6 +5,27 @@ React Native (Expo) + общий клиент `@vision/shared`. Отдельны
 
 Версия клиента — **0.2.0**. Работает в Expo Go (SDK 54).
 
+## Готовая APK и ссылка
+
+Ставить ничего не нужно — установочный файл собирается в CI и лежит в релизах:
+
+```
+https://github.com/visiontripin/Vision/releases/tag/android-v0.2.0
+прямая ссылка на файл:
+https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.0-android.apk
+```
+
+- Скачать `.apk` на телефон → «Установить из неизвестного источника»
+  (Chrome: «Всё равно скачать» — это нормально для самоподписанного APK).
+- Открыть приложение, ввести адрес сервера (`http://192.168.1.10:4000`,
+  адрес Tailscale или HTTPS-туннель) и пароль.
+- Рядом лежит `<файл>.apk.sha256` для проверки целостности.
+- Обновление: скачать новую APK с той же страницы и установить поверх —
+  ключ подписи постоянный, вход и офлайн-копии сохраняются.
+
+Пересобрать: Actions → **Android APK** → Run workflow (или `git tag android-v0.2.0`
++ push). Подробности, ключ подписи и ручная сборка — `docs/ANDROID.md`.
+
 ## Что уже умеет
 
 - **Вход**: адрес домашнего сервера вводится на экране входа (Wi-Fi дома, Tailscale,
@@ -56,11 +77,22 @@ cd ../.. && npm run test:local    # 35 тестов, из них 13 про мо�
 
 ## Сборки
 
+**APK для установки на телефон** — CI, без Expo-аккаунта (рекомендуется):
+
+```bash
+gh workflow run android.yml            # → Release android-v<версия> с .apk
+# или вручную на машине с JDK 17 + Android SDK:
+npx expo prebuild --platform android --no-install
+node ../../scripts/android-prepare.mjs && (cd android && ./gradlew assembleRelease)
+```
+
+**EAS** (нужен аккаунт Expo; AAB для Google Play / IPA для TestFlight):
+
 ```bash
 npm i -g eas-cli && eas login
 eas build:configure
-npm run build:android   # AAB для Google Play / internal testing
-npm run build:ios       # IPA для TestFlight
+npm run build:android
+npm run build:ios
 ```
 
 ## Ограничения текущей версии

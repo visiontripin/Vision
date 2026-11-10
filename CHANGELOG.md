@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.8.1 — 2026-11-09
+
+Готовый APK приложения для Android со ссылкой на скачивание — без Expo-аккаунта
+и без локального Android SDK.
+
+### Сборка
+
+- **`.github/workflows/android.yml`**: `npm ci` → `tsc` → `expo prebuild` →
+  `scripts/android-prepare.mjs` → `gradlew assembleRelease` → артефакт
+  `VisionAudio-<версия>-android.apk` (+ `.sha256`) и GitHub Release `android-v<версия>`.
+  Запуск: Actions → «Android APK» → Run workflow, либо тег `android-v*`.
+- **`scripts/android-prepare.mjs`**: патчит сгенерированный `build.gradle` —
+  `versionCode` из `GITHUB_RUN_NUMBER` (обновления ставятся поверх), `versionName`
+  из `app.json`, signingConfig `visionRelease` (PKCS#12).
+- **Ключ подписи** `apps/mobile/vision-release.p12` (самоподписанный, alias
+  `vision`) зафиксирован в репозитории, чтобы каждая сборка имела одинаковую
+  подпись; переменные `VISION_KEYSTORE_*` позволяют заменить его на секреты.
+- **Иконки**: `scripts/make-icons.mjs` теперь рисует и ассеты мобильного проекта —
+  `apps/mobile/assets/{icon,adaptive-icon,splash-icon}.png` (1024², adaptive icon
+  с прозрачным фоном); `app.json` получил `icon`, `adaptiveIcon.foregroundImage`,
+  `splash.image`, `android.versionCode`.
+- **`usesCleartextTraffic`**: релизная сборка Android блокирует `http://`, поэтому
+  добавлены `expo-build-properties` (`android.usesCleartextTraffic: true`) и
+  `expo-system-ui` (тёмная тема без мигания); `android-prepare.mjs` проверяет
+  атрибут в манифесте и патчит его сам, если плагин не сработал.
+- `apps/mobile/android`, `ios`, `dist` — в `.gitignore` (генерируются prebuild-ом).
+
+### Документация
+
+- **`docs/ANDROID.md`** — как устроена сборка, подпись и её оговорки, установка
+  на телефон, проверка SHA-256, ручная сборка, ограничения.
+- `apps/mobile/README.md` — раздел «Готовая APK и ссылка».
+
 ## 0.8.0 — 2026-11-10
 
 Фаза 3: мобильное приложение (Android/iOS) — вход, библиотека, плейлисты, плеер
