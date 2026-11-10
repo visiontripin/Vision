@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.9.0 — 2026-11-09
+
+Фаза 3, этап «трекер и сиды»: сервер перестаёт быть хранилищем. Файл адресуется
+по `sha256`, сервер держит реестр реплик и выдаёт подписанные ссылки на устройства.
+
+### Трекер реплик (`services/api`)
+
+- **Миграция `007-blobs`**: таблицы `blobs` (hash, bytes, mime) и `blob_seeds`
+  (device_id, kind, base_url, servable, online_at); существующие треки сразу
+  становятся блобами по `tracks.checksum`.
+- **`services/api/src/seeds.js`** — вся логика: объявление блобов, heartbeat сидов,
+  сводка «есть у кого», порядок предпочтения (origin → node → desktop → mobile →
+  browser), подписанные ссылки, локальное наличие файла, репликация.
+- **`GET /seed/:hash?exp&sig`** — отдача файла устройством: Range, ETag, HEAD,
+  401 без подписи, 403 при `SEED_ENABLED=0`. Подпись общая для узлов роя.
+- **`GET /api/tracks/:id/download`** — 302 на живое устройство (или свой `/seed`),
+  `409 no_source`, если файл сейчас никто не раздаёт; `?json=1` — адрес и список сидов.
+- **`POST /api/blobs`, `GET /api/blobs/:hash`, `/seeds`, `/seed` (heartbeat / снятие),
+  `/replicate`** — реестр и репликация с проверкой `sha256` после скачивания.
+- **`STORAGE_MODE=metadata`**: `POST /api/tracks` с JSON принимает только метаданные
+  (`hash`, `bytes`, `mime`, `duration`, `peaks`) и адрес сида; файл остаётся у загрузившего.
+- **Треки в выдаче** (`/api/tracks`, `/api/tracks/:id`, плейлисты, история) получают
+  `checksum`, `sources { local, servable, replicas, devices, kinds }` и `available`.
+- **`/api/media`**: если файла на узле нет, но есть живой сид, `stream` указывает на
+  `/api/tracks/:id/download` — плеер следует редиректу, клиенту ничего не нужно знать.
+- **Heartbeat**: раз в минуту узел объявляет себя сидом для локальных файлов
+  (`SEED_TTL_MS` = 3 минуты, `REPLICA_TTL_MS` = 30 дней для не-раздающих копий).
+- **CSP**: `EXTRA_ORIGINS` разрешает медиа с адресов соседних узлов.
+- **Метрики и здоровье**: `vision_blobs_total`, `vision_seeds_online`,
+  `vision_blobs_no_source`; `/api/health` → `storage` + `tracker`, `/api/seeds` — сводка.
+- **OpenAPI** дополнен 7 маршрутами трекера и схемами `BlobSeed`, `TrackSources`.
+
+### Клиенты
+
+- **`@vision/shared`**: типы `TrackSources`, `BlobSeed`, `BlobState`, `SeedList`,
+  `TrackerStats`, `DownloadTarget`; методы `tracker`, `blob`, `blobSeeds`,
+  `announceSeed`, `withdrawSeed`, `replicateBlob`, `downloadTarget`.
+- **Web**: значок «нет источника» и число устройств с копией, приглушённый трек,
+  честное сообщение вместо ошибки сети; офлайн-копия объявляется репликой, при
+  удалении — снимается, при старте реестр восстанавливается (`apps/web/src/seeds.ts`).
+- **Телефон 0.3.0**: скачанный файл объявляется репликой (`kind: mobile`),
+  при удалении снимается; `hash` хранится в индексе копий.
+
+### Тесты и документация
+
+- `services/api/test/seeds.test.js` — 11 сценариев на двух живых узлах (загрузка →
+  реестр → подписанная ссылка → Range → sha256 → метаданные без файла → редирект на
+  пир → 409 `no_source` → репликация → снятие сида → метрики). Всего тестов API: 34.
+- **`docs/DISTRIBUTED.md`** переписан под фактическое состояние: схема, API, настройки,
+  «два узла за пять минут», что осталось.
+- `docs/API.md`, `docs/TERMUX.md` (раздел «Сид и трекер реплик»), `README.md`,
+  `scripts/termux-setup.sh` (`DEVICE_ID`, `SEED_ENABLED`, `PUBLIC_URL`).
+
 ## 0.8.1 — 2026-11-09
 
 Готовый APK приложения для Android со ссылкой на скачивание — без Expo-аккаунта

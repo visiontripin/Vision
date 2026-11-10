@@ -24,6 +24,8 @@ export function toTrack(row, { withPeaks = false } = {}) {
     cover: Boolean(row.cover_mime),
     plays: row.plays,
     liked: Boolean(row.liked),
+    /** sha256 содержимого — адрес блоба в распределённом хранилище */
+    checksum: row.checksum ?? null,
     createdAt: row.created_at,
   };
 }
@@ -191,6 +193,12 @@ export function updateTrackFields(id, patch) {
   }
 
   return getTrack(id);
+}
+
+/** Трек по содержимому: один и тот же файл = один блоб (дедупликация). */
+export function trackByChecksum(checksum) {
+  if (!checksum) return null;
+  return db.prepare('SELECT id, ext, mime, size FROM tracks WHERE checksum = ?').get(checksum) ?? null;
 }
 
 export function setCoverMime(id, mime) {

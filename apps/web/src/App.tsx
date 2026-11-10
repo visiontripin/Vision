@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { QueueDrawer, PlayerBar } from './components/PlayerBar';
 import { Sidebar } from './components/Sidebar';
 import { UploadModal } from './components/UploadModal';
@@ -11,6 +11,8 @@ import {
   PlaylistsPage,
   StatsPage,
 } from './pages';
+import { isOfflineCached } from './offline';
+import { syncReplicas } from './seeds';
 import { AuthProvider, useAuth } from './state/auth';
 import { LibraryProvider, useLibrary } from './state/library';
 import { PlayerProvider, usePlayer } from './state/player';
@@ -74,6 +76,14 @@ function useRoute() {
 function Shell() {
   const route = useRoute();
   const { error, reload, tracks } = useLibrary();
+  const replicasSynced = useRef(false);
+
+  /* один раз за сессию: восстановить в трекере записи об офлайн-копиях */
+  useEffect(() => {
+    if (replicasSynced.current || !tracks.length) return;
+    replicasSynced.current = true;
+    void syncReplicas(tracks, isOfflineCached);
+  }, [tracks]);
   const player = usePlayer();
   const [search, setSearch] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);

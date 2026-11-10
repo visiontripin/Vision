@@ -6,6 +6,7 @@ import { ensureMedia, getDownloadUrl } from '../media';
 import {
   cacheTrack, formatBytes, isOfflineCached, offlineSupported, removeOffline, useOffline,
 } from '../offline';
+import { announceReplica, sourceLabel, withdrawReplica } from '../seeds';
 import { useLibrary } from '../state/library';
 import { usePlayer } from '../state/player';
 import { Cover, Icon, useToast } from '../ui';
@@ -142,6 +143,11 @@ function TrackRow({
   useOffline(); // подписка: перерисоваться, когда копия появится или исчезнет
   const cached = isOfflineCached(track.id);
 
+  // Трекер говорит, есть ли у кого файл. Офлайн-копия важнее: она уже локально.
+  const label = sourceLabel(track);
+  const unavailable = !cached && track.available === false;
+  const devices = track.sources?.devices ?? 0;
+
   const isCurrent = current?.id === track.id;
 
   useEffect(() => {
@@ -206,6 +212,7 @@ function TrackRow({
       const url = getDownloadUrl(track.id);
       if (!url) throw new Error('Ссылка на файл ещё не готова — попробуйте через секунду');
       const entry = await cacheTrack(track, url, { onProgress: (ratio) => setProgress(ratio) });
+      void announceReplica(track); // «у меня есть копия» — в реестр реплик
       push(`Офлайн-копия готова: ${formatBytes(entry.bytes)}`);
       setMenuOpen(false);
     } catch (error) {
@@ -219,6 +226,7 @@ function TrackRow({
   const dropOffline = async () => {
     try {
       await removeOffline(track.id);
+      void withdrawReplica(track);
       push('Офлайн-копия удалена');
       setMenuOpen(false);
     } catch {
@@ -246,7 +254,7 @@ function TrackRow({
 
   return (
     <div
-      className={`track${isCurrent ? ' track--current' : ''}`}
+      className={`track${isCurrent ? ' track--current' : ''}${unavailable ? ' track--unavailable' : ''}`}
       role="listitem"
       aria-posinset={position + 1}
       aria-setsize={total}
@@ -258,6 +266,10 @@ function TrackRow({
         aria-label={isCurrent && playing ? 'Пауза' : `Играть ${track.title}`}
         onClick={(event) => {
           event.stopPropagation();
+          if (unavailable) {
+            push('Ни одно устройство сейчас не раздаёт этот файл', 'error');
+            return;
+          }
           onPlay();
         }}
       >
@@ -283,6 +295,26 @@ function TrackRow({
       </div>
 
       {track.genre && <span className="pill track__genre">{track.genre}</span>}
+
+      {label && (
+        <span
+          className={`pill track__source${unavailable ? ' track__source--missing' : ''}`}
+          title={
+            unavailable
+              ? 'Ни одно устройство сейчас не раздаёт этот файл'
+              : `Копия есть у ${devices} устройств(а), раздавать по HTTP они не умеют`
+          }
+        >
+          {label}
+        </span>
+      )}
+
+      {!label && devices > 1 && (
+        <span className="track__seeds" title={`Файл раздают устройства: ${devices}`}>
+          <Icon name="disc" size={12} />
+          {devices}
+        </span>
+      )}
 
       <span className="track__plays" title="Прослушивания">
         <Icon name="play" size={11} />

@@ -37,16 +37,18 @@ Web-версия умеет работать **полностью в брауз�
 |-------|----------|--------|
 | Self-hosted | SQLite + файлы на сервере, доступ с любых устройств | `npm start` |
 | Локальный (Pages) | IndexedDB браузера, без сервера | `npm run build:pages` |
+| Распределённый | метаданные на сервере, файлы на устройствах (Termux/ПК) | `STORAGE_MODE=metadata`, см. `docs/DISTRIBUTED.md` |
 
 ## Статус
 
 | Платформа | Технология | Состояние |
 |-----------|-----------|-----------|
 | Web | React 19 + TS + Vite | ✅ PWA: вход, загрузка с волной, библиотека, поиск, плеер, плейлисты, лайки, статистика. Есть локальный режим (IndexedDB) для GitHub Pages |
-| API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.8.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, OpenAPI, закладки SoundCloud, транскодинг opus/aac + HLS |
+| API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.9.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, OpenAPI, закладки SoundCloud, транскодинг opus/aac + HLS, **трекер реплик** (`blobs`/`blob_seeds`, `/seed`, репликация) |
 | Android (сервер) | Termux + Node 22 + ffmpeg | ✅ v0.6.1: экономный профиль, автозапуск, доступ через Tailscale — `docs/TERMUX.md` |
 | Android / iOS (приложение) | React Native (Expo 54) | ✅ v0.2.0: вход с любым адресом сервера, библиотека, плейлисты, плеер с фоном, офлайн-копии; **готовый APK в CI** — `docs/ANDROID.md`. Экран блокировки — dev build |
 | Windows / Linux | Tauri 2 | 🟡 каркас + медиа-клавиши, нужна сборка на целевых ОС |
+| Хранилище | трекер реплик + сиды | ✅ v0.9.0: файлы живут на устройствах, сервер — реестр; `/api/tracks/:id/download`, `/seed/:hash`, репликация с проверкой SHA-256 — `docs/DISTRIBUTED.md` |
 
 ## Быстрый старт
 
@@ -132,6 +134,25 @@ https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-0.2.
 Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`. План распределённого
 хранения (сервер без файлов, сиды на устройствах) — `docs/DISTRIBUTED.md`.
 
+## Распределённое хранение: трекер и сиды
+
+Аудио не обязано лежать на сервере. Файл адресуется по `sha256`, а сервер держит
+реестр реплик: кто прямо сейчас может его отдать.
+
+```bash
+# узел A — загружает и раздаёт (Termux дома, ПК)
+DATA_DIR=~/vision-a DEVICE_ID=node-a PUBLIC_URL=http://192.168.1.10:4000 npm start
+# узел B — только метаданные, качает с живых сидов
+DATA_DIR=~/vision-b STORAGE_MODE=metadata DEVICE_ID=node-b npm start
+```
+
+- `GET /api/tracks/:id/download` — 302 на живое устройство или `409 no_source`;
+- `GET /seed/<sha256>?exp&sig` — отдача файла с устройства (Range, ETag, HEAD);
+- `POST /api/blobs/<sha256>/replicate` — забрать файл с сида, сверить хеш, раздавать самому;
+- в интерфейсе: «нет источника» у недоступного трека и число устройств с копией.
+
+Подробности, схема данных и настройки — `docs/DISTRIBUTED.md`.
+
 ## Офлайн и установка как приложение
 
 Web-версия — PWA: её можно поставить на домашний экран, а треки — скачать на
@@ -179,10 +200,19 @@ Cloudflare Tunnel, не пробросом порта. Полная инстру
 | `TRANSCODE_CODECS` | `opus,aac` (`opus` на Android) | какие варианты готовить |
 | `HLS_ENABLED` | `1` (`0` на Android) | HLS-нарезка |
 | `FFMPEG_THREADS` | — (`2` на Android) | потоки ffmpeg, `0` — на усмотрение ffmpeg |
-
-Лимит офлайн-кэша живёт на клиенте (`localStorage: vision.offline.limitMb`), по умолчанию 512 МБ.
 | `DATA_DIR` | `./data` | медиа, обложки, SQLite |
 | `DB_FILE` | `$DATA_DIR/vision.db` | путь к БД |
+| `STORAGE_MODE` | `local` | `metadata` — не хранить аудио, только адреса сидов |
+| `SEED_ENABLED` | `1` | `0` — узел ничего не раздаёт (`/seed` → 403) |
+| `SEED_DIR` | `$DATA_DIR/seed` | каталог раздаваемых блобов `<sha256>.<ext>` |
+| `DEVICE_ID` | `origin` | имя устройства в реестре реплик (`termux`, `laptop`) |
+| `PUBLIC_URL` | — | публичный адрес узла для других устройств (Tailscale, туннель) |
+| `SEED_TTL_MS` | `180000` | сколько живёт heartbeat раздающего сида |
+| `REPLICA_TTL_MS` | `30 дней` | сколько живёт запись о копии без раздачи |
+| `EXTRA_ORIGINS` | — | через запятую: адреса соседних узлов для CSP (`media-src`) |
+
+Лимит офлайн-кэша живёт на клиенте (`localStorage: vision.offline.limitMb`),
+по умолчанию 512 МБ.
 
 ## Заметки по безопасности
 

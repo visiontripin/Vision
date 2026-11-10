@@ -24,6 +24,7 @@ export const OPENAPI = {
     { name: 'history' },
     { name: 'playlists' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
+    { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'system' },
   ],
   security: [{ bearerAuth: [] }],
@@ -74,6 +75,33 @@ export const OPENAPI = {
           plays: { type: 'integer' },
           liked: { type: 'boolean' },
           createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      TrackSources: {
+        type: 'object',
+        description: 'Состояние реплик трека по данным трекера',
+        properties: {
+          hash: { type: ['string', 'null'], description: 'sha256 содержимого (null, если файла не было)' },
+          local: { type: 'boolean', description: 'Файл лежит на узле, к которому обратились' },
+          servable: { type: 'integer', description: 'Устройства, которые реально отдадут файл по HTTP' },
+          replicas: { type: 'integer', description: 'Копии, которые есть, но раздавать не умеют' },
+          devices: { type: 'integer' },
+          kinds: { type: 'object', additionalProperties: { type: 'integer' } },
+        },
+      },
+      BlobSeed: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string' },
+          kind: { type: 'string', examples: ['origin', 'node', 'desktop', 'mobile', 'browser'] },
+          baseUrl: { type: ['string', 'null'] },
+          servable: { type: 'boolean' },
+          onlineAt: { type: 'string', format: 'date-time' },
+          ageMs: { type: 'integer' },
+          url: {
+            type: ['string', 'null'],
+            description: 'Подписанная ссылка /seed/<hash>?exp&sig (только у раздающих)',
+          },
         },
       },
       Playlist: {
@@ -165,6 +193,23 @@ export const OPENAPI = {
       Unauthorized: {
         description: 'Нет токена или подпись неверна',
         content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+      },
+      BadRequest: {
+        description: 'Некорректные данные запроса',
+        content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+      },
+      NotFound: {
+        description: 'Объект не найден',
+        content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+      },
+      NoSource: {
+        description: 'no_source — файл сейчас никто не раздаёт',
+        content: {
+          'application/json': {
+            schema: { $ref: '#/components/schemas/Error' },
+            examples: { no_source: { value: { error: { code: 'no_source', message: 'Ни одно устройство сейчас не раздаёт этот файл.' } } } },
+          },
+        },
       },
     },
   },
@@ -521,6 +566,157 @@ export const OPENAPI = {
           },
         },
         responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/tracks/{id}/download': {
+      get: {
+        tags: ['media', 'seeds'],
+        summary: 'Скачать трек: локальный файл или живое устройство',
+        description:
+          'Отвечает 302 на подписанную ссылку сида (/seed/<hash>) либо 409 no_source, ' +
+          'если файл сейчас никто не раздаёт. С ?json=1 возвращает адрес и список сидов.',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'json', in: 'query', schema: { type: 'string', enum: ['1'] } },
+          { name: 'exp', in: 'query', schema: { type: 'string' } },
+          { name: 'sig', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          302: { description: 'Редирект на сид' },
+          200: { description: 'JSON с адресом и сидами (?json=1)' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          409: { $ref: '#/components/responses/NoSource' },
+        },
+      },
+    },
+    '/blobs': {
+      post: {
+        tags: ['seeds'],
+        summary: 'Объявить блоб (содержимое по sha256)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['hash'],
+                properties: {
+                  hash: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                  bytes: { type: 'integer' },
+                  mime: { type: 'string' },
+                  deviceId: { type: 'string' },
+                  kind: { type: 'string' },
+                  baseUrl: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: { description: 'Блоб объявлен, сид зарегистрирован (если передан)' },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/blobs/{hash}': {
+      get: {
+        tags: ['seeds'],
+        summary: 'Состояние блоба и его сиды',
+        parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'OK' },
+          404: { description: 'Блоб неизвестен' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+      delete: {
+        tags: ['seeds'],
+        summary: 'Забыть блоб',
+        parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 204: { description: 'OK' }, 401: { $ref: '#/components/responses/Unauthorized' } },
+      },
+    },
+    '/blobs/{hash}/seeds': {
+      get: {
+        tags: ['seeds'],
+        summary: 'Живые сиды блоба с подписанными ссылками',
+        parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    hash: { type: 'string' },
+                    ttlMs: { type: 'integer', description: 'Срок жизни heartbeat сида' },
+                    local: { type: 'boolean' },
+                    stats: { type: 'object' },
+                    seeds: { type: 'array', items: { $ref: '#/components/schemas/BlobSeed' } },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/blobs/{hash}/seed': {
+      post: {
+        tags: ['seeds'],
+        summary: 'Heartbeat: «я раздаю этот файл»',
+        parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  deviceId: { type: 'string' },
+                  kind: { type: 'string', enum: ['origin', 'node', 'desktop', 'mobile', 'browser'] },
+                  baseUrl: { type: 'string', description: 'Обязателен для origin/node/desktop' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: 'Сид обновлён' },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+      delete: {
+        tags: ['seeds'],
+        summary: 'Убрать устройство из реестра',
+        parameters: [
+          { name: 'hash', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'deviceId', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: { 204: { description: 'OK' }, 401: { $ref: '#/components/responses/Unauthorized' } },
+      },
+    },
+    '/blobs/{hash}/replicate': {
+      post: {
+        tags: ['seeds'],
+        summary: 'Забрать файл с живого сида на этот узел',
+        description: 'Скачивает блоб, сверяет sha256 и начинает раздавать его сам.',
+        parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'Реплика создана (или уже была)' },
+          409: { $ref: '#/components/responses/NoSource' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/seeds': {
+      get: {
+        tags: ['seeds'],
+        summary: 'Сводка трекера этого узла',
+        responses: { 200: { description: 'Блобы, сиды, треки без источника' } },
       },
     },
     '/media': {
