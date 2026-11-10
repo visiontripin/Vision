@@ -100,20 +100,31 @@ jobs:
 
       - name: Проверка APK
         run: |
-          set -euo pipefail
+          set -uo pipefail
           APK=android/app/build/outputs/apk/release/app-release.apk
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          echo "::warning title=apk::$(ls -lh "$APK" | awk '{print $5}')"
-          # подпись: схема и отпечаток сертификата
-          "$BT/apksigner" verify --verbose --print-certs "$APK" > /tmp/verify.txt 2>&1 || { cat /tmp/verify.txt; exit 1; }
-          grep -E "Verifies|v2 scheme|v3 scheme" /tmp/verify.txt | while IFS= read -r l; do echo "::warning title=apk-подпись::$l"; done
-          grep -E "Signer #1 certificate (DN|SHA-256)" /tmp/verify.txt | while IFS= read -r l; do echo "::warning title=apk-сертификат::$l"; done
-          # пакет, версия, минимальный Android
-          "$BT/aapt2" dump badging "$APK" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code" \
-            | while IFS= read -r l; do echo "::warning title=apk-badging::$l"; done
-          # JS-бандл внутри APK обязателен (иначе приложение откроет пустой экран)
-          unzip -l "$APK" | grep -q "assets/index.android.bundle" || { echo "::error title=apk::в APK нет assets/index.android.bundle"; exit 1; }
-          echo "::warning title=apk::bundle на месте"
+          echo "::warning title=apk::размер $(du -h "$APK" | cut -f1), build-tools $(basename "$BT")"
+
+          if ! "$BT/apksigner" verify --verbose --print-certs "$APK" > /tmp/verify.txt 2>&1; then
+            tail -n 20 /tmp/verify.txt
+            echo "::error title=apk::apksigner verify не прошёл"
+            exit 1
+          fi
+          while IFS= read -r l; do echo "::warning title=apk-подпись::$l"; done < <(grep -E "^(Verifies|Verified using)" /tmp/verify.txt || true)
+          while IFS= read -r l; do echo "::warning title=apk-сертификат::$l"; done < <(grep -E "Signer #1 certificate" /tmp/verify.txt || true)
+
+          if "$BT/aapt2" dump badging "$APK" > /tmp/badging.txt 2>&1; then
+            while IFS= read -r l; do echo "::warning title=apk-badging::$l"; done < <(grep -E "^(package|sdkVersion|targetSdkVersion|native-code)" /tmp/badging.txt || true)
+          else
+            while IFS= read -r l; do echo "::warning title=apk-badging-ошибка::$l"; done < <(tail -n 5 /tmp/badging.txt)
+          fi
+
+          if unzip -l "$APK" | grep -q "index.android.bundle"; then
+            echo "::warning title=apk::JS-бандл на месте"
+          else
+            echo "::error title=apk::в APK нет index.android.bundle"
+            exit 1
+          fi
 
       - name: APK, размер и SHA-256
         id: apk
