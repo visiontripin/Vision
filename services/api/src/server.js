@@ -14,6 +14,7 @@ import {
 } from './db.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
+import { OPENAPI } from './openapi.js';
 import {
   VERSION, PASSWORD, issueToken, verifyToken, safeEqual, rateLimit,
   detectAudio, detectImage, json, fail, readJson, uid, str, log,
@@ -86,6 +87,16 @@ function securityHeaders(res, req) {
 }
 
 const normalize = (value) => String(value ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * `/api/v1/...` — публичный алиас контракта, `/api/...` остаётся рабочим.
+ * Внутри сервера маршруты описаны один раз (без версии), версия — в пути.
+ */
+function versionedPath(pathname) {
+  if (pathname === '/api/v1' || pathname === '/api/v1/') return '/api/health';
+  if (pathname.startsWith('/api/v1/')) return `/api/${pathname.slice('/api/v1/'.length)}`;
+  return pathname;
+}
 
 function routeKey(pathname) {
   return pathname.replace(/\/[A-Za-z0-9_-]{32}(?=\/|$)/g, '/:id');
@@ -440,6 +451,10 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if ((pathname === '/api/openapi.json' || pathname === '/api/v1/openapi.json') && method === 'GET') {
+    return json(res, 200, OPENAPI, { 'Cache-Control': 'public, max-age=300' });
+  }
+
   if (pathname === '/api/auth/login' && method === 'POST') return handleLogin(req, res);
 
   if (!authorized(req)) {
@@ -761,8 +776,9 @@ const server = createServer(async (req, res) => {
   const finish = () => {
     const durationMs = Number(process.hrtime.bigint() - started) / 1e6;
     const status = res.statusCode;
-    inc('vision_http_requests_total', 1, { method: req.method, route: routeKey(url.pathname), status });
-    observeDuration(durationMs / 1000, { route: routeKey(url.pathname) });
+    const route = routeKey(versionedPath(url.pathname));
+    inc('vision_http_requests_total', 1, { method: req.method, route, status });
+    observeDuration(durationMs / 1000, { route });
 
     if (!url.pathname.startsWith('/api/') && url.pathname !== '/metrics') return;
     log('info', 'http', {
@@ -776,7 +792,11 @@ const server = createServer(async (req, res) => {
   res.on('finish', finish);
 
   try {
-    if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+    if (url.pathname.startsWith('/api/')) {
+      const internal = versionedPath(url.pathname);
+      const target = internal === url.pathname ? url : new URL(`${internal}${url.search}`, 'http://internal');
+      return await handleApi(req, res, target);
+    }
     return serveStatic(req, res, url);
   } catch (error) {
     if (error?.message === 'body_too_large') return fail(res, 413, 'too_large', 'Тело запроса слишком велико.');

@@ -403,6 +403,37 @@ test('удаление трека убирает файл, историю и п�
   assert.equal(history.length, 0, 'история очищена каскадом');
 });
 
+test('OpenAPI-схема отдаётся без токена и совпадает с версией', async () => {
+  const res = await fetch(`${BASE}/api/openapi.json`);
+  assert.equal(res.status, 200);
+  const spec = await res.json();
+  assert.equal(spec.openapi, '3.1.0');
+  assert.ok(spec.paths['/tracks'].get);
+  assert.ok(spec.components.schemas.Track);
+
+  const v1 = await fetch(`${BASE}/api/v1/openapi.json`);
+  assert.equal(v1.status, 200);
+
+  const health = await (await fetch(`${BASE}/api/health`)).json();
+  assert.equal(spec.info.version, health.version);
+});
+
+test('/api/v1 — алиас контракта с тем же поведением', async () => {
+  const denied = await fetch(`${BASE}/api/v1/tracks`);
+  assert.equal(denied.status, 401);
+
+  const ok = await fetch(`${BASE}/api/v1/tracks?limit=1&sort=title`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(ok.status, 200);
+  assert.ok(ok.headers.get('x-total-count'));
+  const items = await ok.json();
+  assert.ok(Array.isArray(items));
+
+  const health = await (await fetch(`${BASE}/api/v1/health`)).json();
+  assert.equal(health.ok, true);
+});
+
 test('метрики Prometheus и заголовки безопасности', async () => {
   const metrics = await fetch(`${BASE}/metrics`);
   assert.equal(metrics.status, 200);
