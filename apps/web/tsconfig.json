@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -13,12 +17,18 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@vision/shared": ["../../packages/shared/src/index.ts"]
+      "@vision/shared": [
+        "../../packages/shared/src/index.ts"
+      ]
     }
   },
-  "include": ["src", "vite.config.ts", "../../packages/shared/src"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "../../packages/shared/src"
+  ]
 }
