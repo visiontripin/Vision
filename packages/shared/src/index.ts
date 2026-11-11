@@ -219,6 +219,27 @@ export type Share = {
     lastHitAt: string | null;
   };
   baseUrl?: string;
+  /** сколько комментариев оставлено по ссылке (видит только владелец) */
+  comments?: number;
+};
+
+/** Комментарий к секунде трека внутри конкретной приватной ссылки (E3). */
+export type ShareComment = {
+  id: string;
+  trackId: string;
+  /** секунда, к которой привязан комментарий (0..длительность) */
+  at: number;
+  author: string;
+  body: string;
+  createdAt: string;
+  deletedAt?: string | null;
+};
+
+export type ShareCommentInput = {
+  trackId: string;
+  at: number;
+  author?: string;
+  body: string;
 };
 
 export type ShareWithToken = Share & {
@@ -428,6 +449,27 @@ export function createClient(options: ClientOptions = {}) {
     /** Новая ссылка вместо скомпрометированной: старая перестаёт работать сразу. */
     rotateShare(id: string) {
       return request<ShareWithToken>(`/api/shares/${id}/rotate`, { method: 'POST', body: '{}' });
+    },
+
+    /* ---------------- комментарии к секунде (Фаза 6, E3) ---------------- */
+
+    /** Владелец видит все комментарии своих ссылок, включая удалённые. */
+    shareComments(id: string, trackId?: string) {
+      const q = trackId ? qs({ trackId }) : '';
+      return request<{ comments: ShareComment[]; total: number }>(`/api/shares/${id}/comments${q}`);
+    },
+    /** Владелец тоже может отметить секунду: комментарий появится в гостевой ленте. */
+    addShareComment(id: string, input: ShareCommentInput) {
+      return request<ShareComment>(`/api/shares/${id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    deleteShareComment(id: string, commentId: string) {
+      return request<{ id: string; deleted: boolean }>(
+        `/api/shares/${id}/comments${qs({ commentId })}`,
+        { method: 'DELETE' }
+      );
     },
 
     history(limit = 12) {

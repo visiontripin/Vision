@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Share, ShareWithToken } from '@vision/shared';
+import type { Share, ShareComment, ShareWithToken } from '@vision/shared';
 import { api, IS_LOCAL_MODE } from '../api';
 import { Cover, Icon, useToast } from '../ui';
 import type { Track } from '@vision/shared';
@@ -37,6 +37,17 @@ function ago(iso: string | null): string {
   return `${Math.round(hours / 24)} дн назад`;
 }
 
+/** `1:07` — таймкод комментария; часы нужны только длинным трекам. */
+function stamp(seconds: number): string {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+}
+
 function expiresLabel(share: Share): string {
   if (!share.expiresAt) return 'бессрочная';
   const at = new Date(share.expiresAt);
@@ -58,6 +69,10 @@ export function ShareModal({
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState<'create' | string | null>(null);
   const [fresh, setFresh] = useState<ShareWithToken | null>(null);
+  /** лента комментариев выбранной ссылки: у каждой ссылки своя */
+  const [openComments, setOpenComments] = useState<string | null>(null);
+  const [feed, setFeed] = useState<ShareComment[] | null>(null);
+  const [draft, setDraft] = useState({ at: '', author: '', body: '' });
 
   const targetKind = target.kind;
   const targetId = target.kind === 'track' ? target.track.id : target.id;
@@ -109,6 +124,66 @@ export function ShareModal({
       void copy(created.url);
     } catch (error) {
       push(error instanceof Error ? error.message : 'Не удалось создать ссылку', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const loadFeed = useCallback(async (shareId: string) => {
+    setFeed(null);
+    try {
+      const result = await api.shareComments(shareId, target.kind === 'track' ? targetId : undefined);
+      setFeed(result.comments);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось получить комментарии', 'error');
+      setFeed([]);
+    }
+  }, [push, target.kind, targetId]);
+
+  const toggleFeed = (share: Share) => {
+    if (openComments === share.id) {
+      setOpenComments(null);
+      setFeed(null);
+      return;
+    }
+    setOpenComments(share.id);
+    void loadFeed(share.id);
+  };
+
+  /**
+   * Владелец тоже может отметить секунду — комментарий сразу увидят гости.
+   * Секунда по умолчанию не ноль: у трека берём середину, у плейлиста просим ввести.
+   */
+  const addComment = async (share: Share) => {
+    if (busy || !draft.body.trim()) return;
+    setBusy(share.id);
+    try {
+      const created = await api.addShareComment(share.id, {
+        trackId: targetId,
+        at: Number(draft.at) || 0,
+        author: draft.author.trim() || 'Владелец',
+        body: draft.body.trim(),
+      });
+      setFeed((current) => [...(current ?? []), created].sort((a, b) => a.at - b.at));
+      setDraft((current) => ({ ...current, body: '' }));
+      await load();
+      push(`Комментарий на ${stamp(created.at)} добавлен`);
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось добавить комментарий', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const dropComment = async (share: Share, comment: ShareComment) => {
+    if (busy) return;
+    setBusy(comment.id);
+    try {
+      await api.deleteShareComment(share.id, comment.id);
+      setFeed((current) => (current ?? []).filter((item) => item.id !== comment.id));
+      await load();
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось удалить комментарий', 'error');
     } finally {
       setBusy(null);
     }
@@ -278,25 +353,101 @@ export function ShareModal({
                         </span>
                       )}
                     </div>
-                    {!dead && (
-                      <div className="share__rowActions">
-                        <button
-                          type="button"
-                          className="btn btn--small btn--ghost"
-                          onClick={() => void rotate(share)}
-                          disabled={Boolean(busy)}
-                          title="Выпустить новый токен; старая ссылка сразу перестанет работать"
-                        >
-                          {busy === share.id ? '…' : 'Перевыпустить'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn--small btn--ghost"
-                          onClick={() => void revoke(share)}
-                          disabled={Boolean(busy)}
-                        >
-                          Отозвать
-                        </button>
+                    <div className="share__rowActions">
+                      <button
+                        type="button"
+                        className="btn btn--small btn--ghost"
+                        onClick={() => toggleFeed(share)}
+                        aria-expanded={openComments === share.id}
+                        title="Комментарии гостей к секундам"
+                      >
+                        Комментарии{share.comments ? ` (${share.comments})` : ''}
+                      </button>
+                      {!dead && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn--small btn--ghost"
+                            onClick={() => void rotate(share)}
+                            disabled={Boolean(busy)}
+                            title="Выпустить новый токен; старая ссылка сразу перестанет работать"
+                          >
+                            {busy === share.id ? '…' : 'Перевыпустить'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn--small btn--ghost"
+                            onClick={() => void revoke(share)}
+                            disabled={Boolean(busy)}
+                          >
+                            Отозвать
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {openComments === share.id && (
+                      <div className="share__feed">
+                        {feed === null && <p className="muted">Читаю комментарии…</p>}
+                        {feed !== null && feed.length === 0 && (
+                          <p className="muted">
+                            Гости ещё ничего не отметили. Комментарий привязывается к секунде —
+                            гость видит его под треком и может перемотать тапом.
+                          </p>
+                        )}
+                        {feed?.map((comment) => (
+                          <div key={comment.id} className="share__cmt">
+                            <span className="share__stamp">{stamp(comment.at)}</span>
+                            <strong>{comment.author}</strong>
+                            <span className="share__cmtBody">{comment.body}</span>
+                            <button
+                              type="button"
+                              className="share__cmtDel"
+                              aria-label="Удалить комментарий"
+                              disabled={Boolean(busy)}
+                              onClick={() => void dropComment(share, comment)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+
+                        {target.kind === 'track' && (
+                          <div className="share__cmtForm">
+                            <input
+                              className="share__stampInput"
+                              value={draft.at}
+                              onChange={(event) => setDraft((d) => ({ ...d, at: event.target.value.replace(/[^\d.]/g, '').slice(0, 7) }))}
+                              placeholder="сек"
+                              inputMode="decimal"
+                              aria-label="Секунда"
+                            />
+                            <input
+                              value={draft.author}
+                              onChange={(event) => setDraft((d) => ({ ...d, author: event.target.value.slice(0, 40) }))}
+                              placeholder="подпись"
+                              aria-label="Подпись автора"
+                            />
+                            <input
+                              className="share__cmtInput"
+                              value={draft.body}
+                              onChange={(event) => setDraft((d) => ({ ...d, body: event.target.value.slice(0, 600) }))}
+                              placeholder="Что сказать на этой секунде?"
+                              aria-label="Комментарий"
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') void addComment(share);
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="btn btn--small"
+                              disabled={Boolean(busy) || !draft.body.trim()}
+                              onClick={() => void addComment(share)}
+                            >
+                              Добавить
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -307,6 +458,7 @@ export function ShareModal({
             <p className="muted sources__hint">
               Гость видит одну страницу с плеером и кнопкой «Скачать», без доступа к библиотеке.
               Ссылки закрыты от поисковиков ({'noindex'}), а статистика открытий видна только вам.
+              Комментарии привязаны к секунде и к конкретной ссылке: в другой ссылке их не видно.
             </p>
           </>
         )}

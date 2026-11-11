@@ -16,8 +16,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import {
-  COVER_DIR, MEDIA_DIR, db, deleteShare, findShareByTokenHash, getCoverInfo,
-  getPlaylist, getShare, getTrack, insertShare, listShares, listTracks,
+  COVER_DIR, MEDIA_DIR, db, deleteCommentsForShare, deleteShare, findShareByTokenHash, getCoverInfo,
+  getPlaylist, getShare, getTrack, insertShare, listShareComments, listShares, listTracks,
   recordShareHit, revokeShare, revokeSharesForTarget, rotateShareToken, shareStats,
   updateShare,
 } from './db.js';
@@ -119,7 +119,9 @@ export function updateShareFields(id, patch) {
   return updateShare(id, patch);
 }
 
+/** Полная очистка: ссылка, её журнал и комментарии (FK-каскад включён не всегда). */
 export function dropShareById(id) {
+  deleteCommentsForShare(id);
   return deleteShare(id);
 }
 
@@ -164,6 +166,9 @@ export function resolveShareToken(token) {
 
 /** Данные для гостевой страницы/JSON: только цель ссылки, ничего лишнего. */
 export function guestView(share, { selfBase = '' } = {}) {
+  const withComments = (tracks) =>
+    tracks.map((track) => ({ ...track, comments: listShareComments({ shareId: share.id, trackId: track.id }) }));
+
   if (share.targetKind === 'track') {
     const track = getTrack(share.targetId, { withPeaks: true });
     if (!track) return null;
@@ -172,7 +177,7 @@ export function guestView(share, { selfBase = '' } = {}) {
       kind: 'track',
       share: publicShare(share),
       track: view,
-      tracks: [view],
+      tracks: withComments([view]),
       playlist: null,
     };
   }
@@ -180,7 +185,7 @@ export function guestView(share, { selfBase = '' } = {}) {
   const playlist = getPlaylist(share.targetId);
   if (!playlist) return null;
   const tracks = withSources(listTracks({ playlistId: playlist.id, limit: 500, offset: 0 }), { selfBase });
-  return { kind: 'playlist', share: publicShare(share), playlist, track: null, tracks };
+  return { kind: 'playlist', share: publicShare(share), playlist, track: null, tracks: withComments(tracks) };
 }
 
 /** Наружу — без token_hash и прочих внутренностей. */
@@ -394,6 +399,17 @@ export function formatDuration(seconds) {
     : `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** `1:07` — таймкод комментария; часы появляются только у длинных треков. */
+export function commentClock(seconds) {
+  return formatDuration(seconds);
+}
+
+/** Подпись автора: имя обрезано, чтобы длинное не ломало строку. */
+function shortAuthor(name) {
+  const text = String(name || 'Гость');
+  return text.length > 24 ? `${text.slice(0, 23)}…` : text;
+}
+
 /**
  * HTML гостевой страницы. Без JavaScript и без бандла: нативный `<audio>`
  * покрывает play/pause/seek, а OG-теги читают мессенджеры.
@@ -402,6 +418,8 @@ export function renderSharePage(view, { token, selfBase = '' }) {
   const base = String(selfBase || '').replace(/\/$/, '');
   const link = `${base}/s/${token}`;
   const tracks = view.tracks ?? [];
+  /** Имя гостя помним в пределах страницы: после отправки поле не пустое. */
+  const guestName = String(view.guestName || '').trim();
   const isPlaylist = view.kind === 'playlist';
   const title = isPlaylist
     ? (view.playlist?.name || 'Плейлист')
@@ -415,18 +433,57 @@ export function renderSharePage(view, { token, selfBase = '' }) {
     ? (view.playlist?.description || `${tracks.length} треков · Vision Audio`)
     : [tracks[0]?.artist, tracks[0]?.album].filter(Boolean).join(' · ') || 'Vision Audio';
 
+  /**
+   * Каждая строка — трек, плеер и лента комментариев к секундам. Комментарии
+   * выводятся сервером, поэтому гость видит их без JavaScript; форма работает
+   * обычным POST и возвращает на страницу с якорем к треку.
+   */
   const rows = tracks
-    .map((track) => `
-      <li class="row${track.available === false ? ' row--missing' : ''}">
+    .map((track) => {
+      const comments = track.comments ?? [];
+      const feed = comments.length
+        ? comments
+            .map(
+              (comment) => `
+          <li class="cmt" id="comment-${esc(track.id)}-${esc(comment.id)}">
+            <a class="cmt__at" href="#track-${esc(track.id)}" data-seek="${esc(comment.at)}"
+               aria-label="Перемотать на ${esc(commentClock(comment.at))}">${esc(commentClock(comment.at))}</a>
+            <span class="cmt__author">${esc(shortAuthor(comment.author))}</span>
+            <span class="cmt__body">${esc(comment.body)}</span>
+            <form class="cmt__del" method="post" action="/s/${esc(token)}/comments">
+              <input type="hidden" name="_method" value="delete">
+              <input type="hidden" name="commentId" value="${esc(comment.id)}">
+              <button type="submit" title="Удалить свой комментарий" aria-label="Удалить комментарий">×</button>
+            </form>
+          </li>`
+            )
+            .join('')
+        : '<li class="cmt cmt--empty">Комментариев пока нет — отметьте любимую секунду.</li>';
+
+      return `
+      <li class="row${track.available === false ? ' row--missing' : ''}" id="track-${esc(track.id)}">
         <div class="row__text">
           <strong>${esc(track.title)}</strong>
           <span>${esc(track.artist)}${track.duration ? ` · ${esc(formatDuration(track.duration))}` : ''}${
             track.available === false ? ' · нет источника' : ''
           }</span>
         </div>
-        <audio preload="none" controls src="/s/${esc(token)}/stream/${esc(track.id)}"></audio>
+        <audio preload="none" controls src="/s/${esc(token)}/stream/${esc(track.id)}"
+               data-track="${esc(track.id)}" data-duration="${esc(track.duration ?? '')}"></audio>
         <a class="dl" href="/s/${esc(token)}/download/${esc(track.id)}" download>Скачать</a>
-      </li>`)
+        <div class="cmtbox">
+          <ul class="cmtlist" data-count="${comments.length}">${feed}</ul>
+          <form class="cmtform" method="post" action="/s/${esc(token)}/comments">
+            <input type="hidden" name="trackId" value="${esc(track.id)}">
+            <input type="hidden" name="at" value="0" data-at>
+            <input name="author" maxlength="40" placeholder="Ваше имя" autocomplete="nickname" value="${esc(view.guestName || '')}">
+            <input name="body" maxlength="600" required placeholder="Что сказать на этой секунде?">
+            <button type="submit">Отправить</button>
+            <span class="cmtform__hint" data-hint>Комментарий встанет на текущую секунду плеера</span>
+          </form>
+        </div>
+      </li>`;
+    })
     .join('');
 
   return `<!doctype html>
@@ -464,10 +521,33 @@ ${ogImage ? `<meta property="og:image" content="${esc(ogImage)}">\n<meta name="t
   .dl { font-size:12.5px; color:var(--accent); text-decoration:none; white-space:nowrap; }
   .dl:hover { text-decoration:underline; }
   .note { margin-top:28px; font-size:12.5px; color:var(--muted); line-height:1.6; }
+  .cmtbox { grid-column: 1 / -1; display:grid; gap:8px; border-top:1px dashed var(--line); padding-top:10px; }
+  .cmtlist { display:grid; gap:6px; }
+  .cmt { display:flex; align-items:baseline; gap:8px; font-size:12.5px; }
+  .cmt__at { flex:none; min-width:38px; padding:2px 7px; border-radius:999px; text-align:center;
+             font-weight:700; font-variant-numeric:tabular-nums; color:var(--accent);
+             background:rgba(255,90,31,.12); text-decoration:none; }
+  .cmt__at:hover { background:rgba(255,90,31,.22); }
+  .cmt__author { color:#f4f4f8; font-weight:600; }
+  .cmt__body { color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .cmt--empty { color:var(--muted); font-size:12px; }
+  .cmt__del { margin-left:auto; }
+  .cmt__del button { border:none; background:none; color:var(--muted); cursor:pointer;
+                     font-size:15px; line-height:1; padding:0 4px; border-radius:6px; }
+  .cmt__del button:hover { color:#ff6b6b; }
+  .cmtform { display:grid; grid-template-columns: 120px minmax(0,1fr) auto; gap:8px; align-items:center; }
+  .cmtform input { min-width:0; padding:8px 10px; border-radius:10px; border:1px solid var(--line);
+                   background:#0d0d12; color:#f4f4f8; font:inherit; font-size:12.5px; }
+  .cmtform input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .cmtform button { padding:8px 14px; border:none; border-radius:999px; cursor:pointer;
+                    background:var(--accent); color:#120a05; font-weight:700; font-size:12.5px; }
+  .cmtform__hint { grid-column:1 / -1; font-size:11.5px; color:var(--muted); }
   @media (max-width: 560px) {
     .row { grid-template-columns: minmax(0,1fr); }
     audio { width: 100%; max-width: none; }
     .dl { justify-self:start; }
+    .cmtform { grid-template-columns: 1fr; }
+    .cmt { flex-wrap:wrap; }
   }
 </style>
 </head>
@@ -486,12 +566,66 @@ ${ogImage ? `<meta property="og:image" content="${esc(ogImage)}">\n<meta name="t
       : ''
   }</p>
 </main>
+<script>
+/* Прогрессивное улучшение: страница работает и без JS, но с ним удобнее —
+   таймкод перематывает плеер, форма подставляет текущую секунду трека. */
+(function () {
+  /* имя гостя запоминаем локально, чтобы не вводить на каждой секунде */
+  var nameInputs = document.querySelectorAll('.cmtform [name="author"]');
+  try {
+    var saved = window.localStorage.getItem('vision.guestName');
+    if (saved) nameInputs.forEach(function (input) { if (!input.value) input.value = saved; });
+  } catch (error) { /* приватный режим — просто не запоминаем */ }
+  nameInputs.forEach(function (input) {
+    input.addEventListener('change', function () {
+      try { window.localStorage.setItem('vision.guestName', input.value.slice(0, 40)); } catch (error) {}
+    });
+  });
+
+  document.querySelectorAll('.cmt__at').forEach(function (link) {
+    link.addEventListener('click', function (event) {
+      var row = link.closest('.row');
+      var audio = row && row.querySelector('audio');
+      var seconds = Number(link.getAttribute('data-seek'));
+      if (!audio || !Number.isFinite(seconds)) return;
+      event.preventDefault();
+      audio.currentTime = seconds;
+      var playing = audio.play();
+      if (playing && playing.catch) playing.catch(function () {});
+    });
+  });
+
+  document.querySelectorAll('.cmtform').forEach(function (form) {
+    var row = form.closest('.row');
+    var audio = row && row.querySelector('audio');
+    var at = form.querySelector('[data-at]');
+    var hint = form.querySelector('[data-hint]');
+    if (!audio || !at) return;
+
+    var sync = function () {
+      var seconds = Math.max(0, Math.round((audio.currentTime || 0) * 10) / 10);
+      at.value = String(seconds);
+      if (hint) {
+        var total = Math.floor(seconds);
+        var mm = Math.floor(total / 60);
+        var ss = String(total % 60).padStart(2, '0');
+        hint.textContent = 'Комментарий встанет на ' + mm + ':' + ss;
+      }
+    };
+
+    sync();
+    audio.addEventListener('timeupdate', sync);
+    var body = form.querySelector('[name="body"]');
+    if (body) body.addEventListener('focus', sync);
+  });
+})();
+</script>
 </body>
 </html>`;
 }
 
-export function renderShareGone(reason) {
-  const text = {
+export function renderShareGone(reason, customText = null) {
+  const text = customText || {
     revoked: 'Ссылка отозвана владельцем.',
     rotated: 'Ссылка перевыпущена — старая больше не действует.',
     expired: 'Срок действия ссылки истёк.',

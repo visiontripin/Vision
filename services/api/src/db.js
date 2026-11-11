@@ -584,3 +584,95 @@ export function revokeSharesForTarget(targetKind, targetId) {
     .prepare('UPDATE shares SET revoked_at = ? WHERE target_kind = ? AND target_id = ? AND revoked_at IS NULL')
     .run(new Date().toISOString(), targetKind, targetId).changes;
 }
+
+/* --------------------------- комментарии к секунде ------------------------- */
+
+/**
+ * Лента комментариев привязана к ссылке и треку: гость видит только тред
+ * присланного микса. `author_hash` — не PII, а способ понять «свой ли это
+ * комментарий» и притормозить спам; сырого IP нет.
+ */
+function toShareComment(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    shareId: row.share_id,
+    trackId: row.track_id,
+    at: row.at_seconds,
+    author: row.author,
+    authorHash: row.author_hash ?? null,
+    body: row.body,
+    createdAt: row.created_at,
+    deletedAt: row.deleted_at ?? null,
+  };
+}
+
+export function insertShareComment(comment) {
+  db.prepare(
+    `INSERT INTO share_comments (id, share_id, track_id, at_seconds, author, author_hash, body,
+                                 created_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+  ).run(
+    comment.id, comment.shareId, comment.trackId, comment.at, comment.author,
+    comment.authorHash ?? null, comment.body, comment.createdAt
+  );
+  return getShareComment(comment.id);
+}
+
+export function getShareComment(id) {
+  return toShareComment(db.prepare('SELECT * FROM share_comments WHERE id = ?').get(id));
+}
+
+/**
+ * Список для гостя и владельца. Удалённые не отдаём (тред не рвём в БД, но
+ * наружу «[удалено]» не нужно), сортировка по времени в треке.
+ */
+export function listShareComments({ shareId, trackId = null, includeDeleted = false, limit = 500 } = {}) {
+  const where = ['share_id = ?'];
+  const values = [shareId];
+  if (trackId) {
+    where.push('track_id = ?');
+    values.push(trackId);
+  }
+  if (!includeDeleted) where.push('deleted_at IS NULL');
+  values.push(Math.min(Math.max(Number(limit) || 500, 1), 2000));
+  return db
+    .prepare(
+      `SELECT * FROM share_comments WHERE ${where.join(' AND ')}
+       ORDER BY at_seconds ASC, created_at ASC LIMIT ?`
+    )
+    .all(...values)
+    .map(toShareComment);
+}
+
+/** Сколько комментариев по ссылке: для бейджа в списке ссылок владельца. */
+export function countShareComments(shareId, trackId = null) {
+  const row = trackId
+    ? db.prepare('SELECT COUNT(*) AS n FROM share_comments WHERE share_id = ? AND track_id = ? AND deleted_at IS NULL').get(shareId, trackId)
+    : db.prepare('SELECT COUNT(*) AS n FROM share_comments WHERE share_id = ? AND deleted_at IS NULL').get(shareId);
+  return row?.n ?? 0;
+}
+
+/** Антиспам: сколько комментариев с одного адреса по ссылке за последние N минут. */
+export function countRecentComments(shareId, authorHash, windowMs = 60_000) {
+  const since = new Date(Date.now() - windowMs).toISOString();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM share_comments
+       WHERE share_id = ? AND author_hash = ? AND created_at >= ?`
+    )
+    .get(shareId, authorHash, since);
+  return row?.n ?? 0;
+}
+
+/** Мягкое удаление: тред ссылок остаётся, текст гостям больше не отдаётся. */
+export function deleteShareComment(id) {
+  return db
+    .prepare('UPDATE share_comments SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL')
+    .run(new Date().toISOString(), id).changes > 0;
+}
+
+/** Удаление ссылки не должно оставлять «сиротские» комментарии. */
+export function deleteCommentsForShare(shareId) {
+  return db.prepare('DELETE FROM share_comments WHERE share_id = ?').run(shareId).changes;
+}

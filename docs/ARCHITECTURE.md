@@ -93,6 +93,9 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - Роутинг: hash-роутер (без зависимостей): `#/`, `#/liked`, `#/playlists/:id`, `#/stats`.
 - Стили: CSS-переменные-токены, тёмная тема, orange-акцент; компоненты лежат в `src/components`.
 - Клиентские пики: `AudioContext.decodeAudioData` → RMS по блокам → 200 значений.
+- Комментарии к секундам рисуются в модалке ссылки (`components/ShareModal.tsx`):
+  лента выбранной ссылки, добавление от имени владельца, удаление. Гостевая версия —
+  SSR в `shares.js`, без бандла.
 - Полный экран плеера — `src/components/NowPlaying.tsx` (слой `z-index: 65`, состояние только
   из `usePlayer`). Волна рисуется на `<canvas>` (`Waveform` в `ui.tsx`), перемотка —
   `pointerdown/move` + `setPointerCapture`, подсказка времени — параметр `timeAt`.

@@ -31,6 +31,10 @@ import {
   resolveShareToken, revokeForTarget, revokeShareById, rotateShare, serveGuestCover,
   serveGuestDownload, serveGuestStream, shareList, shareUrl, updateShareFields,
 } from './shares.js';
+import {
+  CommentError, addComment, authorHash, listComments, publicComment, removeComment,
+} from './comments.js';
+import { listShareComments, countShareComments } from './db.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
@@ -997,7 +1001,11 @@ async function handleApi(req, res, url) {
       });
       const base = externalBase(PUBLIC_URL, req);
       // токен не хранится, поэтому показать «готовый URL» можно только при создании
-      return json(res, 200, list.map((share) => ({ ...share, baseUrl: base })));
+      return json(res, 200, list.map((share) => ({
+        ...share,
+        baseUrl: base,
+        comments: countShareComments(share.id),
+      })));
     }
 
     if (method === 'POST') {
@@ -1081,6 +1089,55 @@ async function handleApi(req, res, url) {
       res.writeHead(204);
       return res.end();
     }
+  }
+
+  /* ---- комментарии к ссылке: владелец читает всё и может удалить любое ---- */
+  const shareComments = /^\/api\/shares\/([a-f0-9]{32})\/comments$/.exec(pathname);
+  if (shareComments) {
+    const share = getShare(shareComments[1]);
+    if (!share) return fail(res, 404, 'not_found', 'Ссылка не найдена.');
+
+    if (method === 'GET') {
+      const trackId = url.searchParams.get('trackId') || null;
+      return json(res, 200, {
+        comments: listShareComments({ shareId: share.id, trackId }).map((comment) => ({
+          ...publicComment(comment),
+          deletedAt: comment.deletedAt,
+        })),
+        total: countShareComments(share.id),
+      });
+    }
+
+    if (method === 'POST') {
+      const body = await readJson(req).catch(() => ({}));
+      const trackId = String(body.trackId || '');
+      const track = getTrack(trackId);
+      if (!track) return fail(res, 404, 'track_not_found', 'Трек не найден.');
+      try {
+        const created = addComment(
+          share,
+          { trackId, at: body.at, author: body.author || 'Владелец', body: body.body },
+          { ip: clientIp(req), duration: track.duration }
+        );
+        inc('vision_share_comment_total', 1);
+        return json(res, 201, created);
+      } catch (error) {
+        if (error instanceof CommentError) return fail(res, error.status, error.code, error.message);
+        throw error;
+      }
+    }
+
+    if (method === 'DELETE') {
+      const commentId = url.searchParams.get('commentId') || '';
+      try {
+        return json(res, 200, removeComment(commentId, { owner: true }));
+      } catch (error) {
+        if (error instanceof CommentError) return fail(res, error.status, error.code, error.message);
+        throw error;
+      }
+    }
+
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
   }
 
   const shareRotate = /^\/api\/shares\/([a-f0-9]{32})\/rotate$/.exec(pathname);
@@ -1355,24 +1412,97 @@ async function handleApi(req, res, url) {
 /* --------------------------- гостевые ссылки /s/* -------------------------- */
 
 /**
+ * Комментарий из обычной HTML-формы (страница работает без JS): читаем тело
+ * `application/x-www-form-urlencoded`, сохраняем и возвращаемся на страницу с
+ * якорем к треку. Ошибку показываем текстом, без потери введённого.
+ */
+async function handleGuestCommentForm(req, res, { share, token }) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 32 * 1024) {
+      res.writeHead(413);
+      return res.end();
+    }
+    chunks.push(chunk);
+  }
+  const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+
+  if (form.get('_method') === 'delete') {
+    const target = String(form.get('commentId') || '');
+    try {
+      removeComment(target, { ip: clientIp(req) });
+    } catch {
+      /* чужой или уже удалён — молча возвращаемся: без подсказок «есть/нет» */
+    }
+    res.writeHead(303, { Location: `/s/${token}#comments`, 'Cache-Control': 'no-store' });
+    return res.end();
+  }
+
+  const trackId = String(form.get('trackId') || '');
+  const back = `/s/${token}#${trackId ? `track-${trackId}` : 'comments'}`;
+
+  try {
+    const created = addComment(
+      share,
+      {
+        trackId,
+        at: form.get('at'),
+        author: form.get('author'),
+        body: form.get('body'),
+      },
+      { ip: clientIp(req), duration: getTrack(trackId)?.duration ?? null }
+    );
+    inc('vision_share_comment_total', 1);
+    log('info', 'share comment added (form)', { share: share.id, track: created.trackId });
+  } catch (error) {
+    const text = error instanceof CommentError ? error.message : 'Не удалось добавить комментарий.';
+    res.writeHead(error instanceof CommentError ? error.status : 400, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Robots-Tag': 'noindex',
+    });
+    return res.end(renderShareGone('comment_failed', text));
+  }
+
+  res.writeHead(303, { Location: back, 'Cache-Control': 'no-store' });
+  return res.end();
+}
+
+/**
  * Гостевой маршрут знает ровно четыре вещи: страницу, поток, скачивание и
  * обложку. Токен в пути — единственный ключ доступа; сессия владельца не нужна,
  * но и не мешает (владелец тоже может открыть ссылку).
  */
-function serveShare(req, res, url) {
-  const match = /^\/s\/([A-Za-z0-9_-]{20,128})(?:\/(stream|download|cover)\/([a-f0-9]{32}))?$/.exec(url.pathname);
+async function serveShare(req, res, url) {
+  const match = /^\/s\/([A-Za-z0-9_-]{20,128})(?:\/(?:(stream|download|cover)\/([a-f0-9]{32})|(comments)(?:\/([a-f0-9]{32}))?))?$/.exec(url.pathname);
   if (!match) {
     res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(renderShareGone('not_found'));
   }
 
-  const [, token, action, trackId] = match;
+  // группы 2–3 — поток/скачивание/обложка, 4–5 — лента комментариев
+  const [, token, fileAction, fileTrackId, commentsAction, hiddenCommentId] = match;
+  const action = fileAction || commentsAction;
+  const trackId = fileTrackId;
+  const commentId = hiddenCommentId;
   // токен в пути: не отдаём его никуда дальше (Referer, кэши, логи)
   res.setHeader('Referrer-Policy', 'no-referrer');
   const resolved = resolveShareToken(token);
   const selfBase = externalBase(PUBLIC_URL, req);
 
   if (resolved.error) {
+    // для ленты комментариев отвечаем JSON: её читает код, а не человек
+    if (action === 'comments') {
+      return fail(res, resolved.status, resolved.error, {
+        revoked: 'Ссылка отозвана.',
+        rotated: 'Ссылка перевыпущена.',
+        expired: 'Срок действия ссылки истёк.',
+        exhausted: 'Лимит открытий исчерпан.',
+        not_found: 'Ссылка не найдена.',
+      }[resolved.error] || 'Ссылка недоступна.');
+    }
     res.writeHead(resolved.status, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -1382,6 +1512,65 @@ function serveShare(req, res, url) {
   }
 
   const share = resolved.share;
+
+  /* ---- комментарии к секунде (E3): гость читает и пишет, удаляет только своё ---- */
+  if (action === 'comments') {
+    const track = url.searchParams.get('trackId');
+    const guestError = (error) => {
+      const status = error instanceof CommentError ? error.status : 400;
+      const code = error instanceof CommentError ? error.code : 'invalid';
+      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: { code, message: error?.message || 'Не удалось.' } }));
+      return undefined;
+    };
+
+    if (req.method === 'GET') {
+      try {
+        return json(res, 200, {
+          comments: listComments(share, { trackId: track || null }),
+          me: null,
+        });
+      } catch (error) {
+        return guestError(error);
+      }
+    }
+
+    if (req.method === 'POST' && !commentId) {
+      if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+        // прогрессивная форма без JS: страница перезагрузится с новым комментарием
+        return handleGuestCommentForm(req, res, { share, token });
+      }
+      const body = await readJson(req).catch(() => ({}));
+      try {
+        const created = addComment(
+          share,
+          { trackId: body.trackId, at: body.at, author: body.author, body: body.body },
+          { ip: clientIp(req), duration: getTrack(String(body.trackId || ''))?.duration ?? null }
+        );
+        inc('vision_share_comment_total', 1);
+        log('info', 'share comment added', { share: share.id, track: created.trackId });
+        return json(res, 201, created);
+      } catch (error) {
+        return guestError(error);
+      }
+    }
+
+    if (req.method === 'DELETE' && commentId) {
+      try {
+        const ip = clientIp(req);
+        log('info', 'share comment delete', {
+          share: share.id, comment: commentId, ip, hash: authorHash(ip),
+          headerIp: req.headers['x-forwarded-for'] || null,
+          sock: req.socket.remoteAddress || null,
+        });
+        return json(res, 200, removeComment(commentId, { ip }));
+      } catch (error) {
+        return guestError(error);
+      }
+    }
+
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
 
   if (action === 'stream' || action === 'download') {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -1416,7 +1605,10 @@ function serveShare(req, res, url) {
     // Страница самодостаточна: ни бандла, ни JS, ни запросов к API.
     // media-src разрешает редирект на живой сид (другой узел роя) — локальный
     // файл отдаётся тем же origin, но распределённое хранилище живёт на своих адресах.
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'none'; frame-ancestors *",
+    // media-src разрешает редирект на живой сид (другой узел роя); script-src —
+    // только наш короткий inline-скрипт с перемоткой по таймкоду; form-action 'self'
+    // нужен форме комментария, которая умеет работать без JavaScript.
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'self'; frame-ancestors *",
   });
   res.end(html);
 }
@@ -1533,7 +1725,7 @@ const server = createServer(async (req, res) => {
       return handleSeed(req, res, url, url.pathname);
     }
     if (url.pathname.startsWith('/s/')) {
-      return serveShare(req, res, url);
+      return await serveShare(req, res, url);
     }
     if (url.pathname.startsWith('/api/')) {
       const internal = versionedPath(url.pathname);

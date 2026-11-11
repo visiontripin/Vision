@@ -1,4 +1,4 @@
-# API v0.13.0
+# API v0.14.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -51,6 +51,38 @@
 Старый адрес сразу отвечает `410 rotated` (не `404`: человек должен понять, что ссылку
 перевыпустили, а не что она потерялась).
 
+### Комментарии к секунде (E3) — `docs/adr/0008-timecode-comments.md`
+
+Комментарий живёт в ленте **конкретной ссылки и конкретного трека**: у одной и
+той же песни в разных ссылках разные треды. Владелец видит всё, гость — только
+ленту присланной ссылки.
+
+`GET /api/shares/:id/comments?trackId=` → `200`
+```json
+{ "comments": [ { "id": "…", "trackId": "0b4d…", "at": 42.5,
+                  "author": "Дима", "body": "вот тут вступает бас",
+                  "createdAt": "2026-11-10T20:17:21.487Z", "deletedAt": null } ],
+  "total": 1 }
+```
+Владелец получает и мягко удалённые (`deletedAt`), `total` считает только живые.
+
+`POST /api/shares/:id/comments` (владелец) / `POST /s/:token/comments` (гость JSON)
+```json
+{ "trackId": "0b4d…", "at": 42.5, "author": "Дима", "body": "вот тут вступает бас" }
+```
+→ `201 ShareComment`. Правила: `at` клампится в `0..duration`, `body` ≤ 600 символов,
+`author` ≤ 40 (по умолчанию «Гость»), HTML экранируется при рендере, не больше
+8 комментариев в минуту с одного адреса (`429 too_many`). Ошибки:
+`400 invalid_track/empty_body`, `403 track_not_in_share`, `404` — ссылки нет.
+
+`DELETE /api/shares/:id/comments?commentId=` (владелец — любой комментарий) и
+`DELETE /s/:token/comments/:commentId` (гость — только свой, по хешу адреса) →
+`200 { id, deleted }`. Мягкое удаление: строка остаётся, текст гостям не отдаётся.
+
+Форма без JavaScript: `POST /s/:token/comments` с
+`application/x-www-form-urlencoded` (`trackId`, `at`, `author`, `body`) → `303` на
+`/s/:token#track-<id>`; `_method=delete&commentId=…` удаляет свой комментарий.
+
 ### Гостевые маршруты (без токена и без сессии)
 | Маршрут | Ответ |
 |---|---|
@@ -58,6 +90,8 @@
 | `GET /s/:token/stream/:trackId` | Аудио с Range: `200/206`, `HEAD`, `ETag`. Нет локального файла → `302` на живой сид, нет сидов → `409 no_source` |
 | `GET /s/:token/download/:trackId` | Файл с `Content-Disposition: attachment`, либо `302` на сид |
 | `GET /s/:token/cover/:trackId` | Обложка (для OG-карточки) |
+| `GET /s/:token/comments?trackId=` | Лента комментариев к секундам (JSON) |
+| `POST /s/:token/comments` | Комментарий (JSON или форма), `DELETE /s/:token/comments/:commentId` — свой |
 
 `403 forbidden` — трек не входит в ссылку (для ссылки на плейлист проверяется состав).
 `410` + человеческий текст — `revoked`, `rotated`, `expired`, `exhausted`. `404` — токена нет.
@@ -66,7 +100,14 @@
 
 ### Метрики
 `vision_share_created_total{kind}`, `vision_share_open_total{kind}`,
-`vision_share_revoked_total`, `vision_share_rotated_total`.
+`vision_share_revoked_total`, `vision_share_rotated_total`,
+`vision_share_comment_total`.
+
+### Безопасность гостевой страницы
+`Referrer-Policy: no-referrer`, `Cache-Control: no-store`, `X-Robots-Tag: noindex`,
+CSP `default-src 'none'` + `style-src 'unsafe-inline'`, `script-src 'unsafe-inline'`
+(только наш скрипт перемотки по таймкоду), `form-action 'self'` (форма комментария),
+`media-src`/`img-src` — свои адреса и адреса сидов.
 
 ## Медиа и подписи
 

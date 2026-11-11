@@ -64,6 +64,20 @@ export const OPENAPI = {
             },
           },
           baseUrl: { type: 'string' },
+          comments: { type: 'integer', description: 'Сколько комментариев оставлено (только владельцу)' },
+        },
+      },
+      ShareComment: {
+        type: 'object',
+        required: ['id', 'trackId', 'at', 'author', 'body', 'createdAt'],
+        properties: {
+          id: { type: 'string' },
+          trackId: { type: 'string', description: 'Трек внутри ссылки' },
+          at: { type: 'number', description: 'Секунда трека, 0..длительность' },
+          author: { type: 'string', maxLength: 40 },
+          body: { type: 'string', maxLength: 600 },
+          createdAt: { type: 'string', format: 'date-time' },
+          deletedAt: { type: ['string', 'null'], description: 'Только для владельца' },
         },
       },
       ShareWithToken: {
@@ -726,6 +740,78 @@ export const OPENAPI = {
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ShareWithToken' } } },
           },
           404: { description: 'Не найдена' },
+        },
+      },
+    },
+    '/shares/{id}/comments': {
+      get: {
+        tags: ['shares'],
+        summary: 'Комментарии к секундам по ссылке (владелец видит и удалённые)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'trackId', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          200: {
+            description: 'Лента',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    comments: { type: 'array', items: { $ref: '#/components/schemas/ShareComment' } },
+                    total: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'Ссылка не найдена' },
+        },
+      },
+      post: {
+        tags: ['shares'],
+        summary: 'Владелец отмечает секунду — комментарий увидят гости',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['trackId', 'body'],
+                properties: {
+                  trackId: { type: 'string' },
+                  at: { type: 'number' },
+                  author: { type: 'string' },
+                  body: { type: 'string', maxLength: 600 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Создан',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ShareComment' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          403: { description: 'Трек не входит в ссылку' },
+        },
+      },
+      delete: {
+        tags: ['shares'],
+        summary: 'Удалить комментарий (владелец — любой)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'commentId', in: 'query', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          200: { description: 'Удалён' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'Комментарий не найден' },
         },
       },
     },
