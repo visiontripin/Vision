@@ -66,7 +66,17 @@ jobs:
           workspaces: apps/console/src-tauri
       - run: npm ci --no-audit --no-fund
       - name: Сборка установщика
-        run: npm --prefix apps/console run build:windows
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm --prefix apps/console run build:windows > build.log 2>&1; then
+            echo "::error::Сборка Tauri упала — ниже строки с ошибкой"
+            grep -iE "error(\[[A-Za-z0-9]+\])?:|panicked|could not|failed to" build.log \
+              | head -25 | while IFS= read -r line; do echo "::error::${line}"; done
+            tail -n 30 build.log
+            exit 1
+          fi
+          tail -n 8 build.log
       - name: Артефакты
         run: |
           Get-ChildItem apps/console/src-tauri/target/release/bundle -Recurse -Include *.msi,*.exe |
@@ -126,9 +136,25 @@ jobs:
           echo "NDK_HOME=$SDK/ndk/27.0.12077973" >> "$GITHUB_ENV"
       - run: npm ci --no-audit --no-fund
       - name: Инициализация Android-проекта
-        run: npm --prefix apps/console exec tauri android init --ci
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm --prefix apps/console exec tauri android init --ci > init.log 2>&1; then
+            echo "::error::tauri android init упал"
+            tail -n 25 init.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
       - name: Сборка APK
-        run: npm --prefix apps/console exec tauri android build --apk --ci
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm --prefix apps/console exec tauri android build --apk --ci > build.log 2>&1; then
+            echo "::error::tauri android build упал"
+            grep -iE "error(\[[A-Za-z0-9]+\])?:|panicked|could not|failed to|Exception" build.log \
+              | head -25 | while IFS= read -r line; do echo "::error::${line}"; done
+            tail -n 30 build.log
+            exit 1
+          fi
       - name: Артефакты
         run: find apps/console/src-tauri/gen/android -name "*.apk" -exec ls -lh {} \;
       - uses: actions/upload-artifact@v4
