@@ -85,6 +85,28 @@ export type SmartPlaylist = {
   updatedAt: string;
 };
 
+/**
+ * Подборка «Для вас» (J3). Это подсказка, а не обязательство: в ней 0–5 секций,
+ * каждая — со своей причиной, чтобы человек понимал, почему трек здесь.
+ */
+export type PersonalSection = {
+  key: 'continue' | 'top-genre' | 'forgotten' | 'fresh' | 'liked-mix';
+  title: string;
+  reason: string;
+  tracks: Track[];
+};
+
+export type PersonalFeed = {
+  greeting: string;
+  generatedAt: string;
+  /** Фиксирует перемешивание: одна и та же подборка до конца дня. */
+  seed: number;
+  sections: PersonalSection[];
+  libraryTracks: number;
+  /** Заполнено, когда подборок нет: что сделать, чтобы они появились. */
+  hint: string | null;
+};
+
 export type Stats = {
   tracks: number;
   plays: number;
@@ -677,6 +699,11 @@ export function createClient(options: ClientOptions = {}) {
     },
     removeFromPlaylist(playlistId: string, trackId: string) {
       return request<void>(`/api/playlists/${playlistId}/tracks/${trackId}`, { method: 'DELETE' });
+    },
+
+    /** Подборки по истории прослушиваний (J3). */
+    personal() {
+      return request<PersonalFeed>('/api/personal');
     },
 
     /* умные плейлисты (C7) */

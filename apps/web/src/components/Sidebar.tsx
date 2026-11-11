@@ -6,6 +6,7 @@ import { Icon } from '../ui';
 
 const NAV = [
   { href: '#/', label: 'Библиотека', icon: 'home' },
+  { href: '#/for-you', label: 'Для вас', icon: 'sparkle' },
   { href: '#/liked', label: 'Лайкнутое', icon: 'heart' },
   { href: '#/playlists', label: 'Плейлисты', icon: 'disc' },
   { href: '#/stats', label: 'Статистика', icon: 'stats' },

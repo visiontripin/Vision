@@ -8,6 +8,7 @@ import {
   ExternalPage,
   LibraryPage,
   LikedPage,
+  PersonalPage,
   PlaylistPage,
   SmartPlaylistPage,
   PlaylistsPage,
@@ -157,6 +158,7 @@ function Shell() {
   const content = (() => {
     if (playlistMatch) return <PlaylistPage key={playlistMatch[1]} id={playlistMatch[1]} search={search} />;
     if (smartMatch) return <SmartPlaylistPage key={smartMatch[1]} id={smartMatch[1]} search={search} />;
+    if (route === '/for-you') return <PersonalPage />;
     if (route === '/liked') return <LikedPage />;
     if (route === '/playlists') return <PlaylistsPage />;
     if (route === '/stats') return <StatsPage />;

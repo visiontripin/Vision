@@ -4,6 +4,7 @@ import {
   formatDuration,
   type ExternalTrack,
   type HistoryEntry,
+  type PersonalFeed,
   type Playlist,
   type Share,
   type SmartPlaylist,
@@ -87,6 +88,130 @@ function useServerSearch(search: string, sort: SortValue) {
   }, [query, sort]);
 
   return result;
+}
+
+/**
+ * «Для вас» (J3): подборки из собственной истории — без внешних сервисов и без
+ * «рекомендаций», которые нечем объяснить. У каждой секции есть причина, и это
+ * главное отличие от бесконечной ленты: человек видит, **почему** эти треки.
+ *
+ * В локальном режиме (IndexedDB на GitHub Pages) подборок нет: серверная история
+ * прослушиваний там не ведётся, а притворяться, что мы что-то знаем, нельзя.
+ */
+export function PersonalPage() {
+  const player = usePlayer();
+  const [feed, setFeed] = useState<PersonalFeed | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) return;
+    let cancelled = false;
+    api
+      .personal()
+      .then((result) => {
+        if (!cancelled) setFeed(result);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Не удалось собрать подборки');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (IS_LOCAL_MODE) {
+    return (
+      <section className="page">
+        <header className="page__head">
+          <div>
+            <h1>Для вас</h1>
+            <p>Подборки по истории прослушиваний</p>
+          </div>
+        </header>
+        <div className="empty">
+          <h3>Здесь нужен сервер</h3>
+          <p>
+            Подборки строятся по истории прослушиваний на сервере. В локальном режиме
+            (GitHub Pages) история не ведётся — откройте свою копию Vision Server.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="page">
+        <div className="empty">
+          <h3>Подборки не собрались</h3>
+          <p>{error}</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (!feed) {
+    return (
+      <section className="page">
+        <div className="skeleton-list">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="page">
+      <header className="page__head">
+        <div>
+          <h1>{feed.greeting}</h1>
+          <p>
+            {feed.sections.length
+              ? `${feed.libraryTracks} треков в библиотеке · подборки обновляются раз в день`
+              : 'Пока нечего показать'}
+          </p>
+        </div>
+        <a className="btn btn--ghost btn--sm" href="#/">
+          <Icon name="home" size={15} />
+          Вся библиотека
+        </a>
+      </header>
+
+      {!feed.sections.length && (
+        <div className="empty">
+          <h3>Подборок пока нет</h3>
+          <p>{feed.hint ?? 'Послушайте несколько треков — и они появятся.'}</p>
+        </div>
+      )}
+
+      {feed.sections.map((section) => (
+        <div className="personal-section" key={section.key}>
+          <div className="personal-section__head">
+            <div>
+              <h2>{section.title}</h2>
+              <p>{section.reason}</p>
+            </div>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => player.playQueue(section.tracks, 0)}
+            >
+              <Icon name="play" size={14} />
+              Слушать всё
+            </button>
+          </div>
+          <TrackList
+            tracks={section.tracks}
+            onPlay={(track) => player.play(track, section.tracks)}
+            emptyTitle="Пусто"
+            emptyHint="Подборка пересчитается после следующих прослушиваний."
+          />
+        </div>
+      ))}
+    </section>
+  );
 }
 
 export function LibraryPage({ search, onUpload }: LibraryProps) {

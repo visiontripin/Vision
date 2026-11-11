@@ -24,6 +24,7 @@ export const OPENAPI = {
     { name: 'history' },
     { name: 'playlists' },
     { name: 'smart-playlists' },
+    { name: 'personal' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
@@ -171,6 +172,26 @@ export const OPENAPI = {
           createdAt: { type: 'string', format: 'date-time' },
           trackCount: { type: 'integer' },
           duration: { type: 'number' },
+        },
+      },
+      PersonalSection: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', enum: ['continue', 'top-genre', 'forgotten', 'fresh', 'liked-mix'] },
+          title: { type: 'string' },
+          reason: { type: 'string', description: 'Почему эти треки здесь' },
+          tracks: { type: 'array', items: { $ref: '#/components/schemas/Track' } },
+        },
+      },
+      PersonalFeed: {
+        type: 'object',
+        properties: {
+          greeting: { type: 'string', description: 'Доброе утро / день / вечер по времени сервера' },
+          generatedAt: { type: 'string', format: 'date-time' },
+          seed: { type: 'integer', description: 'Фиксирует перемешивание до конца дня' },
+          sections: { type: 'array', items: { $ref: '#/components/schemas/PersonalSection' } },
+          libraryTracks: { type: 'integer' },
+          hint: { type: ['string', 'null'], description: 'Заполнено, когда подборок нет' },
         },
       },
       SmartRule: {
@@ -1199,6 +1220,28 @@ export const OPENAPI = {
         tags: ['history'],
         summary: 'Очистить историю',
         responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/personal': {
+      get: {
+        tags: ['personal'],
+        summary: 'Подборки по истории прослушиваний (J3)',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 12 } },
+          {
+            name: 'seed',
+            in: 'query',
+            description: 'Фиксирует перемешивание; по умолчанию — номер дня',
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/PersonalFeed' } } },
+          },
+          401: { description: 'Только владелец: подборки строятся по его истории' },
+        },
       },
     },
     '/smart-playlists': {

@@ -287,6 +287,47 @@ export function getPlaylist(id) {
   return listPlaylists().find((playlist) => playlist.id === id) || null;
 }
 
+/**
+ * Библиотека вместе с историей — вход для персональных подборок (J3).
+ *
+ * Один запрос, а не N: `progress` считается из позиции и длительности, поэтому
+ * «Продолжить слушать» знает о незаконченном треке без похода в `/api/history`.
+ * Ограничение 2000 — как у списка треков: подборки строятся из того, что человек
+ * реально листает.
+ */
+export function listPersonalTracks(limit = 2000) {
+  const rows = db
+    .prepare(
+      `SELECT t.id, t.title, t.artist, t.genre, t.duration, t.plays, t.liked, t.created_at,
+              l.updated_at AS listened_at, l.position AS listen_position,
+              l.duration AS listen_duration, l.completed AS listen_completed
+       FROM tracks t
+       LEFT JOIN listens l ON l.track_id = t.id
+       ORDER BY t.created_at DESC
+       LIMIT ?`
+    )
+    .all(Math.min(Math.max(Number(limit) || 2000, 1), 5000));
+
+  return rows.map((row) => {
+    const position = Number(row.listen_position ?? 0);
+    const duration = Number(row.listen_duration ?? 0) || Number(row.duration ?? 0);
+    const progress = duration > 0 ? Math.min(1, Math.max(0, position / duration)) : null;
+    return {
+      id: row.id,
+      title: row.title,
+      artist: row.artist,
+      genre: row.genre ?? null,
+      duration: row.duration,
+      plays: row.plays,
+      liked: Boolean(row.liked),
+      addedAt: row.created_at,
+      listenedAt: row.listened_at ?? null,
+      // 300-секундный трек, на котором остановились на 120 — это 0.4
+      progress: row.listen_completed ? 1 : progress,
+    };
+  });
+}
+
 /* --------------------------- умные плейлисты ----------------------------- */
 
 export function listSmartPlaylists() {

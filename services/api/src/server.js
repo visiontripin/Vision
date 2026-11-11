@@ -14,7 +14,7 @@ import {
   listExternal, getExternal, upsertExternal, updateExternalNote, deleteExternal,
   listVariants, getVariant, deleteVariants, trackByChecksum, getShare,
   listSmartPlaylists, getSmartPlaylist, insertSmartPlaylist, updateSmartPlaylist,
-  deleteSmartPlaylist, listSmartTracks, countSmartTracks,
+  deleteSmartPlaylist, listSmartTracks, countSmartTracks, listPersonalTracks,
 } from './db.js';
 import {
   STORAGE_MODE, SEED_ENABLED, DEVICE_ID, PUBLIC_URL, SEED_TTL_MS,
@@ -39,6 +39,7 @@ import {
 import { listShareComments, countShareComments } from './db.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
 import { RuleError, buildSmartQuery, describeRules, normalizeRules } from './smart.js';
+import { buildSections, emptyHint, greeting, SECTION_LIMIT, daySeed } from './personal.js';
 import {
   DEFAULT_WIDTH, embedMeta, embedSize, embedTheme, oembedPayload, oembedXml,
   parseShareUrl, renderEmbedGone, renderEmbedWidget, shareIsUsable,
@@ -235,6 +236,17 @@ function selfBaseUrl(req) {
 }
 
 const TRACK_URL = (id) => `/api/tracks/${id}`;
+
+/**
+ * Трек из `listPersonalTracks` в форме, привычной клиенту (`Track` без истории):
+ * подборки отдают те же поля, что и список библиотеки, плюс ссылки на поток.
+ */
+function toPublicTrack(track, req) {
+  const full = getTrack(track.id);
+  if (!full) return track;
+  const [withLinks] = withSources([full], { selfBase: selfBaseUrl(req) });
+  return withLinks;
+}
 
 /**
  * Умный плейлист + сколько треков подходит сейчас (C7). `trackCount` — не
@@ -1528,6 +1540,33 @@ async function handleApi(req, res, url) {
       res.writeHead(204);
       return res.end();
     }
+  }
+
+  /* ---- «Для вас»: подборки по истории (J3) ---- */
+  if (pathname === '/api/personal') {
+    if (method !== 'GET') return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+
+    const library = listPersonalTracks();
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || SECTION_LIMIT, 1), 50);
+    const now = Date.now();
+    // `seed` фиксирует перемешивание: подборка не должна меняться при каждом
+    // обновлении страницы, но пусть меняется раз в день.
+    const seed = Number(url.searchParams.get('seed')) || daySeed(now);
+
+    const sections = buildSections(library, { now, seed, limit }).map((section) => ({
+      ...section,
+      tracks: section.tracks.map((track) => toPublicTrack(track, req)),
+    }));
+
+    return json(res, 200, {
+      greeting: greeting(now),
+      generatedAt: new Date(now).toISOString(),
+      seed,
+      // Подборки — подсказка, а не обязательство: клиент сам решает, что показать.
+      sections,
+      libraryTracks: library.length,
+      hint: sections.length ? null : emptyHint(library.length > 0),
+    });
   }
 
   /* ---- умные плейлисты (C7) ---- */
