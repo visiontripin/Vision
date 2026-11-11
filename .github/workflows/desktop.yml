@@ -113,12 +113,19 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
             --title "Vision Audio Desktop ${tag#desktop-}" \
-            --notes "Десктопное приложение Vision Audio ${tag#desktop-}: тот же интерфейс, что в вебе, плюс системный трей, глобальные медиа-клавиши и автообновление."
-          gh release upload "$tag" --clobber \
-            apps/desktop/src-tauri/target/release/bundle/deb/*.deb \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.tar.gz \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.sig
+            --notes "Десктопное приложение Vision Audio ${tag#desktop-}: тот же интерфейс, что в вебе, плюс системный трей, глобальные медиа-клавиши и автообновление. Для Windows установщик лежит в том же релизе."
+          # Явный список, а не шаблоны: `gh release upload` падает, если хотя бы один
+          # аргумент не совпал с файлом (например, .tar.gz для updater собирается
+          # только при наличии ключа подписи). Нет ключа — публикуем .deb/.AppImage.
+          bundle="apps/desktop/src-tauri/target/release/bundle"
+          files=()
+          for f in "$bundle"/deb/*.deb "$bundle"/appimage/*.AppImage \
+                   "$bundle"/appimage/*.AppImage.tar.gz "$bundle"/appimage/*.AppImage.tar.gz.sig; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          [ ${#files[@]} -gt 0 ] || { echo "::error::нечего публиковать"; exit 1; }
+          gh release upload "$tag" --clobber "${files[@]}"
+          gh release view "$tag" --json assets --jq '.assets[] | "asset: \(.name) \(.size) байт"'
 
       - name: Манифест обновлений (latest.json)
         if: startsWith(github.ref, 'refs/tags/desktop-v')
