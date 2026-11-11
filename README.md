@@ -30,14 +30,14 @@
 - Плеер Vision Audio 0.6.0 (последняя версия): https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-latest.apk
 - Плеер 0.6.0 (фиксированная версия): https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-0.6.0-android.apk
 - SHA-256 APK: https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-0.6.0-android.apk.sha256
-- Админка / запуск сервера: https://github.com/visiontripin/Vision/releases/download/console-v0.1.0/app-universal-release-unsigned.apk
+- Админка / запуск сервера (подписан): https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-latest.apk
 
 **Windows**
 
 - Плеер 0.3.0 — `.msi`: https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_x64_en-US.msi
 - Плеер 0.3.0 — `.exe`: https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_x64-setup.exe
-- Сервер + админка 0.1.0 — `.msi`: https://github.com/visiontripin/Vision/releases/download/console-v0.1.0/Vision.Server_0.1.0_x64_en-US.msi
-- Сервер + админка 0.1.0 — `.exe`: https://github.com/visiontripin/Vision/releases/download/console-v0.1.0/Vision.Server_0.1.0_x64-setup.exe
+- Сервер + админка 0.1.1 — `.msi`: https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/Vision.Server_0.1.1_x64_en-US.msi
+- Сервер + админка 0.1.1 — `.exe`: https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/Vision.Server_0.1.1_x64-setup.exe
 
 **Linux**
 

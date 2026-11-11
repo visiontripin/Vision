@@ -8,7 +8,7 @@
 | **Web** | https://visiontripin.github.io/Vision/ | автоматически при merge в `main` |
 | **Android APK** | `releases/latest/download/VisionAudio-latest.apk` | тег `android-v<версия>` |
 | **Windows: плеер** | `releases/latest` → `Vision.Audio_<версия>_x64_en-US.msi` / `-setup.exe` | тег `desktop-v<версия>` |
-| **Windows: запуск сервера и админка** | `releases/latest` → `Vision.Server_<версия>_x64_en-US.msi` / `-setup.exe` | тег `console-v<версия>` |
+| **Windows: запуск сервера и админка** | `releases/latest` → `Vision.Server_<версия>_x64_en-US.msi` / `-setup.exe`, `VisionServer-latest.apk` (Android) | тег `console-v<версия>` |
 | **Linux: плеер** | `.deb` / `.AppImage` в релизе `desktop-v*` | тег `desktop-v<версия>` |
 | **Панель в браузере** | `http://<сервер>:4000/admin` | вместе с сервером |
 
@@ -60,14 +60,14 @@ gh release view android-v0.6.0 --json assets -q '.assets[].name'
 
 ```bash
 MERGE=$(git rev-parse origin/main)
-git tag android-v0.6.0 $MERGE && git tag desktop-v0.3.0 $MERGE && git tag console-v0.1.0 $MERGE
-git push origin refs/tags/android-v0.6.0 refs/tags/desktop-v0.3.0 refs/tags/console-v0.1.0
+git tag android-v0.6.0 $MERGE && git tag desktop-v0.3.0 $MERGE && git tag console-v0.1.1 $MERGE
+git push origin refs/tags/android-v0.6.0 refs/tags/desktop-v0.3.0 refs/tags/console-v0.1.1
 ```
 
 6. Дождаться трёх прогонов и **проверить ассеты, а не только зелёный статус**:
 
 ```bash
-for t in android-v0.6.0 desktop-v0.3.0 console-v0.1.0; do
+for t in android-v0.6.0 desktop-v0.3.0 console-v0.1.1; do
   echo "== $t"; gh release view "$t" --json assets -q '.assets[] | "\(.name)\t\(.size)"'
 done
 ```
