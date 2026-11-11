@@ -134,6 +134,16 @@ jobs:
           yes | "$BIN/sdkmanager" --licenses > /dev/null 2>&1 || true
           "$BIN/sdkmanager" --install "ndk;27.0.12077973" "platform-tools" > /dev/null
           echo "NDK_HOME=$SDK/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$SDK/ndk/27.0.12077973" >> "$GITHUB_ENV"
+      # Диагностика: без неё причина падения не видна (логи Actions закрыты)
+      - name: Окружение Android
+        shell: bash
+        run: |
+          echo "JAVA_HOME=${JAVA_HOME:-не задан}"
+          java -version 2>&1 | head -3 || true
+          echo "NDK: $(ls -d "$NDK_HOME" 2>/dev/null || echo нет)"
+          ls "$ANDROID_HOME/ndk" 2>/dev/null || true
+          npx --no-install tauri --version || true
       - run: npm ci --no-audit --no-fund
       - name: Инициализация Android-проекта
         shell: bash
@@ -150,9 +160,11 @@ jobs:
           set -o pipefail
           if ! npm --prefix apps/console exec tauri android build --apk --ci > build.log 2>&1; then
             echo "::error::tauri android build упал"
-            grep -iE "error(\[[A-Za-z0-9]+\])?:|panicked|could not|failed to|Exception" build.log \
-              | head -25 | while IFS= read -r line; do echo "::error::${line}"; done
-            tail -n 30 build.log
+            hits=$(grep -iE "error(\[[A-Za-z0-9]+\])?:|panicked|could not|failed to|Exception|not found" build.log \
+              | head -20 || true)
+            # если шаблон ничего не поймал — показываем хвост лога как аннотации
+            [ -n "$hits" ] || hits=$(tail -n 20 build.log)
+            printf '%s\n' "$hits" | while IFS= read -r line; do echo "::error::${line}"; done
             exit 1
           fi
       - name: Артефакты
