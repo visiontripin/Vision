@@ -169,7 +169,13 @@ jobs:
           VISION_KEYSTORE_PASSWORD: vision-audio
           VISION_KEY_ALIAS: vision
           VISION_KEY_PASSWORD: vision-audio
-        run: node scripts/android-sign-console.mjs
+        run: |
+          # Диагностика: логи job-а в этой среде не скачать, а причина отказа
+          # скрипта (нет файла / шаблон Gradle изменился) должна быть видна сразу.
+          echo "gen/android:"; ls -d apps/console/src-tauri/gen/android 2>/dev/null || echo "нет каталога"
+          find apps/console/src-tauri/gen/android -maxdepth 3 -name "build.gradle*" 2>/dev/null | head -5
+          echo "ключ: $(ls -l apps/mobile/vision-release.p12 2>/dev/null || echo нет)"
+          node scripts/android-sign-console.mjs
       - name: Сборка APK
         shell: bash
         run: |
