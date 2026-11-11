@@ -55,8 +55,15 @@ npm --prefix apps/console run build:android    # APK (нужны NDK и Rust tar
 - `check` — типы, тесты чистой логики, сборка панели и тест, что сервер отдаёт `/admin`
   (на каждом PR);
 - `windows` — установщик `.msi` + `.exe` (artifact `vision-server-windows`);
-- `android` — APK через `tauri android build` (artifact `vision-server-android`);
+- `android` — APK через `tauri android build` (artifact `vision-server-android`),
+  джоба помечена `continue-on-error: true`: это отдельный канал поставки и её падение
+  не блокирует PR. Чтобы причина была видна без доступа к логам, шаги сборки пишут
+  ошибки аннотациями (`::error::…`), а перед сборкой печатается окружение Android;
 - тег `console-v*` — те же артефакты уезжают в GitHub Release.
+
+Иконки для оболочки генерируются без зависимостей: `node scripts/make-icons.mjs`
+(пишет PNG-набор и `icon.ico` в `src-tauri/icons/`). `.ico` обязателен — без него
+`tauri-build` на Windows падает на этапе сборки, ещё до компиляции.
 
 ## Структура
 
