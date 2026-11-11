@@ -16,6 +16,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIR = path.join(ROOT, 'apps/web/public');
 const MOBILE_DIR = path.join(ROOT, 'apps/mobile/assets');
 const CONSOLE_ICONS = path.join(ROOT, 'apps/console/src-tauri/icons');
+const DESKTOP_ICONS = path.join(ROOT, 'apps/desktop/src-tauri/icons');
 
 const BG = [255, 90, 31]; // #ff5a1f — акцент приложения
 const INK = [8, 8, 11]; // #08080b
@@ -172,6 +173,12 @@ const targets = [
   { dir: CONSOLE_ICONS, file: '128x128.png', size: 128, padding: 0.18, rounded: false },
   { dir: CONSOLE_ICONS, file: '128x128@2x.png', size: 256, padding: 0.18, rounded: false },
   { dir: CONSOLE_ICONS, file: '32x32.png', size: 32, padding: 0.18, rounded: false },
+  // ---- Десктоп-плеер (apps/desktop/src-tauri/icons) ----
+  // Windows-бандлеру нужен .ico, NSIS/MSI без него падают ещё до компиляции
+  { dir: DESKTOP_ICONS, file: 'icon.png', size: 1024, padding: 0.18, rounded: false },
+  { dir: DESKTOP_ICONS, file: '128x128.png', size: 128, padding: 0.18, rounded: false },
+  { dir: DESKTOP_ICONS, file: '128x128@2x.png', size: 256, padding: 0.18, rounded: false },
+  { dir: DESKTOP_ICONS, file: '32x32.png', size: 32, padding: 0.18, rounded: false },
 ];
 
 for (const target of targets) {
@@ -185,3 +192,8 @@ for (const target of targets) {
 const ico = icoFromPng(render(256, { size: 256, padding: 0.18, rounded: false }), 256);
 writeFileSync(path.join(CONSOLE_ICONS, 'icon.ico'), ico);
 console.log(`✓ apps/console/src-tauri/icons/icon.ico — ${(ico.length / 1024).toFixed(1)} КБ`);
+
+// то же для десктопного плеера: без .ico не собираются .msi/.exe
+mkdirSync(DESKTOP_ICONS, { recursive: true });
+writeFileSync(path.join(DESKTOP_ICONS, 'icon.ico'), ico);
+console.log(`✓ apps/desktop/src-tauri/icons/icon.ico — ${(ico.length / 1024).toFixed(1)} КБ`);

@@ -18,6 +18,7 @@ apps/desktop/
     Cargo.toml                 tauri, plugin-global-shortcut, plugin-updater
     tauri.conf.json            окно, CSP, бандлы (msi, nsis, deb, appimage)
     capabilities/default.json  минимальные разрешения (core, shortcuts, updater)
+    icons/                     PNG + .ico (генерируются `npm run icons`)
     src/main.rs                трей, медиа-клавиши, «свернуть в трей», команда player_state
 apps/web/src/desktop.ts        мост: слушаем media:*, отправляем player_state
 apps/web/src/components/DesktopBridge.tsx  связка моста с плеером

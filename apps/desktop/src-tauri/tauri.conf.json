@@ -35,7 +35,11 @@
       "appimage"
     ],
     "icon": [
-      "icons/icon.png"
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
     ],
     "shortDescription": "Личная музыкальная библиотека",
     "longDescription": "Vision Audio — личный аналог SoundCloud: загрузка, библиотека, плейлисты и плеер.",
