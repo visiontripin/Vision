@@ -170,12 +170,19 @@ jobs:
           VISION_KEY_ALIAS: vision
           VISION_KEY_PASSWORD: vision-audio
         run: |
-          # Диагностика: логи job-а в этой среде не скачать, а причина отказа
-          # скрипта (нет файла / шаблон Gradle изменился) должна быть видна сразу.
-          echo "gen/android:"; ls -d apps/console/src-tauri/gen/android 2>/dev/null || echo "нет каталога"
-          find apps/console/src-tauri/gen/android -maxdepth 3 -name "build.gradle*" 2>/dev/null | head -5
-          echo "ключ: $(ls -l apps/mobile/vision-release.p12 2>/dev/null || echo нет)"
-          node scripts/android-sign-console.mjs
+          # Логи job-а в этой среде не скачать, поэтому всё важное дублируем
+          # аннотациями: они видны на странице PR.
+          echo "::warning title=gen::$(ls -d apps/console/src-tauri/gen/android 2>/dev/null || echo 'нет каталога gen/android')"
+          # Файл Gradle может быть в разных местах в зависимости от версии CLI —
+          # показываем все найденные, чтобы не угадывать.
+          find apps/console/src-tauri/gen -name "build.gradle*" 2>/dev/null | head -10 \
+            | while IFS= read -r f; do echo "::warning title=gradle::$f"; done
+          echo "::warning title=key::$(ls apps/mobile/vision-release.p12 2>/dev/null || echo 'ключ не найден')"
+          if ! node scripts/android-sign-console.mjs > /tmp/sign.log 2>&1; then
+            tail -n 20 /tmp/sign.log | while IFS= read -r line; do echo "::error title=sign::$line"; done
+            exit 1
+          fi
+          while IFS= read -r line; do echo "::notice title=sign::$line"; done < /tmp/sign.log
       - name: Сборка APK
         shell: bash
         run: |
