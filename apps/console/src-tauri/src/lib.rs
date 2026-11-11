@@ -31,6 +31,10 @@ fn platform() -> Platform {
     Platform { os, hint }
 }
 
+/// Точка входа для мобильных платформ (Android): `tauri android build` ищет
+/// символ `mobile_entry_point` в библиотеке и без него отказывается упаковывать
+/// APK. На Windows/Linux этот код не собирается — там `main.rs`.
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![platform])
