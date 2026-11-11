@@ -4,9 +4,10 @@
 Tauri 2. Установщик ~6–12 МБ вместо ~100 МБ у Electron: системный WebView вместо
 своего браузера, нативные трей, меню и глобальные клавиши.
 
-**Статус v0.2.0.** Собирается в CI (`.github/workflows/desktop.yml` → `.deb` и
-`.AppImage`), умеет трей, сворачивание в трей и медиа-клавиши. Windows-джоба и
-подпись установщиков — следующий шаг.
+**Статус v0.3.0.** Собирается в CI (`.github/workflows/desktop.yml` → `.deb`,
+`.AppImage`, `.msi`/`.exe`), умеет трей, сворачивание в трей, медиа-клавиши и
+**самообновление с проверкой подписи** (см. «Обновления»). Authenticode-сертификат
+Windows подключается секретом в CI и без него установщик остаётся неподписанным.
 
 ## Что внутри
 
@@ -51,16 +52,21 @@ GitHub Pages мост выключен, а `@tauri-apps/api` подгружае�
 
 ## Готовые сборки
 
-Релиз `desktop-v0.2.0` (собран CI на `ubuntu-22.04`):
+Релиз `desktop-v0.3.0` (собирают CI-джобы `linux` на `ubuntu-22.04` и `windows` на
+`windows-latest`):
 
 ```
-https://github.com/visiontripin/Vision/releases/tag/desktop-v0.2.0
-  Vision.Audio_0.2.0_amd64.deb        ~5 МБ   (Debian/Ubuntu 22.04+)
-  Vision.Audio_0.2.0_amd64.AppImage   ~83 МБ  (любой дистрибутив, без установки)
+https://github.com/visiontripin/Vision/releases/tag/desktop-v0.3.0
+  Vision.Audio_0.3.0_amd64.deb        ~5 МБ   (Debian/Ubuntu 22.04+)
+  Vision.Audio_0.3.0_amd64.AppImage   ~83 МБ  (любой дистрибутив, без установки)
+  Vision.Audio_0.3.0_x64_en-US.msi    ~7 МБ   (Windows 10+)
+  Vision.Audio_0.3.0_x64-setup.exe    ~6 МБ   (Windows 10+, NSIS)
+  latest.json                         —        манифест обновлений
 ```
 
-Установка: `sudo apt install ./Vision.Audio_0.2.0_amd64.deb`, либо
-`chmod +x Vision.Audio_0.2.0_amd64.AppImage && ./Vision.Audio_0.2.0_amd64.AppImage`.
+Установка: `sudo apt install ./Vision.Audio_0.3.0_amd64.deb`, либо
+`chmod +x ./Vision.Audio_0.3.0_amd64.AppImage && ./Vision.Audio_0.3.0_amd64.AppImage`,
+на Windows — `.msi`/`.exe` двойным кликом.
 Сервер (API) должен быть доступен — адрес задаётся на экране входа.
 
 ## Сборка
@@ -85,8 +91,16 @@ npm --prefix apps/desktop run build:windows  # .msi + NSIS (на Windows)
   с кэшем (`Swatinem/rust-cache`);
 - если компиляция падает, ошибки `error[E…]` вытаскиваются в аннотации run-а —
   так их видно без скачивания логов;
-- артефакт `vision-desktop-linux` (`.deb`, `.AppImage`), по тегу — GitHub Release
-  `desktop-v<версия>`.
+- джоба `linux` кладёт артефакт `vision-desktop-linux` (`.deb`, `.AppImage`,
+  `*.AppImage.tar.gz` + `.sig` для updater), джоба `windows` — `vision-desktop-windows`
+  (`.msi`, `-setup.exe`), по тегу обе публикуют GitHub Release `desktop-v<версия>`.
+
+**Манифест обновлений из двух джоб.** `latest.json` — один файл на релиз, а платформы
+собираются на разных машинах, поэтому джобы не перетирают его, а сливают: Linux
+публикует манифест со своей платформой, Windows скачивает текущий (`gh release download`),
+добавляет `windows-x86_64` и загружает обратно с `--clobber`. Если артефакта updater
+(или подписи) нет, шаг печатает `::warning::` и выходит с кодом 0 — релиз без
+автообновления лучше, чем упавшая сборка.
 
 Релиз:
 
@@ -94,10 +108,60 @@ npm --prefix apps/desktop run build:windows  # .msi + NSIS (на Windows)
 git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
 ```
 
+## Обновления (I4, v0.19.0)
+
+**Как это работает.** Приложение раз в несколько часов спрашивает манифест обновлений
+и, если версия новее, показывает плашку «Доступна версия X» с кнопкой «Скачать и
+установить». Ничего не устанавливается молча: музыка играет, а перезапуск посреди
+трека — не то, чего ждёт человек.
+
+| Что | Где |
+|---|---|
+| Проверка и загрузка | `apps/web/src/updates.ts` (чистая логика) + `components/UpdateBanner.tsx` |
+| Команды Rust | `updater_check`, `updater_install` в `apps/desktop/src-tauri/src/main.rs` |
+| Манифест | `releases/latest/download/latest.json`, поле `updater.endpoints` в `tauri.conf.json` |
+| Публикация | `.github/workflows/desktop.yml`, шаг «Манифест обновлений» на теге `desktop-v*` |
+
+**Манифест** (формат Tauri updater 2):
+
+```json
+{
+  "version": "0.3.0",
+  "pub_date": "2026-11-11T08:00:00Z",
+  "notes": "Что изменилось — первая строка CHANGELOG",
+  "platforms": {
+    "linux-x86_64": { "signature": "…", "url": "https://…/Vision.Audio_0.3.0_amd64.AppImage.tar.gz" },
+    "windows-x86_64": { "signature": "…", "url": "https://…/Vision.Audio_0.3.0_x64-setup.nsis.zip" }
+  }
+}
+```
+
+Отсутствующая платформа означает «для этой системы обновления нет» — приложение это
+понимает (`parseManifest` возвращает `null`), а не падает.
+
+**Подпись.** Tauri требует, чтобы обновление было подписано ключом из
+`TAURI_SIGNING_PRIVATE_KEY`; публичная часть лежит в `tauri.conf.json`
+(`plugins.updater.pubkey`). Без подписи обновление отклоняется самим Tauri — это
+правильное поведение, поэтому в репозитории нет «отключённой проверки».
+Секреты (ключ, пароль ключа, сертификат Windows) живут только в GitHub Secrets;
+в коде и документации — имена переменных, не значения.
+
+**Authenticode (Windows).** Установщик подписывается сертификатом из
+`WINDOWS_CERTIFICATE` (base64 `.pfx`) и `WINDOWS_CERTIFICATE_PASSWORD`. Пока секретов
+нет, сборка остаётся неподписанной: CI собирает установщик, а SmartScreen
+предупреждает. Это осознанный компромисс — подпись без сертификата невозможна,
+а «самоподписанный» сертификат хуже предупреждения, потому что учит его игнорировать.
+
+**Проверка перед публикацией**: обновление с 0.2.0 на 0.3.0 проходит без потери
+данных — библиотека живёт на сервере, в приложении только настройки (`localStorage`),
+поэтому обновление их не трогает.
+
 ## Ограничения
 
 - **Linux**: нужен `libwebkit2gtk-4.1` (Ubuntu 22.04+), в `.deb` зависимость прописана.
 - **Windows**: WebView2 ставится bootstrapper-ом, установщики — `msi`/`nsis`.
+- **Автообновление** проверяется раз в 6 ч; «Позже» скрывает плашку на 24 ч для этой
+  версии. Установка идёт через Tauri (`passive` в Windows), перезапуск — по кнопке.
 - **macOS** пока не собирается: нет Apple-подписи, код общий — джоба добавляется
   вместе с сертификатом.
 - **Подпись**: Linux не требует, Windows Authenticode требует сертификат — пока
@@ -107,7 +171,6 @@ git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
 
 ## Что дальше
 
-- Windows-джоба CI и подпись;
 - встроенный сервер (`STORAGE_MODE=metadata`, `SEED_ENABLED=1`) — десктоп как узел
   реплик, а не только клиент;
 - автозапуск при входе в систему;

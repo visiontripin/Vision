@@ -14,6 +14,7 @@ import {
   StatsPage,
 } from './pages';
 import { ShareTargetPage } from './components/ShareTargetPage';
+import { UpdateBanner } from './components/UpdateBanner';
 import { isTrackCached } from './offline';
 import { syncReplicas } from './seeds';
 import { AuthProvider, useAuth } from './state/auth';
@@ -232,6 +233,7 @@ function Shell() {
         <div className={`content${player.current ? ' content--player' : ''}`}>{content}</div>
       </main>
 
+      <UpdateBanner />
       <PlayerBar />
       <QueueDrawer />
 

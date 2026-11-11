@@ -19,6 +19,8 @@ jobs:
         run: npm test
       - name: Local (IndexedDB) client tests
         run: npm run test:local
+      - name: Тесты скриптов (манифест обновлений)
+        run: npm run test:scripts
       - name: Typecheck + web build
         run: npm run build
       - name: Smoke test API

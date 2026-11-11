@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Vision Audio",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "app.vision.audio",
   "build": {
     "beforeDevCommand": "npm --prefix ../web run dev",
@@ -28,22 +28,41 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis", "deb", "appimage"],
-    "icon": ["icons/icon.png"],
+    "targets": [
+      "msi",
+      "nsis",
+      "deb",
+      "appimage"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
     "shortDescription": "Личная музыкальная библиотека",
     "longDescription": "Vision Audio — личный аналог SoundCloud: загрузка, библиотека, плейлисты и плеер.",
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
       }
     },
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" }
-    }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://example.com/vision/updates/{{target}}/{{arch}}/{{current_version}}"]
+      "endpoints": [
+        "https://github.com/visiontripin/Vision/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      },
+      "pubkey": ""
     }
   }
 }

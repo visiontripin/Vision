@@ -133,11 +133,72 @@ fn player_state(
     }
 }
 
+/// Проверка обновления (I4). Возвращает то, что нужно показать человеку:
+/// версию, заметки и признак «есть ли что-то новее».
+///
+/// Проверку подписи делает сам Tauri при установке — здесь мы только спрашиваем,
+/// поэтому `Err` означает «проверить не удалось» (нет сети, нет манифеста), а не
+/// «обновлений нет»: это разные вещи, и интерфейс их различает.
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    available: bool,
+    version: Option<String>,
+    notes: Option<String>,
+    current: String,
+}
+
+#[tauri::command]
+async fn updater_check(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current = app.package_info().version.to_string();
+    let updater = app.updater().map_err(|error| error.to_string())?;
+
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateInfo {
+            available: true,
+            version: Some(update.version.clone()),
+            notes: update.body.clone(),
+            current,
+        }),
+        Ok(None) => Ok(UpdateInfo {
+            available: false,
+            version: None,
+            notes: None,
+            current,
+        }),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Загрузка и установка обновления. Tauri проверяет подпись артефакта ключом из
+/// `plugins.updater.pubkey`; без секрета в CI обновление не подпишется, и установка
+/// честно завершится ошибкой, а не «тихо поставит что попало».
+#[tauri::command]
+async fn updater_install(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|error| error.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "обновлений нет".to_string())?;
+    let version = update.version.clone();
+
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(version)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![player_state])
+        .invoke_handler(tauri::generate_handler![player_state, updater_check, updater_install])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();

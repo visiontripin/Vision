@@ -1349,6 +1349,55 @@ select:focus {
 
 /* ================================ плеер ================================= */
 
+/* Плашка обновления десктопа (I4): узкая полоса над плеером, не модалка —
+   музыка продолжает играть, а решение можно отложить на сутки. */
+.update-bar {
+  position: fixed;
+  left: var(--sidebar);
+  right: 0;
+  bottom: var(--player);
+  z-index: 49;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 20px;
+  border-top: 1px solid rgba(255, 90, 31, 0.35);
+  background: linear-gradient(180deg, rgba(255, 90, 31, 0.16), rgba(13, 13, 18, 0.96));
+  backdrop-filter: blur(18px);
+  font-size: 13px;
+  animation: update-slide 0.3s ease both;
+}
+
+.update-bar__text {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.update-bar__text span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes update-slide {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .update-bar {
+    left: 0;
+    flex-wrap: wrap;
+    padding: 8px 14px;
+  }
+}
+
 .player {
   position: fixed;
   left: var(--sidebar);

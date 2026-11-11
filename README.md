@@ -82,9 +82,11 @@ npm test                 # 99 контрактных тестов API: auth, upl
                          # history, metrics, v1/OpenAPI, трекер реплик, приватные ссылки,
                          # комментарии к секундам, панель /admin, oEmbed и /embed-виджет, журнал,
                          # SPA-маршруты /share и хэш-ссылки
-npm run test:local       # 83 клиентских теста: локальный режим (IndexedDB), zip, офлайн-кэш,
+npm run test:local       # 90 клиентских тестов: локальный режим (IndexedDB), zip, офлайн-кэш,
                          # геометрия волны и очередь в мобильном приложении, диагностика панели,
-                         # код встраивания, время в журнале, разбор deep links и share target
+                         # код встраивания, время в журнале, разбор deep links и share target,
+                         # разбор версий и манифеста обновлений
+npm run test:scripts     # 5 тестов скриптов: генерация latest.json для автообновления
 npm run test:all         # всё вместе
 ```
 
@@ -140,12 +142,13 @@ https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-late
 
 Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`.
 
-**Готовое приложение для Linux** (Tauri, тот же интерфейс плюс трей и медиа-клавиши) —
-релиз `desktop-v<версия>`: `.deb` и `.AppImage`. Собирается в CI
-(`.github/workflows/desktop.yml`), подробности — `docs/DESKTOP.md`:
+**Готовые приложения для Linux и Windows** (Tauri, тот же интерфейс плюс трей и медиа-клавиши) —
+релиз `desktop-v<версия>`: `.deb`/`.AppImage` и `.msi`/`.exe`. Собирается в CI
+(`.github/workflows/desktop.yml`), подробности — `docs/DESKTOP.md`. С версии 0.3.0 приложение
+само проверяет обновления (`latest.json` в релизе) и ставит их по кнопке:
 
 ```
-https://github.com/visiontripin/Vision/releases/tag/desktop-v0.2.0
+https://github.com/visiontripin/Vision/releases/tag/desktop-v0.3.0
 ```
 
 План распределённого хранения (сервер без файлов, сиды на устройствах) — `docs/DISTRIBUTED.md`.

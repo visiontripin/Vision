@@ -64,6 +64,11 @@ jobs:
           npm --prefix apps/desktop install --no-audit --no-fund
 
       - name: Сборка (cargo + tauri bundler)
+        env:
+          # подпись артефактов обновления: без ключа Tauri откажется собирать
+          # updater-артефакты, поэтому на PR (без секретов) они не создаются
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -uo pipefail
           cd apps/desktop
@@ -102,7 +107,149 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
             --title "Vision Audio Desktop ${tag#desktop-}" \
-            --notes "Десктопное приложение Vision Audio ${tag#desktop-}: тот же интерфейс, что в вебе, плюс системный трей и глобальные медиа-клавиши."
+            --notes "Десктопное приложение Vision Audio ${tag#desktop-}: тот же интерфейс, что в вебе, плюс системный трей, глобальные медиа-клавиши и автообновление."
           gh release upload "$tag" --clobber \
             apps/desktop/src-tauri/target/release/bundle/deb/*.deb \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage \
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.tar.gz \
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.sig
+
+      - name: Манифест обновлений (latest.json)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#desktop-v}"
+          bundle="apps/desktop/src-tauri/target/release/bundle"
+          artifact="$(basename "$(ls "$bundle"/appimage/*.AppImage.tar.gz 2>/dev/null | head -1)" || true)"
+          if [ -z "$artifact" ]; then
+            echo "::warning::Нет артефакта updater — latest.json не публикуется"
+            exit 0
+          fi
+          node scripts/make-update-manifest.mjs \
+            --version "$version" \
+            --tag "$tag" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --notes-file CHANGELOG.md \
+            --out latest.json \
+            --platform "linux-x86_64=${bundle}/appimage/${artifact}:${bundle}/appimage/${artifact}.sig" || exit 0
+          gh release upload "$tag" latest.json --clobber
+          echo "::notice::latest.json опубликован для ${version}"
+
+  windows:
+    name: Windows (.msi + .exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Web-бандл и Node-зависимости
+        run: |
+          npm ci
+          npm --prefix apps/desktop install --no-audit --no-fund
+      - name: Сборка установщика
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -o pipefail
+          if ! (cd apps/desktop && npx tauri build --bundles msi,nsis) > build.log 2>&1; then
+            echo "::error::Сборка Tauri упала — ниже ошибки компилятора"
+            grep -iE "error(\[[A-Za-z0-9]+\])?:|panicked|could not|failed to" build.log \
+              | head -20 | while IFS= read -r line; do echo "::error::${line}"; done
+            tail -n 30 build.log
+            exit 1
+          fi
+          tail -n 8 build.log
+
+      # Authenticode: сертификат приходит секретом (base64 .pfx). Без него
+      # установщик остаётся неподписанным — это честнее самоподписанного,
+      # который приучает игнорировать предупреждение SmartScreen.
+      - name: Подпись установщика (если есть сертификат)
+        shell: bash
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          # `secrets.*` нельзя использовать в if: GitHub не даёт их в условии
+          if [ -z "${CERT_BASE64:-}" ]; then
+            echo "::notice::Сертификата нет — установщик остаётся неподписанным (SmartScreen предупредит)"
+            exit 0
+          fi
+          echo "$CERT_BASE64" | base64 -d > cert.pfx
+          find apps/desktop/src-tauri/target/release/bundle -name "*.exe" -o -name "*.msi" | while read -r file; do
+            signtool sign /f cert.pfx /p "$CERT_PASSWORD" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "$file" \
+              || { echo "::error::Не удалось подписать $file"; exit 1; }
+          done
+          rm -f cert.pfx
+
+      - name: Артефакты
+        shell: bash
+        run: find apps/desktop/src-tauri/target/release/bundle -name "*.msi" -o -name "*-setup.exe" | xargs -r ls -lh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vision-desktop-windows
+          if-no-files-found: error
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: Release (только по тегу desktop-v*)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
+            --title "Vision Audio Desktop ${tag#desktop-}" \
+            --notes "Десктопное приложение Vision Audio ${tag#desktop-}."
+          gh release upload "$tag" --clobber \
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi \
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: Манифест обновлений для Windows
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#desktop-v}"
+          bundle="apps/desktop/src-tauri/target/release/bundle"
+          artifact="$(basename "$(ls "$bundle"/nsis/*.nsis.zip 2>/dev/null | head -1)" || true)"
+          if [ -z "$artifact" ]; then
+            echo "::warning::Нет updater-артефакта для Windows — манифест не публикуется"
+            exit 0
+          fi
+          node scripts/make-update-manifest.mjs \
+            --version "$version" --tag "$tag" --repo "${GITHUB_REPOSITORY}" \
+            --notes-file CHANGELOG.md --out latest-windows.json \
+            --platform "windows-x86_64=${bundle}/nsis/${artifact}:${bundle}/nsis/${artifact}.sig" || exit 0
+          # Windows и Linux публикуют манифест в один релиз: сливаем платформы
+          gh release download "$tag" -p latest.json -O latest-linux.json --clobber 2>/dev/null || true
+          if [ -f latest-linux.json ]; then
+            node -e '
+              const fs = require("node:fs");
+              const linux = JSON.parse(fs.readFileSync("latest-linux.json", "utf8"));
+              const win = JSON.parse(fs.readFileSync("latest-windows.json", "utf8"));
+              linux.platforms = { ...linux.platforms, ...win.platforms };
+              fs.writeFileSync("latest.json", JSON.stringify(linux, null, 2) + "\\n");
+            '
+          else
+            mv latest-windows.json latest.json
+          fi
+          gh release upload "$tag" latest.json --clobber
+          echo "::notice::latest.json обновлён платформой windows-x86_64"
