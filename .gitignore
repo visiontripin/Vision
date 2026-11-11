@@ -16,3 +16,8 @@ apps/mobile/android/
 apps/mobile/ios/
 apps/mobile/.expo/
 apps/mobile/dist/
+
+# панель Vision Server: Rust-цели и сгенерированный Android-проект — только в CI
+apps/console/src-tauri/target/
+apps/console/src-tauri/gen/
+apps/console/dist/

@@ -100,6 +100,16 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
   из `usePlayer`). Волна рисуется на `<canvas>` (`Waveform` в `ui.tsx`), перемотка —
   `pointerdown/move` + `setPointerCapture`, подсказка времени — параметр `timeAt`.
 
+## 8.1 Панель администрирования (`apps/console`)
+
+- Отдельное приложение: Vite + React, оболочка Tauri 2 → окно Windows (`.msi`/`.exe`)
+  и APK Android (`docs/adr/0009-server-console.md`).
+- Тот же бандл сервер отдаёт по `/admin` (`serveConsole` в `server.js`): отдельная
+  статика, `noindex`, SPA-фолбэк, `503` с инструкцией, если не собрана.
+- Права Tauri — `core:default` и собственная команда `platform()`; ни `shell`, ни `fs`.
+- Чистая логика (`src/lib.ts`: `diagnose`, `diskState`, `humanBytes`, `expiry`, `ago`)
+  под тестами; интерфейс только показывает её результат.
+
 ## 9. Нативные приложения
 
 - **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`

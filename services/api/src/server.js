@@ -47,6 +47,13 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const WEB_DIST = path.join(ROOT, 'apps', 'web', 'dist');
+/**
+ * Панель администрирования — отдельное приложение (`apps/console`). Её статика
+ * лежит рядом с веб-сборкой и отдаётся по `/admin`: этот же адрес указывают как
+ * `redirect_url` для мини-аппа Telegram, поэтому панель обязана открываться с
+ * самого сервера, а не только из окна Windows/APK.
+ */
+const CONSOLE_DIST = path.join(ROOT, 'apps', 'console', 'dist');
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_UPLOAD = 500 * 1024 * 1024;
@@ -1616,6 +1623,72 @@ async function serveShare(req, res, url) {
 /* --------------------------------- static --------------------------------- */
 
 
+/**
+ * Панель администрирования (`/admin`): та же сборка, что в APK и Windows-окне.
+ *
+ * Отдаём её с сервера, потому что этот адрес:
+ *  - открывают с телефона в Wi-Fi («что с сервером?»);
+ *  - указывают как `redirect_url` мини-аппа Telegram (он обязан быть HTTPS);
+ *  - и просто не требуют установки, когда нужно проверить диск или ссылки.
+ *
+ * Если панель не собрана, честно говорим об этом, а не отдаём 404 из веб-приложения.
+ */
+function serveConsole(req, res, url) {
+  const index = path.join(CONSOLE_DIST, 'index.html');
+  if (!existsSync(index)) {
+    const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Панель не собрана</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07070a;color:#f4f4f8;
+font-family:system-ui,sans-serif;padding:24px}div{max-width:460px;line-height:1.6}p{color:#9a9aab}
+code{background:#17171f;padding:2px 6px;border-radius:6px}</style></head><body><div>
+<strong>Панель администрирования не собрана</strong>
+<p>Соберите её командой <code>npm run build:console</code> (или <code>npm --prefix apps/console run build</code>)
+и перезапустите сервер. Панель — отдельное приложение для Windows и Android; в браузере она
+доступна по этому же адресу.</p>
+<p>API и библиотека при этом работают: <a style="color:#ff5a1f" href="/">открыть Vision Audio</a>.</p>
+</div></body></html>`;
+    res.writeHead(503, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Length': Buffer.byteLength(html),
+    });
+    return res.end(html);
+  }
+
+  // Всё, что не файл, — это SPA-роут панели. Но под /admin/assets/ файлов быть
+  // обязано: иначе опечатка в имени отдавала бы HTML со статусом 200 и ошибка
+  // «панель не грузится» выглядела бы как «всё хорошо».
+  const isAsset = url.pathname.startsWith('/admin/assets/');
+  const relative = url.pathname.replace(/^\/admin\/?/, '');
+  const safe = path.normalize(relative).replace(/^(\.\.[/\\])+/, '');
+  const file = safe && !safe.endsWith('/') ? path.join(CONSOLE_DIST, safe) : index;
+
+  if (safe && existsSync(file) && statSync(file).isFile()) {
+    const ext = path.extname(file).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Content-Length': statSync(file).size,
+      // у панели хешированных имён нет, поэтому кэш короткий и с проверкой
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'private, max-age=300',
+    });
+    return createReadStream(file).pipe(res);
+  }
+
+  if (isAsset) {
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ error: { code: 'not_found', message: 'Нет такого файла панели.' } }));
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    // панель ходит в API того же origin — внешние запросы ей не нужны
+    'Content-Security-Policy': SECURITY_TXT,
+    'X-Robots-Tag': 'noindex',
+  });
+  return createReadStream(index).pipe(res);
+}
+
 function serveStatic(req, res, url) {
   let pathname;
   try {
@@ -1731,6 +1804,9 @@ const server = createServer(async (req, res) => {
       const internal = versionedPath(url.pathname);
       const target = internal === url.pathname ? url : new URL(`${internal}${url.search}`, 'http://internal');
       return await handleApi(req, res, target);
+    }
+    if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
+      return serveConsole(req, res, url);
     }
     return serveStatic(req, res, url);
   } catch (error) {

@@ -47,7 +47,8 @@ Web-версия умеет работать **полностью в брауз�
 | API | Node 22 (`node:http` + `node:sqlite`) | ✅ v0.14.0: FTS5, подписанные медиа-URL, теги/обложки, дедуп, миграции, `/metrics`, OpenAPI, закладки SoundCloud, транскодинг opus/aac + HLS, **трекер реплик** (`blobs`/`blob_seeds`, `/seed`, репликация), **приватные ссылки** (`/s/:token`), **комментарии к секундам** (`/s/:token/comments`) |
 | Android (сервер) | Termux + Node 22 + ffmpeg | ✅ v0.6.1: экономный профиль, автозапуск, доступ через Tailscale — `docs/TERMUX.md` |
 | Android / iOS (приложение) | React Native (Expo 54) | ✅ v0.4.0: вход с любым адресом сервера, библиотека, плейлисты, плеер с фоном, офлайн-копии по `sha256`, пометка «нет источника», копия = реплика в трекере; **готовый APK в CI** — `docs/ANDROID.md`. Экран блокировки — dev build |
-| Windows / Linux | Tauri 2 | ✅ v0.2.0: трей с управлением плеером, сворачивание в трей, глобальные медиа-клавиши, CI-сборка `.deb`/`.AppImage` — `docs/DESKTOP.md`. Windows-джоба и подпись — дальше |
+| Windows / Android (панель) | Tauri 2 + React | ✅ v0.1.0: **Vision Server** — отдельное приложение для запуска/эксплуатации: подключение к серверу, диагностика (диск, миграции, ffmpeg, файлы без источника), ссылки (перевыпуск/отзыв), библиотека; та же панель отдаётся сервером по `/admin` — `apps/console/README.md` |
+| Windows / Linux (плеер) | Tauri 2 | ✅ v0.2.0: трей с управлением плеером, сворачивание в трей, глобальные медиа-клавиши, CI-сборка `.deb`/`.AppImage` — `docs/DESKTOP.md`. Windows-джоба и подпись — дальше |
 | Хранилище | трекер реплик + сиды | ✅ v0.10.1: файлы живут на устройствах, сервер — реестр; `/api/tracks/:id/download`, `/seed/:hash`, репликация с проверкой SHA-256, экран «Источники файла» с ручным управлением копиями; офлайн-копии адресуются `sha256` — `docs/DISTRIBUTED.md` |
 
 ## Быстрый старт
@@ -77,11 +78,11 @@ npm run dev              # Vite на :5173, проксирует /api
 Тесты API:
 
 ```bash
-npm test                 # 68 контрактных тестов API: auth, upload+теги, дедуп, FTS, media, range,
+npm test                 # 74 контрактных теста API: auth, upload+теги, дедуп, FTS, media, range,
                          # history, metrics, v1/OpenAPI, трекер реплик, приватные ссылки,
-                         # комментарии к секундам
-npm run test:local       # 52 клиентских теста: локальный режим (IndexedDB), zip, офлайн-кэш,
-                         # геометрия волны и очередь в мобильном приложении
+                         # комментарии к секундам, отдача панели /admin
+npm run test:local       # 60 клиентских тестов: локальный режим (IndexedDB), zip, офлайн-кэш,
+                         # геометрия волны и очередь в мобильном приложении, диагностика панели
 npm run test:all         # всё вместе
 ```
 
@@ -90,7 +91,8 @@ npm run test:all         # всё вместе
 ```
 apps/web          SPA: библиотека, плеер, загрузка (React + Vite)
 apps/mobile       Expo-приложение Android/iOS (React Native)
-apps/desktop      Tauri 2 оболочка Windows/Linux
+apps/desktop      Tauri 2 оболочка Windows/Linux (плеер)
+apps/console      Tauri 2: Vision Server — запуск и админка (Windows + Android), отдаётся по /admin
 packages/shared   общие типы + HTTP-клиент + утилиты (используются всеми клиентами)
 services/api      API, SQLite, стриминг, загрузка
 docs/             роли, продукт, архитектура, API, roadmap, runbook, ADR

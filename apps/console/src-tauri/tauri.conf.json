@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Vision Server",
+  "version": "0.1.0",
+  "identifier": "app.vision.server",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../ run dev",
+    "devUrl": "http://localhost:5180",
+    "beforeBuildCommand": "npm --prefix ../ run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Vision Server",
+        "width": 900,
+        "height": 860,
+        "minWidth": 380,
+        "minHeight": 560,
+        "backgroundColor": "#07070A",
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http: https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
+    "shortDescription": "Запуск сервера и админка Vision Audio",
+    "longDescription": "Vision Server: подключение к домашнему серверу Vision Audio, диагностика, ссылки и библиотека — с Windows-ПК или Android-телефона.",
+    "android": {
+      "minSdkVersion": 24
+    }
+  }
+}
