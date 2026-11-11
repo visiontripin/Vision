@@ -51,8 +51,7 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
-    },
-    "createUpdaterArtifacts": true
+    }
   },
   "plugins": {
     "updater": {
@@ -61,8 +60,7 @@
       ],
       "windows": {
         "installMode": "passive"
-      },
-      "pubkey": ""
+      }
     }
   }
 }

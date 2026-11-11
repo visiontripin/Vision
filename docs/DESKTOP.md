@@ -120,6 +120,7 @@ git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
 | Проверка и загрузка | `apps/web/src/updates.ts` (чистая логика) + `components/UpdateBanner.tsx` |
 | Команды Rust | `updater_check`, `updater_install` в `apps/desktop/src-tauri/src/main.rs` |
 | Манифест | `releases/latest/download/latest.json`, поле `updater.endpoints` в `tauri.conf.json` |
+| Включение подписи | `scripts/enable-updater-signing.mjs` (шаг CI, если есть секреты) |
 | Публикация | `.github/workflows/desktop.yml`, шаг «Манифест обновлений» на теге `desktop-v*` |
 
 **Манифест** (формат Tauri updater 2):
@@ -140,11 +141,27 @@ git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
 понимает (`parseManifest` возвращает `null`), а не падает.
 
 **Подпись.** Tauri требует, чтобы обновление было подписано ключом из
-`TAURI_SIGNING_PRIVATE_KEY`; публичная часть лежит в `tauri.conf.json`
-(`plugins.updater.pubkey`). Без подписи обновление отклоняется самим Tauri — это
-правильное поведение, поэтому в репозитории нет «отключённой проверки».
-Секреты (ключ, пароль ключа, сертификат Windows) живут только в GitHub Secrets;
-в коде и документации — имена переменных, не значения.
+`TAURI_SIGNING_PRIVATE_KEY`; публичная часть — `plugins.updater.pubkey`. Без подписи
+обновление отклоняется самим Tauri, и это правильное поведение: «отключённой проверки»
+в репозитории нет.
+
+Практическое следствие: если в `tauri.conf.json` включить `createUpdaterArtifacts`, а
+`pubkey` оставить пустой, **`tauri build` падает** — в том числе на PR, где секретов нет.
+Поэтому конфиг в репозитории безобиден (ни артефактов, ни ключа), а включает подпись шаг
+CI:
+
+```bash
+node scripts/enable-updater-signing.mjs     # читает env, правит tauri.conf.json на месте
+```
+
+| Условие | Что делает шаг |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` пуст | ничего, код 0 — собираются обычные установщики без обновлений |
+| ключ есть, `TAURI_UPDATER_PUBKEY` пуст | код 1: подписывать ключом без публичной части бессмысленно |
+| оба есть | `createUpdaterArtifacts: true` + `pubkey`, сборка выпускает `.sig` и манифест |
+
+Секреты (ключ подписи, его пароль, публичный ключ, сертификат Windows) живут только в
+GitHub Secrets; в коде и документации — имена переменных, не значения.
 
 **Authenticode (Windows).** Установщик подписывается сертификатом из
 `WINDOWS_CERTIFICATE` (base64 `.pfx`) и `WINDOWS_CERTIFICATE_PASSWORD`. Пока секретов

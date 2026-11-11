@@ -30,14 +30,18 @@
   `WINDOWS_CERTIFICATE`), загрузка `*.AppImage.tar.gz`/`*.sig`, публикация манифеста на
   теге `desktop-v*`. Linux и Windows собираются на разных машинах, поэтому манифест не
   перетирается: Windows скачивает текущий и добавляет `windows-x86_64`.
-- `tauri.conf.json`: `bundle.createUpdaterArtifacts`, `plugins.updater` с endpoint
+- `tauri.conf.json`: `plugins.updater` с endpoint
   `https://github.com/visiontripin/Vision/releases/latest/download/latest.json` и
-  `windows.installMode: "passive"`. `pubkey` — заглушка, заполняется публичным ключом из
-  секрета; без него Tauri отклоняет обновление, и это правильное поведение.
+  `windows.installMode: "passive"`. `createUpdaterArtifacts` **и** `pubkey` в репозитории
+  не выставлены намеренно: с пустым ключом `tauri build` падает, в том числе на PR без
+  секретов. Включает их шаг CI `scripts/enable-updater-signing.mjs` — только когда
+  `TAURI_SIGNING_PRIVATE_KEY` и `TAURI_UPDATER_PUBKEY` заданы; ключ без публичной части
+  даёт код 1, а не релиз, который не обновится.
 - Версия десктопа 0.3.0.
 
-**Тесты.** 7 новых клиентских (`updates.test.ts`) и 5 на скрипт манифеста
-(`npm run test:scripts`, добавлен в CI). Итого 99 контрактных + 90 клиентских + 5 скриптовых.
+**Тесты.** 7 новых клиентских (`updates.test.ts`) и 8 скриптовых — манифест и включение
+подписи (`npm run test:scripts`, добавлено в CI). Итого 99 контрактных + 90 клиентских +
+8 скриптовых.
 
 ## 0.18.0 — 2026-11-11
 

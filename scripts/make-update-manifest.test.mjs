@@ -97,3 +97,39 @@ test('заметки из CHANGELOG: только первый абзац и о�
   assert.equal(notesFromChangelog(''), '');
   assert.equal(notesFromChangelog('без заголовков'), '');
 });
+
+/**
+ * Подпись включается только при наличии ключа (см. `enable-updater-signing.mjs`).
+ * На PR секретов нет — и сборка не должна падать из-за пустого `pubkey`.
+ */
+import { applyUpdaterSigning } from './enable-updater-signing.mjs';
+
+const baseConfig = {
+  version: '0.3.0',
+  bundle: { targets: ['deb', 'msi'] },
+  plugins: { updater: { endpoints: ['https://example.com/latest.json'] } },
+};
+
+test('подпись: без ключа конфиг не меняется', () => {
+  assert.equal(applyUpdaterSigning(baseConfig, {}), null);
+  assert.equal(applyUpdaterSigning(baseConfig, { privateKey: '   ' }), null);
+  // вход не мутирован — иначе последующие шаги сборки увидели бы чужие правки
+  assert.equal(baseConfig.bundle.createUpdaterArtifacts, undefined);
+});
+
+test('подпись: с ключом включаются артефакты и публичный ключ', () => {
+  const next = applyUpdaterSigning(baseConfig, { privateKey: 'secret', pubkey: 'abc123' });
+  assert.equal(next.bundle.createUpdaterArtifacts, true);
+  assert.equal(next.plugins.updater.pubkey, 'abc123');
+  // то, что не относится к подписи, сохраняется
+  assert.deepEqual(next.plugins.updater.endpoints, ['https://example.com/latest.json']);
+  assert.deepEqual(next.bundle.targets, ['deb', 'msi']);
+  assert.equal(baseConfig.plugins.updater.pubkey, undefined);
+});
+
+test('подпись: ключ без публичной части — ошибка, а не «тихий» релиз', () => {
+  assert.throws(
+    () => applyUpdaterSigning(baseConfig, { privateKey: 'secret', pubkey: '' }),
+    /TAURI_UPDATER_PUBKEY/
+  );
+});

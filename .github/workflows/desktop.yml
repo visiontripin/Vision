@@ -35,7 +35,7 @@ env:
 
 jobs:
   linux:
-    name: Linux (.deb + .AppImage)
+    name: Десктоп Linux (.deb + .AppImage)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -63,10 +63,16 @@ jobs:
           npm ci
           npm --prefix apps/desktop install --no-audit --no-fund
 
+      # Подпись включается только при наличии секретов: `pubkey: ""` в
+      # репозитории + `createUpdaterArtifacts` валят `tauri build` на PR.
+      - name: Подпись обновлений (если есть ключ)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+        run: node scripts/enable-updater-signing.mjs
+
       - name: Сборка (cargo + tauri bundler)
         env:
-          # подпись артефактов обновления: без ключа Tauri откажется собирать
-          # updater-артефакты, поэтому на PR (без секретов) они не создаются
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
@@ -139,7 +145,7 @@ jobs:
           echo "::notice::latest.json опубликован для ${version}"
 
   windows:
-    name: Windows (.msi + .exe)
+    name: Десктоп Windows (.msi + .exe)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -155,6 +161,13 @@ jobs:
         run: |
           npm ci
           npm --prefix apps/desktop install --no-audit --no-fund
+      - name: Подпись обновлений (если есть ключ)
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+        run: node scripts/enable-updater-signing.mjs
+
       - name: Сборка установщика
         shell: bash
         env:
