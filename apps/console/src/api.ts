@@ -58,6 +58,35 @@ export type AuditEntry = {
 };
 
 /**
+ * Резервные копии (D5). Панель показывает не «файл есть», а «проверка прошла»:
+ * красный результат проверки — самое важное, что она может сообщить.
+ */
+export type BackupArchive = { name: string; bytes: number; createdAt: string };
+
+export type BackupStatus = {
+  dir: string;
+  count: number;
+  totalBytes: number;
+  last: BackupArchive | null;
+  ageDays: number | null;
+  keep: number;
+  level: 'ok' | 'warn';
+  hint: string | null;
+  backups: BackupArchive[];
+  schedule: { hours: number; running: boolean; lastRun: { at: string; ok: boolean } | null };
+};
+
+export type BackupResult = {
+  ok: boolean;
+  name: string;
+  archive: string;
+  bytes: number;
+  createdAt: string;
+  verification: { ok: boolean; problems: string[]; counts: Record<string, number | null>; checkedFiles: number; missingFiles: string[] };
+  pruned: string[];
+};
+
+/**
  * Дашборд прослушиваний (D1). Панель показывает его там же, где диагностику:
  * «сервер жив» и «что слушают» — два вопроса одного экрана. Адресов нет,
  * только короткие отпечатки, поэтому тип повторяет сервер один в один.
@@ -305,6 +334,21 @@ export class ConsoleClient {
     if (params.actor) search.set('actor', params.actor);
     if (params.shareId) search.set('shareId', params.shareId);
     return this.request<AuditPage>(`/api/audit?${search}`);
+  }
+
+  backups() {
+    return this.request<BackupStatus>('/api/backups');
+  }
+
+  createBackup() {
+    return this.request<BackupResult>('/api/backups', { method: 'POST' });
+  }
+
+  verifyBackup(name?: string) {
+    return this.request<{ ok: boolean; problems: string[]; counts: Record<string, number | null>; checkedFiles: number; archive: string; checkedAt: string }>(
+      '/api/backups/verify',
+      { method: 'POST', body: JSON.stringify({ name }) }
+    );
   }
 
   dashboard(days = 30) {

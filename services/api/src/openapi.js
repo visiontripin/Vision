@@ -26,6 +26,7 @@ export const OPENAPI = {
     { name: 'smart-playlists' },
     { name: 'personal' },
     { name: 'dashboard' },
+    { name: 'backups' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
@@ -173,6 +174,47 @@ export const OPENAPI = {
           createdAt: { type: 'string', format: 'date-time' },
           trackCount: { type: 'integer' },
           duration: { type: 'number' },
+        },
+      },
+      BackupVerification: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean' },
+          problems: { type: 'array', items: { type: 'string' } },
+          counts: { type: 'object', additionalProperties: { type: ['integer', 'null'] } },
+          checkedFiles: { type: 'integer' },
+          missingFiles: { type: 'array', items: { type: 'string' } },
+          archive: { type: 'string' },
+          checkedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      BackupStatus: {
+        type: 'object',
+        properties: {
+          dir: { type: 'string' },
+          count: { type: 'integer' },
+          totalBytes: { type: 'integer' },
+          last: {
+            type: ['object', 'null'],
+            properties: {
+              name: { type: 'string' },
+              bytes: { type: 'integer' },
+              createdAt: { type: 'string', format: 'date-time' },
+            },
+          },
+          ageDays: { type: ['number', 'null'] },
+          keep: { type: 'integer' },
+          level: { type: 'string', enum: ['ok', 'warn'] },
+          hint: { type: ['string', 'null'] },
+          backups: { type: 'array', items: { type: 'object' } },
+          schedule: {
+            type: 'object',
+            properties: {
+              hours: { type: 'integer' },
+              running: { type: 'boolean' },
+              lastRun: { type: ['object', 'null'] },
+            },
+          },
         },
       },
       Dashboard: {
@@ -1286,6 +1328,56 @@ export const OPENAPI = {
         tags: ['history'],
         summary: 'Очистить историю',
         responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/backups': {
+      get: {
+        tags: ['backups'],
+        summary: 'Состояние резервных копий (D5)',
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/BackupStatus' } } },
+          },
+          401: { description: 'Только владелец' },
+        },
+      },
+      post: {
+        tags: ['backups'],
+        summary: 'Создать копию и сразу проверить её',
+        description: 'Красная проверка не ошибка запроса: архив создан, об этом говорит `ok: false`.',
+        responses: {
+          200: {
+            description: 'Копия создана (проверка внутри)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/BackupVerification' } } },
+          },
+          401: { description: 'Только владелец' },
+          405: { description: 'Только GET/POST' },
+        },
+      },
+    },
+    '/backups/verify': {
+      post: {
+        tags: ['backups'],
+        summary: 'Проверить восстановление из архива',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { name: { type: 'string', description: 'По умолчанию — последняя копия' } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Результат проверки',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/BackupVerification' } } },
+          },
+          400: { description: 'Имя не похоже на копию (параметр не путь)' },
+          409: { description: 'Копий ещё нет' },
+        },
       },
     },
     '/dashboard': {

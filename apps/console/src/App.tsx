@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ConsoleClient, ConsoleError, baseHint, loadSession, normalizeBase, saveSession,
-  type AuditPage, type Dashboard, type Health,
+  type AuditPage, type BackupResult, type BackupStatus, type Dashboard, type Health,
 } from './api';
 import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady, playsChart } from './lib';
 
@@ -17,7 +17,7 @@ import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isR
  * Поэтому экран один: «где сервер» → «пароль» → «как дела», без привязки к платформе.
  */
 
-type Tab = 'overview' | 'plays' | 'shares' | 'library' | 'audit';
+type Tab = 'overview' | 'plays' | 'shares' | 'library' | 'backups' | 'audit';
 
 /** Фильтры журнала: «всё» и три группы, которые чаще всего нужны при разборе. */
 const AUDIT_FILTERS: { value: string; label: string }[] = [
@@ -38,6 +38,11 @@ export function App() {
   const [tracker, setTracker] = useState<Awaited<ReturnType<ConsoleClient['tracker']>> | null>(null);
   const [shares, setShares] = useState<Awaited<ReturnType<ConsoleClient['shares']>>>([]);
   const [tab, setTab] = useState<Tab>('overview');
+  const [backups, setBackups] = useState<BackupStatus | null>(null);
+  const [backupRun, setBackupRun] = useState<BackupResult | null>(null);
+  const [backupCheck, setBackupCheck] = useState<
+    { ok: boolean; problems: string[]; counts: Record<string, number | null>; checkedFiles: number; archive: string } | null
+  >(null);
   const [plays, setPlays] = useState<Dashboard | null>(null);
   const [playsDays, setPlaysDays] = useState(30);
   const [audit, setAudit] = useState<AuditPage | null>(null);
@@ -138,6 +143,51 @@ export function App() {
   }, [connected]);
 
   /** Журнал грузится отдельно: он нужен только на своей вкладке и бывает длинным. */
+  /** Копии: статус при входе на вкладку, создание и проверка — по кнопке. */
+  const loadBackups = useCallback(async () => {
+    setBusy('backups');
+    try {
+      setBackups(await client.backups());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось получить статус копий');
+      setBackups(null);
+    } finally {
+      setBusy(null);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (connected && tab === 'backups' && backups === null) void loadBackups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, tab]);
+
+  const makeBackup = async () => {
+    setBusy('backup');
+    setError(null);
+    setBackupCheck(null);
+    try {
+      const result = await client.createBackup();
+      setBackupRun(result);
+      await loadBackups();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось создать копию');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const checkBackup = async (name?: string) => {
+    setBusy('verify');
+    setError(null);
+    try {
+      setBackupCheck(await client.verifyBackup(name));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось проверить восстановление');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   /**
    * Дашборд прослушиваний (D1) грузится по входу на вкладку и при смене окна:
    * тянуть его при каждом обновлении диагностики незачем — это отдельный вопрос
@@ -350,6 +400,7 @@ export function App() {
                   ['plays', 'Прослушивания'],
                   ['shares', `Ссылки${shares.length ? ` (${shares.length})` : ''}`],
                   ['library', 'Библиотека'],
+                  ['backups', 'Копии'],
                   ['audit', 'Журнал'],
                 ] as [Tab, string][]
               ).map(([id, label]) => (
@@ -554,6 +605,116 @@ export function App() {
                   {tracker
                     ? `файлов ${tracker.blobs}, без источника ${tracker.noSource}, устройств ${tracker.devices}`
                     : 'трекер реплик недоступен'}
+                </p>
+              </div>
+            )}
+
+            {tab === 'backups' && (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div className="row row--between">
+                  <span className="muted">
+                    {backups
+                      ? `${backups.count} из ${backups.keep} · ${humanBytes(backups.totalBytes)}`
+                      : 'Читаю статус…'}
+                  </span>
+                  <div className="row" style={{ gap: 6 }}>
+                    <button
+                      type="button"
+                      className="btn btn--small btn--ghost"
+                      disabled={busy === 'verify' || !backups?.last}
+                      onClick={() => void checkBackup()}
+                    >
+                      {busy === 'verify' ? 'Проверяю…' : 'Проверить восстановление'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      disabled={busy === 'backup'}
+                      onClick={() => void makeBackup()}
+                    >
+                      {busy === 'backup' ? 'Копирую…' : 'Сделать копию'}
+                    </button>
+                  </div>
+                </div>
+
+                {backups && (
+                  <div className="check">
+                    <span className={`check__dot check__dot--${backups.level === 'ok' ? 'ok' : 'warn'}`} />
+                    <div>
+                      <div className="check__title">
+                        {backups.last
+                          ? `Последняя копия: ${ago(backups.last.createdAt)}, ${humanBytes(backups.last.bytes)}`
+                          : 'Резервных копий ещё нет'}
+                      </div>
+                      <div className="check__detail">
+                        {backups.hint ?? `Хранится до ${backups.keep} копий. Расписание: ${
+                          backups.schedule.running ? `каждые ${backups.schedule.hours} ч` : 'выключено (BACKUP_EVERY_HOURS=0)'
+                        }.`}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {backupRun && (
+                  <div className="check">
+                    <span className={`check__dot check__dot--${backupRun.ok ? 'ok' : 'fail'}`} />
+                    <div>
+                      <div className="check__title">
+                        {backupRun.ok ? 'Копия создана и проверена' : 'Копия создана, проверка не прошла'}
+                      </div>
+                      <div className="check__detail">
+                        {backupRun.name} · треков {backupRun.verification.counts.tracks ?? 0},
+                        файлов проверено {backupRun.verification.checkedFiles}
+                        {backupRun.pruned.length ? ` · удалено старых ${backupRun.pruned.length}` : ''}
+                        {backupRun.verification.problems.length
+                          ? ` · ${backupRun.verification.problems.join('; ')}`
+                          : ''}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {backupCheck && (
+                  <div className="check">
+                    <span className={`check__dot check__dot--${backupCheck.ok ? 'ok' : 'fail'}`} />
+                    <div>
+                      <div className="check__title">
+                        {backupCheck.ok ? 'Из архива можно восстановиться' : 'Архив не восстановить'}
+                      </div>
+                      <div className="check__detail">
+                        {backupCheck.archive.split('/').pop()} · треков {backupCheck.counts.tracks ?? 0},
+                        файлов {backupCheck.checkedFiles}
+                        {backupCheck.problems.length ? ` · ${backupCheck.problems.join('; ')}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {(backups?.backups ?? []).map((item) => (
+                  <div key={item.name} className="link-row">
+                    <div className="row row--between">
+                      <span className="link-row__title">{item.name}</span>
+                      <span className="badge">{humanBytes(item.bytes)}</span>
+                    </div>
+                    <div className="row row--between">
+                      <span className="muted">{ago(item.createdAt)}</span>
+                      <button
+                        type="button"
+                        className="btn btn--small btn--ghost"
+                        disabled={busy === 'verify'}
+                        onClick={() => void checkBackup(item.name)}
+                      >
+                        Проверить
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <p className="hint">
+                  Копия — снимок живой базы (VACUUM INTO) плюс медиа и обложки. Проверка открывает
+                  снимок и сверяет целостность, число треков и наличие файлов: архив, который не
+                  проверили, — это надежда, а не резервная копия. Каталог:{' '}
+                  <span className="code">{backups?.dir ?? '…'}</span>
                 </p>
               </div>
             )}

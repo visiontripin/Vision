@@ -107,6 +107,45 @@ export type PersonalFeed = {
   hint: string | null;
 };
 
+/**
+ * Резервная копия (D5). Важна не ссылка на архив, а ответ на вопрос «из этого
+ * можно восстановиться?» — поэтому рядом с именем всегда есть результат проверки.
+ */
+export type BackupArchive = {
+  name: string;
+  bytes: number;
+  createdAt: string;
+};
+
+export type BackupStatus = {
+  dir: string;
+  count: number;
+  totalBytes: number;
+  last: BackupArchive | null;
+  ageDays: number | null;
+  keep: number;
+  level: 'ok' | 'warn';
+  hint: string | null;
+  backups: BackupArchive[];
+  schedule: { hours: number; running: boolean; lastRun: { at: string; ok: boolean } | null };
+};
+
+export type BackupResult = {
+  ok: boolean;
+  name: string;
+  archive: string;
+  bytes: number;
+  createdAt: string;
+  verification: {
+    ok: boolean;
+    problems: string[];
+    counts: Record<string, number | null>;
+    checkedFiles: number;
+    missingFiles: string[];
+  };
+  pruned: string[];
+};
+
 /** День графика дашборда (D1): нули тоже приходят, чтобы не было «дыр». */
 export type DashboardDay = {
   day: string;
@@ -767,6 +806,22 @@ export function createClient(options: ClientOptions = {}) {
 
     stats() {
       return request<Stats>('/api/stats');
+    },
+
+    /** Резервные копии: статус и создание (D5). */
+    backups() {
+      return request<BackupStatus>('/api/backups');
+    },
+
+    createBackup() {
+      return request<BackupResult>('/api/backups', { method: 'POST' });
+    },
+
+    verifyBackup(name?: string) {
+      return request<BackupResult['verification'] & { archive: string; checkedAt: string }>(
+        '/api/backups/verify',
+        { method: 'POST', body: JSON.stringify({ name }) }
+      );
     },
 
     /** Дашборд владельца (D1): прослушивания по дням, топ, источники. */

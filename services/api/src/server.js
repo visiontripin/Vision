@@ -49,6 +49,9 @@ import {
   auditSummary, listAudit, pruneAudit,
 } from './audit.js';
 import { dashboard, logPlayback } from './dashboard.js';
+import {
+  backupScheduleState, backupStatus, createBackup, startBackupSchedule, verifyArchive,
+} from './backup.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -857,6 +860,52 @@ async function handleApi(req, res, url) {
     const removed = pruneAudit({ keepDays: Number(url.searchParams.get('keepDays') || AUDIT_RETENTION_DAYS) });
     audit('audit.prune', { details: removed, requestId: req.visionRequestId });
     return json(res, 200, removed);
+  }
+
+  /**
+   * Резервные копии (D5). Не «скачать архив кнопкой», а «знать, что он есть и
+   * что из него можно восстановиться»: поэтому статус, проверка восстановления
+   * и создание — отдельные ручки, а не одна на всё.
+   */
+  if (pathname === '/api/backups' && method === 'GET') {
+    return json(res, 200, { ...backupStatus(), schedule: backupScheduleState() }, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/backups' && method !== 'GET' && method !== 'POST') {
+    return fail(res, 405, 'method_not_allowed', 'GET — статус, POST — создать копию.');
+  }
+
+  if (pathname === '/api/backups' && method === 'POST') {
+    const result = await createBackup();
+    audit('backup.create', {
+      details: { name: result.name, bytes: result.bytes, tracks: result.verification.counts.tracks, ok: result.ok },
+      requestId: req.visionRequestId,
+    });
+    // 200, а не 201: копия — операция, а не сущность с адресом. Красная проверка
+    // не ошибка запроса: архив создан, и об этом надо сказать данными (`ok: false`).
+    return json(res, 200, result, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/backups/verify' && method === 'POST') {
+    const body = await readJson(req).catch(() => ({}));
+    const requested = String(body.name || '');
+    const status = backupStatus();
+    const name = requested || status.last?.name;
+    if (!name) return fail(res, 409, 'no_backups', 'Резервных копий ещё нет.');
+    // имя принимаем только своё: `../` в параметре — это чтение чужого файла
+    if (!/^vision-[0-9_-]+$/.test(name)) {
+      return fail(res, 400, 'invalid_name', 'Ожидалось имя вида vision-2026-11-11_1200.');
+    }
+    const result = await verifyArchive(`${status.dir}/${name}.tar.gz`);
+    audit('backup.verify', {
+      details: { name, ok: result.ok, problems: result.problems },
+      requestId: req.visionRequestId,
+    });
+    return json(res, 200, result, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/backups/verify' && method !== 'POST') {
+    return fail(res, 405, 'method_not_allowed', 'Только POST.');
   }
 
   /**
@@ -2316,6 +2365,9 @@ server.listen(PORT, HOST, () => {
   } catch {
     /* ретеншен не должен мешать старту */
   }
+  // Автобэкап по таймеру: на Windows и Android/Termux cron нет, а «копия молча
+  // перестала делаться» — худший из отказов. BACKUP_EVERY_HOURS=0 выключает.
+  const backups = startBackupSchedule();
   log('info', 'server started', {
     host: HOST,
     port: PORT,
@@ -2324,6 +2376,7 @@ server.listen(PORT, HOST, () => {
     storage: STORAGE_MODE,
     seeding: SEED_ENABLED,
     device: DEVICE_ID,
+    backupHours: backups.running ? backups.hours : 0,
   });
 
   // Трекер знает про этот узел, только пока идёт heartbeat: раз в минуту.

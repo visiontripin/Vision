@@ -51,6 +51,8 @@ export const AUDIT_ACTIONS = {
   'migration.apply': { label: 'применена миграция', actor: 'system', target: 'system' },
   'server.start': { label: 'сервер запущен', actor: 'system', target: 'system' },
   'audit.prune': { label: 'журнал очищен', actor: 'owner', target: 'system' },
+  'backup.create': { label: 'создана резервная копия', actor: 'owner', target: 'system' },
+  'backup.verify': { label: 'проверено восстановление', actor: 'owner', target: 'system' },
 };
 
 export const AUDIT_ACTOR_LABELS = {
