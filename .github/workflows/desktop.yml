@@ -120,6 +120,7 @@ jobs:
           tail -n 12 /tmp/desktop-build.log
 
       - name: Проверка артефактов
+        if: steps.deps.outputs.ok == 'true'
         run: |
           set -uo pipefail
           ls -lh apps/desktop/src-tauri/target/release/bundle/deb/ || true
