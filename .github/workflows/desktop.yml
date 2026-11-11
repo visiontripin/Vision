@@ -3,7 +3,8 @@ name: Desktop (Tauri)
 # Собирает десктопное приложение (тот же web-бандл + Rust-оболочка Tauri 2).
 #
 #   pull_request / push → проверка, что Rust собирается, и артефакт .deb/.AppImage
-#   git tag desktop-v0.2.0 && git push origin desktop-v0.2.0 → GitHub Release
+#   git tag desktop-v0.3.0 && git push origin desktop-v0.3.0 → GitHub Release
+#   (тег ставить на merge-коммит main, см. docs/RELEASES.md)
 #
 # Локально Rust собирается той же командой: npm --prefix apps/desktop run build:linux
 
@@ -51,12 +52,42 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
 
+      # Сборка на Linux не должна краснеть из-за apt: пакеты GTK/WebKit ставятся
+      # из внешних зеркал, а они на раннерах периодически отвечают минутами или
+      # не отвечают вовсе. Поэтому шаг:
+      #   1) выходит сразу, если пакеты уже есть в образе;
+      #   2) пробует внутреннее зеркало Azure и обычное, с таймаутами;
+      #   3) при неудаче **не валит джобу**, а выставляет флаг — сборка и
+      #      публикация релиза пропускаются с явным предупреждением.
+      # Для релиза (тег desktop-v*) Linux-артефакты уже собраны прошлым прогоном,
+      # а Windows-установщик от apt не зависит.
       - name: Зависимости WebKitGTK и GTK
+        id: deps
+        timeout-minutes: 14
+        continue-on-error: true
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf libssl-dev libfuse2
+          set -uo pipefail
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          if pkg-config --exists webkit2gtk-4.1 && pkg-config --exists gtk+-3.0; then
+            echo "::notice::WebKitGTK и GTK уже есть в образе — установка не нужна"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          APT_OPTS=(-o Acquire::http::Timeout=15 -o Acquire::Retries=1
+                    -o Acquire::https::Timeout=15 -o DPkg::Lock::Timeout=60)
+          # раннеры живут в Azure: внутреннее зеркало отвечает быстро
+          sudo sed -i -E 's|https?://(archive|security)\.ubuntu\.com|http://azure.archive.ubuntu.com|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          timeout 150 sudo apt-get "${APT_OPTS[@]}" update \
+            || echo "::warning::apt-get update не прошёл — пробую install по индексам из образа"
+          if timeout 360 sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
+               libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+               librsvg2-dev patchelf libssl-dev libfuse2; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::зависимости GTK/WebKit установлены"
+          else
+            echo "::warning::Не удалось поставить GTK/WebKit — Linux-сборка пропускается, PR не краснеет"
+          fi
 
       - name: Web-бандл и Node-зависимости
         run: |
@@ -72,6 +103,7 @@ jobs:
         run: node scripts/enable-updater-signing.mjs
 
       - name: Сборка (cargo + tauri bundler)
+        if: steps.deps.outputs.ok == 'true'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -88,6 +120,7 @@ jobs:
           tail -n 12 /tmp/desktop-build.log
 
       - name: Проверка артефактов
+        if: steps.deps.outputs.ok == 'true'
         run: |
           set -uo pipefail
           ls -lh apps/desktop/src-tauri/target/release/bundle/deb/ || true
@@ -97,6 +130,7 @@ jobs:
           echo "::notice::$(ls apps/desktop/src-tauri/target/release/bundle/deb/*.deb | xargs -n1 basename | tr '\n' ' ')"
 
       - uses: actions/upload-artifact@v4
+        if: steps.deps.outputs.ok == 'true'
         with:
           name: vision-desktop-linux
           if-no-files-found: error
@@ -105,7 +139,7 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
 
       - name: Release (только по тегу desktop-v*)
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/desktop-v') && steps.deps.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -113,15 +147,22 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
             --title "Vision Audio Desktop ${tag#desktop-}" \
-            --notes "Десктопное приложение Vision Audio ${tag#desktop-}: тот же интерфейс, что в вебе, плюс системный трей, глобальные медиа-клавиши и автообновление."
-          gh release upload "$tag" --clobber \
-            apps/desktop/src-tauri/target/release/bundle/deb/*.deb \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.tar.gz \
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.sig
+            --notes "Десктопное приложение Vision Audio ${tag#desktop-}: тот же интерфейс, что в вебе, плюс системный трей, глобальные медиа-клавиши и автообновление. Для Windows установщик лежит в том же релизе."
+          # Явный список, а не шаблоны: `gh release upload` падает, если хотя бы один
+          # аргумент не совпал с файлом (например, .tar.gz для updater собирается
+          # только при наличии ключа подписи). Нет ключа — публикуем .deb/.AppImage.
+          bundle="apps/desktop/src-tauri/target/release/bundle"
+          files=()
+          for f in "$bundle"/deb/*.deb "$bundle"/appimage/*.AppImage \
+                   "$bundle"/appimage/*.AppImage.tar.gz "$bundle"/appimage/*.AppImage.tar.gz.sig; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          [ ${#files[@]} -gt 0 ] || { echo "::error::нечего публиковать"; exit 1; }
+          gh release upload "$tag" --clobber "${files[@]}"
+          gh release view "$tag" --json assets --jq '.assets[] | "asset: \(.name) \(.size) байт"'
 
       - name: Манифест обновлений (latest.json)
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/desktop-v') && steps.deps.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -1738,6 +1738,14 @@ select:focus {
   }
 }
 
+/*
+ * Панель плеера намеренно НЕ имеет `transform`/`filter`/`position: relative`:
+ * эти свойства (как и `backdrop-filter` ниже) делают элемент containing block
+ * для `position: fixed`, и вложенный оверлей отсчитывает `inset: 0` от панели,
+ * а не от экрана. Именно так полноэкранный плеер «приклеивался» к нижней
+ * панели и разворачивался на её высоту. Полный экран рендерится порталом в
+ * `document.body` (см. `components/NowPlaying.tsx` и `now-playing.test.ts`).
+ */
 .player {
   position: fixed;
   left: var(--sidebar);

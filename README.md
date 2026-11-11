@@ -16,6 +16,7 @@
 🗺  план            →  docs/IMPROVEMENTS.md  (улучшения, оптимизации, дорожная карта v2)
 🔍 разбор рынка     →  docs/research/SOUNDCLOUD-TEARDOWN.md
 🚀 эксплуатация     →  docs/RUNBOOK.md
+⬇️ релизы           →  docs/RELEASES.md  (web, Windows, APK — куда и как)
 ```
 
 ## Смотреть без сервера (GitHub Pages)

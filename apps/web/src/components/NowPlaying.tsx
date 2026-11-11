@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { formatBytes, formatDuration } from '@vision/shared';
 import { api, IS_LOCAL_MODE } from '../api';
 import { ensureMedia, getDownloadUrl, getMedia, invalidateMedia } from '../media';
@@ -14,6 +15,12 @@ import { ShareModal } from './ShareModal';
 /**
  * Полноэкранный плеер (Фаза 6, UX): нажатие на нижнюю панель разворачивает экран
  * с обложкой-фоном, большой волной, перемоткой пальцем/кликом и транспортом.
+ *
+ * Рендерится **порталом в `body`** и это не стилистическая прихоть: панель плеера
+ * имеет `backdrop-filter: blur(...)`, а свойство `backdrop-filter` (как и
+ * `filter`/`transform`) делает элемент containing block для `position: fixed`.
+ * Плеер, вложенный в панель, «приклеивался» к ней и разворачивался на высоту
+ * нижней панели — на телефоне это выглядело как обрезанный снизу экран.
  *
  * Закрывается крестиком, `Esc` и свайпом вниз — как привычные мобильные плееры.
  * Состояние не дублируется: всё берётся из `usePlayer`, поэтому свёрнутая панель
@@ -99,7 +106,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
     push('Ссылка обновлена');
   };
 
-  return (
+  const content = (
     <div className="np" role="dialog" aria-modal="true" aria-label={`Плеер: ${current.title}`}>
       <div
         className="np__backdrop"
@@ -265,4 +272,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
       {shareOpen && <ShareModal target={{ kind: 'track', track: current }} onClose={() => setShareOpen(false)} />}
     </div>
   );
+
+  // Портал обязателен: см. комментарий к компоненту (backdrop-filter панели).
+  return createPortal(content, document.body);
 }
