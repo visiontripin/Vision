@@ -52,6 +52,7 @@ import { dashboard, logPlayback } from './dashboard.js';
 import {
   backupScheduleState, backupStatus, createBackup, startBackupSchedule, verifyArchive,
 } from './backup.js';
+import { boundaryOf, firstPartStream } from './multipart.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -486,6 +487,16 @@ function saveCover(trackId, cover) {
 }
 
 async function handleUpload(req, res, url) {
+  /*
+   * Телефон (H4) отправляет файл через `FormData`, то есть multipart: в React
+   * Native это единственный способ отдать файл с диска, не читая его в память.
+   * Веб отправляет тело-файл. Принимаем оба вида и дальше работаем с одним
+   * потоком байтов — так у загрузки остаётся ровно одна реализация.
+   */
+  const multipart = boundaryOf(req.headers['content-type']);
+  const part = multipart ? firstPartStream(req, req.headers['content-type']) : null;
+  const body = part ? part.stream : req;
+
   const declared = Number(req.headers['content-length'] || 0);
   if (declared && declared > MAX_UPLOAD) {
     return fail(res, 413, 'too_large', 'Файл больше 500 МБ.');
@@ -506,7 +517,7 @@ async function handleUpload(req, res, url) {
   };
 
   try {
-    for await (const chunk of req) {
+    for await (const chunk of body) {
       received += chunk.length;
 
       if (rejection) {

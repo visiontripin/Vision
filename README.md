@@ -78,7 +78,7 @@ npm run dev              # Vite на :5173, проксирует /api
 Тесты API:
 
 ```bash
-npm test                 # 160 контрактных тестов API: auth, upload+теги, дедуп, FTS, media, range,
+npm test                 # 170 контрактных тестов API: auth, upload+теги, дедуп, FTS, media, range,
                          # history, metrics, v1/OpenAPI, трекер реплик, приватные ссылки,
                          # комментарии к секундам, панель /admin, oEmbed и /embed-виджет, журнал,
                          # SPA-маршруты /share и хэш-ссылки, умные плейлисты по правилам,

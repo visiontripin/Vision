@@ -1,4 +1,4 @@
-# API v0.24.0
+# API v0.25.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -390,9 +390,14 @@ Query: `q`, `genre`, `liked=1`, `sort`, `limit` (1–2000, по умолчани
 `GET /api/tracks/:id`.
 
 ### POST /api/tracks
-Два режима по `Content-Type`:
+Три режима по `Content-Type`:
 - `audio/*`, `application/octet-stream` — загрузка файла (тело запроса), сервер сам
   становится `origin`-сидом. Метаданные — в query: `?title=&artist=&album=&genre=&duration=&peaks=`.
+- `multipart/form-data` — **то же самое, но файл приходит одной частью** (v0.25.0, H4).
+  В React Native отдать файл с диска, не читая его в память, можно только так, поэтому
+  сервер принимает оба вида и дальше работает с одним потоком байтов. Берётся первая
+  часть с файлом, остальные пропускаются; `Content-Type` части и имя файла — подсказки,
+  формат всё равно определяется по magic bytes. Ответы, лимиты и дедупликация те же.
 - `application/json` — **только метаданные** (`STORAGE_MODE=metadata`):
   `{ "hash": "sha256", "bytes": 7340032, "mime": "audio/mpeg", "title": "…",
      "artist": "…", "duration": 214, "peaks": [0.1, …],

@@ -16,6 +16,7 @@ import { TrackRow } from '../components/TrackRow';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { NowPlaying } from './NowPlaying';
 import { SettingsScreen } from './SettingsScreen';
+import { UploadScreen } from './UploadScreen';
 
 type Tab = 'tracks' | 'playlists';
 
@@ -31,6 +32,7 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>('tracks');
   const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playlist, setPlaylist] = useState<{ info: Playlist; tracks: Track[] } | null>(null);
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
@@ -128,9 +130,14 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
             <Text style={styles.iconText}>←</Text>
           </Pressable>
         ) : (
-          <Pressable onPress={() => setSettingsOpen(true)} style={styles.iconButton} accessibilityLabel="Настройки">
-            <Text style={styles.iconText}>⚙</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable onPress={() => setUploadOpen(true)} style={styles.iconButton} accessibilityLabel="Загрузить с телефона">
+              <Text style={styles.iconText}>＋</Text>
+            </Pressable>
+            <Pressable onPress={() => setSettingsOpen(true)} style={styles.iconButton} accessibilityLabel="Настройки">
+              <Text style={styles.iconText}>⚙</Text>
+            </Pressable>
+          </View>
         )}
       </View>
 
@@ -228,7 +235,7 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
               <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
             ) : (
               <Text style={styles.empty}>
-                {error ?? 'Библиотека пуста — загрузите треки через веб-версию.'}
+                {error ?? 'Библиотека пуста — загрузите треки кнопкой «＋» или через веб-версию.'}
               </Text>
             )
           }
@@ -280,6 +287,12 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
         }}
       />
 
+      <UploadScreen
+        visible={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onUploaded={reload}
+      />
+
       <SettingsScreen
         visible={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -293,6 +306,7 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 },
+  headerActions: { flexDirection: 'row', gap: 8 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headerTitle: { color: colors.text, fontSize: 28, fontWeight: '800' },
   headerSub: { color: colors.muted, fontSize: 12.5, marginTop: 3 },
