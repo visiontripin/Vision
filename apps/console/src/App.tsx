@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ConsoleClient, ConsoleError, baseHint, loadSession, normalizeBase, saveSession,
-  type AuditPage, type Health,
+  type AuditPage, type Dashboard, type Health,
 } from './api';
-import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady } from './lib';
+import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady, playsChart } from './lib';
 
 /**
  * Vision Server — панель запуска и администрирования.
@@ -17,7 +17,7 @@ import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isR
  * Поэтому экран один: «где сервер» → «пароль» → «как дела», без привязки к платформе.
  */
 
-type Tab = 'overview' | 'shares' | 'library' | 'audit';
+type Tab = 'overview' | 'plays' | 'shares' | 'library' | 'audit';
 
 /** Фильтры журнала: «всё» и три группы, которые чаще всего нужны при разборе. */
 const AUDIT_FILTERS: { value: string; label: string }[] = [
@@ -38,6 +38,8 @@ export function App() {
   const [tracker, setTracker] = useState<Awaited<ReturnType<ConsoleClient['tracker']>> | null>(null);
   const [shares, setShares] = useState<Awaited<ReturnType<ConsoleClient['shares']>>>([]);
   const [tab, setTab] = useState<Tab>('overview');
+  const [plays, setPlays] = useState<Dashboard | null>(null);
+  const [playsDays, setPlaysDays] = useState(30);
   const [audit, setAudit] = useState<AuditPage | null>(null);
   const [auditFilter, setAuditFilter] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -136,6 +138,28 @@ export function App() {
   }, [connected]);
 
   /** Журнал грузится отдельно: он нужен только на своей вкладке и бывает длинным. */
+  /**
+   * Дашборд прослушиваний (D1) грузится по входу на вкладку и при смене окна:
+   * тянуть его при каждом обновлении диагностики незачем — это отдельный вопрос
+   * «что слушают», а не «жив ли сервер».
+   */
+  const loadPlays = useCallback(async (days = playsDays) => {
+    setBusy('plays');
+    try {
+      setPlays(await client.dashboard(days));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось получить статистику прослушиваний');
+      setPlays(null);
+    } finally {
+      setBusy(null);
+    }
+  }, [client, playsDays]);
+
+  useEffect(() => {
+    if (connected && tab === 'plays' && plays === null) void loadPlays();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, tab]);
+
   const loadAudit = useCallback(async (action = auditFilter) => {
     setBusy('audit');
     try {
@@ -323,6 +347,7 @@ export function App() {
               {(
                 [
                   ['overview', 'Диагностика'],
+                  ['plays', 'Прослушивания'],
                   ['shares', `Ссылки${shares.length ? ` (${shares.length})` : ''}`],
                   ['library', 'Библиотека'],
                   ['audit', 'Журнал'],
@@ -356,6 +381,97 @@ export function App() {
                   Те же проверки, что в <span className="code">docs/RUNBOOK.md</span>, но словами. Если диск
                   заполняется — удалите офлайн-копии на телефоне или старые треки.
                 </p>
+              </div>
+            )}
+
+            {tab === 'plays' && (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div className="row row--between">
+                  <div className="row" style={{ gap: 6 }}>
+                    {[7, 30, 90].map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`btn btn--small${playsDays === value ? '' : ' btn--ghost'}`}
+                        onClick={() => {
+                          setPlaysDays(value);
+                          setPlays(null);
+                          void loadPlays(value);
+                        }}
+                      >
+                        {value} дн.
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--ghost"
+                    disabled={busy === 'plays'}
+                    onClick={() => void loadPlays()}
+                  >
+                    {busy === 'plays' ? 'Считаю…' : 'Обновить'}
+                  </button>
+                </div>
+
+                {plays === null && <p className="muted">Считаю прослушивания…</p>}
+
+                {plays !== null && plays.totals.plays === 0 && (
+                  <p className="muted">{plays.hint ?? 'Прослушиваний пока нет.'}</p>
+                )}
+
+                {plays !== null && plays.totals.plays > 0 && (
+                  <>
+                    <div className="row" style={{ gap: 14, flexWrap: 'wrap' }}>
+                      <span className="badge badge--ok">{plays.totals.plays} прослушиваний</span>
+                      <span className="badge">{plays.totals.completed} до конца</span>
+                      <span className="badge">{plays.totals.tracks} треков</span>
+                      <span className="badge">{plays.sources.owner} своих · {plays.sources.share} по ссылкам</span>
+                    </div>
+
+                    <div className="plays-chart" aria-label={`Прослушивания за ${plays.days} дней`}>
+                      {playsChart(plays.byDay).map((item) => (
+                        <div
+                          key={item.day}
+                          className="plays-chart__col"
+                          title={`${item.day}: ${item.plays}`}
+                        >
+                          <i
+                            className={item.shared ? 'is-shared' : undefined}
+                            style={{ height: `${item.height}%` }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <span className="muted">
+                      {plays.byDay[0]?.day.slice(5)} — {plays.byDay[plays.byDay.length - 1]?.day.slice(5)},
+                      серые столбики — прослушивания по гостевым ссылкам
+                    </span>
+
+                    {plays.topTracks.map((track, index) => (
+                      <div key={track.id} className="link-row">
+                        <div className="row row--between">
+                          <span className="link-row__title">
+                            {index + 1}. {track.deleted ? 'трек удалён из библиотеки' : track.title}
+                          </span>
+                          <span className="badge">{track.plays}</span>
+                        </div>
+                        <span className="muted">
+                          {track.artist ? `${track.artist} · ` : ''}
+                          {track.completed ? `${track.completed} до конца` : 'не дослушивали'}
+                        </span>
+                      </div>
+                    ))}
+
+                    {plays.listeners.length > 0 && (
+                      <p className="hint">
+                        Слушали с {plays.listeners.length} разных адресов — отпечатки{' '}
+                        {plays.listeners.slice(0, 3).map((listener) => listener.id).join(', ')}
+                        {plays.listeners.length > 3 ? '…' : ''}. Сырые адреса не хранятся, город по
+                        отпечатку не восстановить: видно «из одного места или из десяти», а не кто именно.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             )}
 

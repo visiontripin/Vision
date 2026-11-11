@@ -8,6 +8,7 @@ import {
   ExternalPage,
   LibraryPage,
   LikedPage,
+  DashboardPage,
   PersonalPage,
   PlaylistPage,
   SmartPlaylistPage,
@@ -161,6 +162,7 @@ function Shell() {
     if (route === '/for-you') return <PersonalPage />;
     if (route === '/liked') return <LikedPage />;
     if (route === '/playlists') return <PlaylistsPage />;
+    if (route === '/dashboard') return <DashboardPage />;
     if (route === '/stats') return <StatsPage />;
     if (route === '/shares') {
       return <SharesPage tracksById={new Map(tracks.map((track) => [track.id, track]))} playlists={playlists} />;

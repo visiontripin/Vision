@@ -198,3 +198,23 @@ export function auditClock(iso: string, now = Date.now()): string {
   }
   return at.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
+
+/**
+ * Столбики графика прослушиваний (D1).
+ *
+ * Высота считается от максимума окна, минимум 2 % — иначе день с одним
+ * прослушиванием выглядел бы пустым. Дни с гостевыми прослушиваниями помечаются
+ * отдельно: «я слушал» и «по моей ссылке слушали» — разные ответы, и серый
+ * столбик честнее суммы.
+ */
+export function playsChart(
+  days: { day: string; plays: number; shared?: number }[]
+): { day: string; plays: number; shared: number; height: number }[] {
+  const max = Math.max(1, ...days.map((item) => item.plays));
+  return days.map((item) => ({
+    day: item.day,
+    plays: item.plays,
+    shared: item.shared ?? 0,
+    height: item.plays > 0 ? Math.max(2, Math.round((item.plays / max) * 100)) : 0,
+  }));
+}

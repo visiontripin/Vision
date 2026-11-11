@@ -25,6 +25,7 @@ export const OPENAPI = {
     { name: 'playlists' },
     { name: 'smart-playlists' },
     { name: 'personal' },
+    { name: 'dashboard' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
@@ -172,6 +173,71 @@ export const OPENAPI = {
           createdAt: { type: 'string', format: 'date-time' },
           trackCount: { type: 'integer' },
           duration: { type: 'number' },
+        },
+      },
+      Dashboard: {
+        type: 'object',
+        properties: {
+          since: { type: 'string', format: 'date-time' },
+          until: { type: 'string', format: 'date-time' },
+          days: { type: 'integer', minimum: 1, maximum: 365 },
+          tz: { type: 'integer', description: 'Смещение сервера в минутах: «день» — день человека' },
+          totals: {
+            type: 'object',
+            properties: {
+              plays: { type: 'integer' },
+              completed: { type: 'integer' },
+              tracks: { type: 'integer' },
+              listeners: { type: 'integer' },
+              sharedPlays: { type: 'integer' },
+            },
+          },
+          sources: {
+            type: 'object',
+            properties: { owner: { type: 'integer' }, share: { type: 'integer' } },
+          },
+          byDay: {
+            type: 'array',
+            description: 'Все дни окна, включая пустые: в графике не должно быть «дыр»',
+            items: {
+              type: 'object',
+              properties: {
+                day: { type: 'string', description: 'YYYY-MM-DD' },
+                plays: { type: 'integer' },
+                completed: { type: 'integer' },
+                shared: { type: 'integer' },
+              },
+            },
+          },
+          topTracks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                title: { type: ['string', 'null'] },
+                artist: { type: ['string', 'null'] },
+                deleted: { type: 'boolean', description: 'Трек удалён, история сохранена' },
+                plays: { type: 'integer' },
+                completed: { type: 'integer' },
+              },
+            },
+          },
+          listeners: {
+            type: 'array',
+            description: 'Отпечатки адресов (начало sha256), а не сами адреса',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                plays: { type: 'integer' },
+                tracks: { type: 'integer' },
+                firstSeen: { type: 'string', format: 'date-time' },
+                lastSeen: { type: 'string', format: 'date-time' },
+              },
+            },
+          },
+          hint: { type: ['string', 'null'] },
         },
       },
       PersonalSection: {
@@ -1220,6 +1286,29 @@ export const OPENAPI = {
         tags: ['history'],
         summary: 'Очистить историю',
         responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/dashboard': {
+      get: {
+        tags: ['dashboard'],
+        summary: 'Прослушивания по дням, топ-треки, источники (D1)',
+        parameters: [
+          { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 30 } },
+          {
+            name: 'tz',
+            in: 'query',
+            description: 'Смещение в минутах; по умолчанию — смещение сервера',
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/Dashboard' } } },
+          },
+          401: { description: 'Только владелец' },
+          405: { description: 'Только GET' },
+        },
       },
     },
     '/personal': {

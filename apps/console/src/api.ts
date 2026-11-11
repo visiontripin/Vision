@@ -57,6 +57,24 @@ export type AuditEntry = {
   details: Record<string, unknown> | null;
 };
 
+/**
+ * Дашборд прослушиваний (D1). Панель показывает его там же, где диагностику:
+ * «сервер жив» и «что слушают» — два вопроса одного экрана. Адресов нет,
+ * только короткие отпечатки, поэтому тип повторяет сервер один в один.
+ */
+export type Dashboard = {
+  since: string;
+  until: string;
+  days: number;
+  tz: number;
+  totals: { plays: number; completed: number; tracks: number; listeners: number; sharedPlays: number };
+  sources: { owner: number; share: number };
+  byDay: { day: string; plays: number; completed: number; shared: number }[];
+  topTracks: { id: string; title: string | null; artist: string | null; deleted: boolean; plays: number; completed: number }[];
+  listeners: { id: string; plays: number; tracks: number; firstSeen: string; lastSeen: string }[];
+  hint: string | null;
+};
+
 export type AuditPage = {
   entries: AuditEntry[];
   total: number;
@@ -287,6 +305,10 @@ export class ConsoleClient {
     if (params.actor) search.set('actor', params.actor);
     if (params.shareId) search.set('shareId', params.shareId);
     return this.request<AuditPage>(`/api/audit?${search}`);
+  }
+
+  dashboard(days = 30) {
+    return this.request<Dashboard>(`/api/dashboard?days=${days}`);
   }
 
   auditSummary(days = 1) {

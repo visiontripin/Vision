@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady } from './lib.ts';
+import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady, playsChart } from './lib.ts';
 import { baseHint, normalizeBase } from './api.ts';
 
 /**
@@ -111,4 +111,19 @@ test('время в журнале: сегодня, вчера, на этой н
   // старше недели — короткая дата
   assert.match(auditClock(at(1, 12, 0), now), /^01\.11\.26$/);
   assert.equal(auditClock('не дата', now), '—');
+});
+
+test('график прослушиваний: масштаб от максимума, пустой день — ноль', () => {
+  const bars = playsChart([
+    { day: '2026-11-09', plays: 0 },
+    { day: '2026-11-10', plays: 5, shared: 2 },
+    { day: '2026-11-11', plays: 10 },
+  ]);
+  assert.deepEqual(bars.map((bar) => bar.height), [0, 50, 100]);
+  assert.equal(bars[1].shared, 2);
+  // пустой журнал не должен делить на ноль
+  assert.deepEqual(playsChart([]), []);
+  assert.deepEqual(playsChart([{ day: '2026-11-11', plays: 0 }]).map((bar) => bar.height), [0]);
+  // одинокое прослушивание всё равно видно: минимум 2 %
+  assert.equal(playsChart([{ day: '2026-11-11', plays: 1 }])[0].height, 100);
 });

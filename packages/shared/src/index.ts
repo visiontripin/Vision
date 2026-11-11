@@ -107,6 +107,45 @@ export type PersonalFeed = {
   hint: string | null;
 };
 
+/** День графика дашборда (D1): нули тоже приходят, чтобы не было «дыр». */
+export type DashboardDay = {
+  day: string;
+  plays: number;
+  completed: number;
+  shared: number;
+};
+
+export type DashboardTopTrack = {
+  id: string;
+  title: string | null;
+  artist: string | null;
+  /** Трек удалён из библиотеки, но история прослушиваний сохранена. */
+  deleted: boolean;
+  plays: number;
+  completed: number;
+};
+
+export type Dashboard = {
+  since: string;
+  until: string;
+  days: number;
+  /** Смещение сервера в минутах: «день» здесь — день человека. */
+  tz: number;
+  totals: {
+    plays: number;
+    completed: number;
+    tracks: number;
+    listeners: number;
+    sharedPlays: number;
+  };
+  sources: { owner: number; share: number };
+  byDay: DashboardDay[];
+  topTracks: DashboardTopTrack[];
+  /** Отпечатки адресов, а не сами адреса: «слушают из одного места или из десяти». */
+  listeners: { id: string; plays: number; tracks: number; firstSeen: string; lastSeen: string }[];
+  hint: string | null;
+};
+
 export type Stats = {
   tracks: number;
   plays: number;
@@ -728,6 +767,11 @@ export function createClient(options: ClientOptions = {}) {
 
     stats() {
       return request<Stats>('/api/stats');
+    },
+
+    /** Дашборд владельца (D1): прослушивания по дням, топ, источники. */
+    dashboard(days = 30) {
+      return request<Dashboard>(`/api/dashboard?days=${encodeURIComponent(String(days))}`);
     },
   };
 }

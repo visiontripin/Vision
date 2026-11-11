@@ -1247,7 +1247,123 @@ select:focus {
   -webkit-box-orient: vertical;
 }
 
-/* =============================== «Для вас» ============================== */
+
+/* =============================== дашборд ================================ */
+
+.dashboard-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 140px;
+  margin-top: 12px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dashboard-chart__col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 2px;
+}
+
+.dashboard-chart__col i {
+  display: block;
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+/* гостевые прослушивания — тем же цветом, но тише: это не «мои» цифры */
+.dashboard-chart__col i.is-shared {
+  background: var(--muted);
+  opacity: 0.5;
+}
+
+.dashboard-chart__col:hover i {
+  opacity: 1;
+}
+
+.dashboard-chart__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.dashboard-top {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  counter-reset: top;
+}
+
+.dashboard-top li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  counter-increment: top;
+}
+
+.dashboard-top li::before {
+  content: counter(top);
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 14px;
+}
+
+.dashboard-top li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-top b small {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.dashboard-panel--wide {
+  grid-column: 1 / -1;
+}
+
+.dashboard-listeners {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dashboard-listeners li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.dashboard-listeners code {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.06));
+  color: var(--accent-2);
+}
+
+/* ============================== «Для вас» =============================== */
 
 .personal-section {
   margin-top: 22px;

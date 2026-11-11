@@ -48,6 +48,7 @@ import {
   AUDIT_ACTIONS, AUDIT_ACTOR_LABELS, AUDIT_RETENTION_DAYS, audit, auditIpHash,
   auditSummary, listAudit, pruneAudit,
 } from './audit.js';
+import { dashboard, logPlayback } from './dashboard.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -858,6 +859,22 @@ async function handleApi(req, res, url) {
     return json(res, 200, removed);
   }
 
+  /**
+   * Дашборд владельца (D1): что и когда слушали — своё и по гостевым ссылкам.
+   * Только владелец: это карта его библиотеки, а не публичная статистика.
+   */
+  if (pathname === '/api/dashboard' && method !== 'GET' && method !== 'HEAD') {
+    return fail(res, 405, 'method_not_allowed', 'Только GET.');
+  }
+
+  if (pathname === '/api/dashboard' && method === 'GET') {
+    const data = dashboard({
+      days: url.searchParams.get('days'),
+      tz: url.searchParams.has('tz') ? Number(url.searchParams.get('tz')) : null,
+    });
+    return json(res, 200, data, { 'Cache-Control': 'no-store' });
+  }
+
   if (pathname === '/api/stats' && method === 'GET') {
     const free = freeDiskMb();
     return json(res, 200, {
@@ -1519,6 +1536,13 @@ async function handleApi(req, res, url) {
       const duration = Math.max(0, Number(body.duration) || track.duration || 0);
       const completed = Boolean(body.completed) || (duration > 0 && position / duration > 0.9);
       recordListen(id, { position, duration, completed });
+      /*
+       * Дашборд (D1) питается событиями, а не состоянием: `listens` знает только
+       * «где я сейчас», поэтому один и тот же трек, поставленный на повтор, не
+       * должен накручивать график. Дедупликацию окна делает `logPlayback`.
+       */
+      logPlayback({ trackId: id, kind: 'play', position, duration, ip: clientIp(req) });
+      if (completed) logPlayback({ trackId: id, kind: 'complete', position, duration, ip: clientIp(req) });
       res.writeHead(204);
       return res.end();
     }
@@ -1943,6 +1967,20 @@ async function serveShare(req, res, url) {
       return res.end();
     }
     logShareHit(share, action, clientIp(req));
+    /*
+     * Для дашборда (D1) гость по ссылке — тоже прослушивание, но с источником
+     * `share`: «20 по ссылкам» и «3 моих» — разные ответы на «что слушают».
+     * `download` событием прослушивания не считается: скачали ≠ слушают.
+     */
+    if (action === 'stream') {
+      logPlayback({
+        trackId,
+        kind: 'play',
+        source: 'share',
+        shareId: share.id,
+        ip: clientIp(req),
+      });
+    }
     audit(`share.${action}`, {
       shareId: share.id,
       targetKind: 'share',

@@ -4,6 +4,7 @@ import {
   formatDuration,
   type ExternalTrack,
   type HistoryEntry,
+  type Dashboard,
   type PersonalFeed,
   type Playlist,
   type Share,
@@ -1085,6 +1086,222 @@ export function isDeadShare(share: Share): boolean {
   if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) return true;
   if (share.maxPlays !== null && share.plays >= share.maxPlays) return true;
   return false;
+}
+
+/**
+ * Дашборд владельца (D1): что слушают и когда.
+ *
+ * Это не аналитика по людям: адресов нет, география — по короткому отпечатку
+ * хеша. Поэтому вместо карты — «сколько разных мест» и «мои прослушивания против
+ * гостевых по ссылкам»: цифра «20 по ссылкам» и «3 моих» отвечают на разные
+ * вопросы, и смешивать их в одну было бы враньём.
+ *
+ * График — обычные div-ы, без библиотеки: тридцать столбиков не стоят лишних
+ * 40 КБ в бандле, а шкала считается из максимума.
+ */
+/** «2 часа назад» для дашборда: точная дата в таблице мешает читать. */
+function ago(iso: string): string {
+  const time = Date.parse(iso);
+  if (!Number.isFinite(time)) return 'неизвестно когда';
+  const minutes = Math.max(0, Math.round((Date.now() - time) / 60_000));
+  if (minutes < 1) return 'только что';
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  return `${Math.round(hours / 24)} дн назад`;
+}
+
+export function DashboardPage() {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<Dashboard | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) return;
+    let cancelled = false;
+    setData(null);
+    api
+      .dashboard(days)
+      .then((result) => {
+        if (!cancelled) {
+          setError(null);
+          setData(result);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Не удалось получить статистику');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [days]);
+
+  if (IS_LOCAL_MODE) {
+    return (
+      <section className="page">
+        <header className="page__head">
+          <div>
+            <h1>Дашборд</h1>
+            <p>Прослушивания по дням, топ-треки, источники</p>
+          </div>
+        </header>
+        <div className="empty">
+          <h3>Здесь нужен сервер</h3>
+          <p>
+            Дашборд считает прослушивания на сервере. В локальном режиме (GitHub Pages)
+            история не ведётся — откройте свою копию Vision Server.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="page">
+        <div className="empty">
+          <h3>Дашборд не открылся</h3>
+          <p>{error}</p>
+        </div>
+      </section>
+    );
+  }
+
+  const maxPlays = Math.max(1, ...(data?.byDay ?? []).map((day) => day.plays));
+  const cards = [
+    { label: 'Прослушиваний', value: data?.totals.plays ?? 0, icon: 'play' },
+    { label: 'Дослушано до конца', value: data?.totals.completed ?? 0, icon: 'check' },
+    { label: 'Треков звучало', value: data?.totals.tracks ?? 0, icon: 'music' },
+    { label: 'По ссылкам', value: data?.totals.sharedPlays ?? 0, icon: 'share' },
+  ];
+
+  return (
+    <section className="page">
+      <header className="page__head">
+        <div>
+          <h1>Дашборд</h1>
+          <p>
+            {data
+              ? `Прослушивания за ${data.days} ${data.days === 1 ? 'день' : 'дней'} · свои и гостевые`
+              : 'Загружаем…'}
+          </p>
+        </div>
+        <div className="page__tools">
+          {[7, 30, 90].map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={`btn btn--sm${days === value ? ' btn--primary' : ' btn--ghost'}`}
+              onClick={() => setDays(value)}
+            >
+              {value} дней
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <div className="cards">
+        {cards.map((card) => (
+          <div key={card.label} className="card">
+            <span className="card__icon">
+              <Icon name={card.icon} size={18} />
+            </span>
+            <strong>{card.value}</strong>
+            <span>{card.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {!data && (
+        <div className="skeleton-list">
+          {Array.from({ length: 2 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      )}
+
+      {data && !data.totals.plays && (
+        <div className="empty">
+          <h3>Пока тихо</h3>
+          <p>{data.hint ?? 'Включите трек — и здесь появится статистика.'}</p>
+        </div>
+      )}
+
+      {data && data.totals.plays > 0 && (
+        <div className="panel-grid">
+          <div className="panel">
+            <h2>По дням</h2>
+            <div className="dashboard-chart" role="img" aria-label={`Прослушивания за ${data.days} дней`}>
+              {data.byDay.map((day) => (
+                <div className="dashboard-chart__col" key={day.day} title={`${day.day}: ${day.plays}`}>
+                  <i
+                    className={day.shared ? 'is-shared' : undefined}
+                    style={{ height: `${Math.max(2, (day.plays / maxPlays) * 100)}%` }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="dashboard-chart__axis">
+              <span>{data.byDay[0]?.day.slice(5)}</span>
+              <span>{data.byDay.at(-1)?.day.slice(5)}</span>
+            </div>
+            <p className="muted">
+              Свои: {data.sources.owner} · по ссылкам: {data.sources.share} · повтор одного
+              трека в течение получаса считается один раз.
+            </p>
+          </div>
+
+          <div className="panel">
+            <h2>Топ треков</h2>
+            <ol className="dashboard-top">
+              {data.topTracks.map((track) => (
+                <li key={track.id}>
+                  <span>
+                    {track.deleted ? (
+                      <em className="muted">трек удалён из библиотеки</em>
+                    ) : (
+                      <a href={`#/track/${track.id}`}>{track.title}</a>
+                    )}
+                    {track.artist ? <small> · {track.artist}</small> : null}
+                  </span>
+                  <b>
+                    {track.plays}
+                    {track.completed ? <small> / {track.completed} до конца</small> : null}
+                  </b>
+                </li>
+              ))}
+            </ol>
+            {!data.topTracks.length && <p className="muted">Топ появится после прослушиваний.</p>}
+          </div>
+
+          <div className="panel dashboard-panel--wide">
+            <h2>Откуда слушают</h2>
+            {data.listeners.length ? (
+              <>
+                <ul className="dashboard-listeners">
+                  {data.listeners.map((listener) => (
+                    <li key={listener.id}>
+                      <code>{listener.id}</code>
+                      <span>
+                        {listener.plays} прослушиваний · {listener.tracks} треков
+                      </span>
+                      <small className="muted">последний раз {ago(listener.lastSeen)}</small>
+                    </li>
+                  ))}
+                </ul>
+                <p className="muted">
+                  Адреса не хранятся: отпечаток — это начало sha256 от адреса. Так видно «слушают
+                  из одного места или из десяти», но не кто именно.
+                </p>
+              </>
+            ) : (
+              <p className="muted">Данных об адресах нет: прослушивания шли без сохранённого адреса.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function StatsPage() {

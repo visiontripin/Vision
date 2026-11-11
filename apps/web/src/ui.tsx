@@ -133,6 +133,14 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
+  /** Дашборд: столбики, а не «статистика» — раздел про время, не про состав. */
+  chart: (
+    <>
+      <path d="M5 19V11" />
+      <path d="M12 19V5" />
+      <path d="M19 19v-5" />
+    </>
+  ),
   chevronDown: (
     <>
       <path d="M6 9.5l6 6 6-6" />

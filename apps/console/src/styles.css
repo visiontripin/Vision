@@ -345,3 +345,35 @@ input {
     padding: 16px 14px calc(24px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* --------------------------- график прослушиваний ------------------------ */
+
+.plays-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 120px;
+  padding: 4px 2px 0;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+}
+
+.plays-chart__col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 2px;
+}
+
+.plays-chart__col i {
+  display: block;
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, var(--accent-2, #ff8a3d), var(--accent, #ff5a1f));
+}
+
+/* гостевые — тем же цветом, но тише: это не «мои» прослушивания */
+.plays-chart__col i.is-shared {
+  background: var(--muted, #8a8a9a);
+  opacity: 0.55;
+}
