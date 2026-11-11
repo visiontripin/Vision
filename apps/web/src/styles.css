@@ -1987,6 +1987,18 @@ select:focus {
   color: var(--muted);
 }
 
+/* Офлайн-режим (I5): это не ошибка, а состояние — спокойный янтарный, не красный. */
+.banner--offline {
+  border-color: rgba(255, 179, 71, 0.35);
+  background: rgba(255, 179, 71, 0.08);
+  color: #ffd9a3;
+}
+
+.banner--offline .btn {
+  border-color: rgba(255, 179, 71, 0.4);
+  color: #ffd9a3;
+}
+
 /* ================================ login ================================= */
 
 .login {

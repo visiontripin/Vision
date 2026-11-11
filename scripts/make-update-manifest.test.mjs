@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { buildManifest, notesFromChangelog, KNOWN_PLATFORMS } from './make-update-manifest.mjs';
 
 /**
@@ -132,4 +133,16 @@ test('подпись: ключ без публичной части — ошиб
     () => applyUpdaterSigning(baseConfig, { privateKey: 'secret', pubkey: '' }),
     /TAURI_UPDATER_PUBKEY/
   );
+});
+
+/**
+ * Тот же дефект, что был в CI десктопа: .exe/.msi не собираются без `icon.ico`.
+ * Проверка дешёвая, а падение — только на Windows-раннере.
+ */
+test('иконки Tauri: у обоих приложений есть .ico и PNG', () => {
+  for (const dir of ['apps/desktop/src-tauri/icons', 'apps/console/src-tauri/icons']) {
+    for (const file of ['icon.png', 'icon.ico', '32x32.png', '128x128.png']) {
+      assert.ok(existsSync(`${dir}/${file}`), `${dir}/${file} отсутствует`);
+    }
+  }
 });

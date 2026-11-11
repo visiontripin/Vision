@@ -8,8 +8,9 @@ import {
   type Share,
   type Track,
 } from '@vision/shared';
-import { api, IS_LOCAL_MODE } from './api';
+import { api, apiBase, IS_LOCAL_MODE } from './api';
 import { clearOffline, formatBytes as formatOfflineBytes, setOfflineLimitMb, useOffline } from './offline';
+import { readSnapshot, snapshotAge } from './library-cache';
 import { ShareModal } from './components/ShareModal';
 import { TrackList } from './components/TrackList';
 import { useLibrary } from './state/library';
@@ -694,6 +695,14 @@ export function StatsPage() {
   const { stats, tracks } = useLibrary();
   const offline = useOffline();
   const [limit, setLimit] = useState(() => String(offline.limitMb));
+  // Снимок библиотеки (I5): показывает, что откроется без сети. Читаем один раз
+  // при входе на страницу — снимок меняется только после ответа сервера.
+  const snapshot = useMemo(() => readSnapshot({ base: apiBase() }), []);
+  const libraryCache = IS_LOCAL_MODE
+    ? 'не нужен: в локальном режиме библиотека уже в браузере'
+    : snapshot
+      ? `${snapshot.tracks.length}${snapshot.total > snapshot.tracks.length ? ` из ${snapshot.total}` : ''} треков, ${snapshotAge(snapshot.savedAt)}`
+      : 'ещё не сохранён — появится после первой загрузки библиотеки при связи с сервером';
 
   const cards = [
     { label: 'Треков', value: String(stats?.tracks ?? 0), icon: 'music' },
@@ -800,6 +809,10 @@ export function StatsPage() {
                 <div>
                   <dt>Что скачивать</dt>
                   <dd>Меню трека → «Скачать офлайн»</dd>
+                </div>
+                <div>
+                  <dt>Список библиотеки</dt>
+                  <dd>{libraryCache}</dd>
                 </div>
               </dl>
 

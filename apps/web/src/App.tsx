@@ -15,6 +15,7 @@ import {
 } from './pages';
 import { ShareTargetPage } from './components/ShareTargetPage';
 import { UpdateBanner } from './components/UpdateBanner';
+import { offlineBannerText } from './library-cache';
 import { isTrackCached } from './offline';
 import { syncReplicas } from './seeds';
 import { AuthProvider, useAuth } from './state/auth';
@@ -80,7 +81,7 @@ function useRoute() {
 
 function Shell() {
   const route = useRoute();
-  const { error, reload, tracks } = useLibrary();
+  const { error, offline, reload, tracks } = useLibrary();
   const replicasSynced = useRef(false);
 
   /* один раз за сессию: восстановить в трекере записи об офлайн-копиях */
@@ -213,10 +214,17 @@ function Shell() {
         </nav>
 
         {error && (
-          <div className="banner" role="alert">
-            <span>{error}</span>
+          <div className={`banner${offline ? ' banner--offline' : ''}`} role={offline ? 'status' : 'alert'}>
+            <span>
+              {offline
+                ? offlineBannerText(offline.savedAt, Date.now(), {
+                    saved: offline.saved,
+                    total: offline.total,
+                  })
+                : error}
+            </span>
             <button type="button" className="btn btn--small" onClick={() => void reload()}>
-              Повторить
+              {offline ? 'Проверить связь' : 'Повторить'}
             </button>
           </div>
         )}
