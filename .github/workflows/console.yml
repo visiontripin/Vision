@@ -98,9 +98,16 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
             --title "Vision Server ${tag#console-}" \
             --notes "Приложение запуска и админки Vision Audio: Windows-установщик и APK для Android. Панель также открывается на самом сервере по адресу /admin."
-          gh release upload "$tag" --clobber \
-            apps/console/src-tauri/target/release/bundle/msi/*.msi \
-            apps/console/src-tauri/target/release/bundle/nsis/*.exe
+          # Явный список вместо шаблонов: если .exe не собрался (NSIS капризен к
+          # разметке на кириллице), публикуем хотя бы .msi, а не роняем релиз.
+          files=()
+          for f in apps/console/src-tauri/target/release/bundle/msi/*.msi \
+                   apps/console/src-tauri/target/release/bundle/nsis/*.exe; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          [ ${#files[@]} -gt 0 ] || { echo "::error::нечего публиковать"; exit 1; }
+          gh release upload "$tag" --clobber "${files[@]}"
+          gh release view "$tag" --json assets --jq '.assets[] | "asset: \(.name) \(.size) байт"'
 
   android:
     name: Android APK
