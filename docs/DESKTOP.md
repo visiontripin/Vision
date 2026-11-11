@@ -106,7 +106,7 @@ npm --prefix apps/desktop run build:windows  # .msi + NSIS (на Windows)
 Релиз:
 
 ```bash
-git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
+git tag desktop-v0.3.0 && git push origin desktop-v0.3.0
 ```
 
 ## Обновления (I4, v0.19.0)
