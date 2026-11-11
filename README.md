@@ -17,7 +17,34 @@
 🔍 разбор рынка     →  docs/research/SOUNDCLOUD-TEARDOWN.md
 🚀 эксплуатация     →  docs/RUNBOOK.md
 ⬇️ релизы           →  docs/RELEASES.md  (web, Windows, APK — куда и как)
+🔗 прямые ссылки     →  docs/DOWNLOADS.md (APK, MSI, EXE — сразу файл)
 ```
+
+## Прямые ссылки на скачивание
+
+Файлы начинают качаться сразу, без страниц-прослоек. Полный список с размерами и
+проверкой целостности — `docs/DOWNLOADS.md`.
+
+**Android**
+
+- Плеер Vision Audio 0.6.0 (последняя версия): https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-latest.apk
+- Плеер 0.6.0 (фиксированная версия): https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-0.6.0-android.apk
+- SHA-256 APK: https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-0.6.0-android.apk.sha256
+- Админка / запуск сервера: https://github.com/visiontripin/Vision/releases/download/console-v0.1.0/app-universal-release-unsigned.apk
+
+**Windows**
+
+- Плеер 0.3.0 — `.msi`: https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_x64_en-US.msi
+- Плеер 0.3.0 — `.exe`: https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_x64-setup.exe
+- Сервер + админка 0.1.0 — `.msi`: https://github.com/visiontripin/Vision/releases/download/console-v0.1.0/Vision.Server_0.1.0_x64_en-US.msi
+- Сервер + админка 0.1.0 — `.exe`: https://github.com/visiontripin/Vision/releases/download/console-v0.1.0/Vision.Server_0.1.0_x64-setup.exe
+
+**Linux**
+
+- Плеер 0.3.0 — AppImage: https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_amd64.AppImage
+- Плеер 0.3.0 — `.deb`: https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_amd64.deb
+
+**Web** — https://visiontripin.github.io/Vision/
 
 ## Смотреть без сервера (GitHub Pages)
 
