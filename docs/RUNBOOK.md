@@ -25,6 +25,10 @@ docker run -d --name vision \
 
 Данные (`vision.db`, `media/`, `covers/`) лежат в томе `/app/data` — его и бэкапим.
 
+В образ попадают обе сборки: веб-приложение и панель администрирования (`/admin`).
+Если панель нужна на сервере — ничего дополнительно делать не нужно; отдельными
+каналами идут APK и установщик Windows (`apps/console`, см. `docs/adr/0009-server-console.md`).
+
 ## 3. Reverse proxy (TLS)
 
 Caddy — самый короткий путь:
@@ -192,7 +196,7 @@ brew install ffmpeg
 Application → Cache Storage (`vision-shell-v1`, `vision-api-v1`, `vision-media-v1`),
 Network → Offline → перезагрузить страницу (должна открыться библиотека).
 
-## 5.4 Android / Termux
+## 5.3.1 Android / Termux
 
 Домашний сервер на телефоне: установка, автозапуск (Termux:Boot), доступ по
 Wi-Fi и через Tailscale, экономный профиль транскодинга и диагностика —
@@ -275,7 +279,7 @@ Wi-Fi и через Tailscale, экономный профиль транско�
   "import urllib.parse;print(urllib.parse.quote('http://localhost:4000/s/<token>'))")"`.
 - Просмотр виджета без вставки: откройте `/embed/<token>` прямо в браузере.
 
-## 5.6 Журнал действий (v0.16.0, G10)
+## 5.6 Журнал действий (v0.17.0, G10)
 
 Ответ на «кто это сделал» — без ssh и grep по логам: журнал лежит в БД (`audit_log`)
 и читается владельцем лентой.
