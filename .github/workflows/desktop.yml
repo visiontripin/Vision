@@ -205,9 +205,18 @@ jobs:
           done
           rm -f cert.pfx
 
+      # `find ... | xargs ls` в Git Bash падал с кодом 123 (пути с обратными
+      # слэшами), поэтому проверяем каталоги бандлера напрямую.
       - name: Артефакты
         shell: bash
-        run: find apps/desktop/src-tauri/target/release/bundle -name "*.msi" -o -name "*-setup.exe" | xargs -r ls -lh
+        run: |
+          set -uo pipefail
+          bundle="apps/desktop/src-tauri/target/release/bundle"
+          ls -lh "$bundle/msi" || true
+          ls -lh "$bundle/nsis" || true
+          test -n "$(ls -A "$bundle"/msi/*.msi 2>/dev/null)" \
+            || { echo "::error::.msi не собрался"; exit 1; }
+          echo "::notice::$(ls "$bundle"/msi/*.msi | xargs -n1 basename | tr '\n' ' ')"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -228,9 +237,15 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
             --title "Vision Audio Desktop ${tag#desktop-}" \
             --notes "Десктопное приложение Vision Audio ${tag#desktop-}."
-          gh release upload "$tag" --clobber \
-            apps/desktop/src-tauri/target/release/bundle/msi/*.msi \
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          # NSIS-установщика может не быть (собираем msi,nsis — но шаг не должен
+          # падать из-за отсутствия одного из форматов)
+          files=()
+          for f in apps/desktop/src-tauri/target/release/bundle/msi/*.msi \
+                   apps/desktop/src-tauri/target/release/bundle/nsis/*.exe; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          [ ${#files[@]} -gt 0 ] || { echo "::error::нечего публиковать"; exit 1; }
+          gh release upload "$tag" --clobber "${files[@]}"
 
       - name: Манифест обновлений для Windows
         if: startsWith(github.ref, 'refs/tags/desktop-v')
