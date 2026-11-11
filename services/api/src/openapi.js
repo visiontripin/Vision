@@ -27,6 +27,7 @@ export const OPENAPI = {
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
     { name: 'embed', description: 'Встраивание: oEmbed 1.0 и виджет /embed/:token для блогов' },
+    { name: 'audit', description: 'Журнал действий: кто загрузил, удалил или открывал ссылку' },
     { name: 'system' },
   ],
   security: [{ bearerAuth: [] }],
@@ -728,6 +729,91 @@ export const OPENAPI = {
         summary: 'Отозвать ссылку (?purge=1 — удалить запись и журнал)',
         parameters: [{ name: 'purge', in: 'query', schema: { type: 'string', enum: ['1'] } }],
         responses: { 204: { description: 'Отозвана' } },
+      },
+    },
+    '/audit': {
+      get: {
+        tags: ['audit'],
+        summary: 'Лента журнала действий (новые сверху)',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', maximum: 100, default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
+          { name: 'action', in: 'query', schema: { type: 'string' }, description: 'Код действия или группа: `track` → все `track.*`' },
+          { name: 'actor', in: 'query', schema: { type: 'string', enum: ['owner', 'guest', 'system'] } },
+          { name: 'shareId', in: 'query', schema: { type: 'string' } },
+          { name: 'since', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'until', in: 'query', schema: { type: 'string', format: 'date-time' } },
+        ],
+        responses: {
+          200: {
+            description: 'Записи журнала и словарь подписей',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    entries: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'integer' },
+                          at: { type: 'string', format: 'date-time' },
+                          actor: { type: 'string' },
+                          action: { type: 'string' },
+                          label: { type: 'string', description: 'готовая подпись на русском' },
+                          targetKind: { type: 'string', nullable: true },
+                          targetId: { type: 'string', nullable: true },
+                          shareId: { type: 'string', nullable: true },
+                          ipHash: { type: 'string', nullable: true, description: 'sha256(secret + ip)' },
+                          requestId: { type: 'string', nullable: true, description: 'совпадает с X-Request-Id' },
+                          details: { type: 'object', nullable: true },
+                        },
+                      },
+                    },
+                    total: { type: 'integer' },
+                    limit: { type: 'integer' },
+                    offset: { type: 'integer' },
+                    labels: { type: 'object', additionalProperties: { type: 'string' } },
+                    actors: { type: 'object', additionalProperties: { type: 'string' } },
+                    retentionDays: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+      delete: {
+        tags: ['audit'],
+        summary: 'Удалить записи старше keepDays',
+        parameters: [{ name: 'keepDays', in: 'query', schema: { type: 'integer', default: 180 } }],
+        responses: {
+          200: { description: '`{ removed, before }`' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/audit/actions': {
+      get: {
+        tags: ['audit'],
+        summary: 'Справочник действий и подписей',
+        responses: {
+          200: { description: '`{ actions: [{ code, label, actor, target }], actors, retentionDays }`' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/audit/summary': {
+      get: {
+        tags: ['audit'],
+        summary: 'Сводка за период: сколько действий по акторам',
+        parameters: [{ name: 'days', in: 'query', schema: { type: 'integer', default: 1 } }],
+        responses: {
+          200: { description: '`{ since, total, byActor, actions }`' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
       },
     },
     '/oembed': {

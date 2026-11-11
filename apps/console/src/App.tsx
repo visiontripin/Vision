@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ConsoleClient, ConsoleError, baseHint, loadSession, normalizeBase, saveSession, type Health } from './api';
-import { adminUrl, ago, diagnose, diskState, expiry, humanBytes, isReady } from './lib';
+import {
+  ConsoleClient, ConsoleError, baseHint, loadSession, normalizeBase, saveSession,
+  type AuditPage, type Health,
+} from './api';
+import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady } from './lib';
 
 /**
  * Vision Server — панель запуска и администрирования.
@@ -14,7 +17,16 @@ import { adminUrl, ago, diagnose, diskState, expiry, humanBytes, isReady } from 
  * Поэтому экран один: «где сервер» → «пароль» → «как дела», без привязки к платформе.
  */
 
-type Tab = 'overview' | 'shares' | 'library';
+type Tab = 'overview' | 'shares' | 'library' | 'audit';
+
+/** Фильтры журнала: «всё» и три группы, которые чаще всего нужны при разборе. */
+const AUDIT_FILTERS: { value: string; label: string }[] = [
+  { value: '', label: 'Всё' },
+  { value: 'track', label: 'Треки' },
+  { value: 'share', label: 'Ссылки' },
+  { value: 'comment', label: 'Комментарии' },
+  { value: 'auth', label: 'Входы' },
+];
 
 export function App() {
   const initial = useMemo(() => loadSession(), []);
@@ -26,6 +38,8 @@ export function App() {
   const [tracker, setTracker] = useState<Awaited<ReturnType<ConsoleClient['tracker']>> | null>(null);
   const [shares, setShares] = useState<Awaited<ReturnType<ConsoleClient['shares']>>>([]);
   const [tab, setTab] = useState<Tab>('overview');
+  const [audit, setAudit] = useState<AuditPage | null>(null);
+  const [auditFilter, setAuditFilter] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -120,6 +134,25 @@ export function App() {
     // при старте — один раз, дальше по кнопке «Обновить»
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
+
+  /** Журнал грузится отдельно: он нужен только на своей вкладке и бывает длинным. */
+  const loadAudit = useCallback(async (action = auditFilter) => {
+    setBusy('audit');
+    try {
+      setAudit(await client.audit({ limit: 50, action: action || undefined }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось прочитать журнал');
+      setAudit(null);
+    } finally {
+      setBusy(null);
+    }
+  }, [client, auditFilter]);
+
+  useEffect(() => {
+    if (connected && tab === 'audit' && audit === null) void loadAudit();
+    // журнал обновляется при входе на вкладку и по кнопке, а не на каждый рендер
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, tab]);
 
   const revoke = async (id: string) => {
     setBusy(id);
@@ -292,6 +325,7 @@ export function App() {
                   ['overview', 'Диагностика'],
                   ['shares', `Ссылки${shares.length ? ` (${shares.length})` : ''}`],
                   ['library', 'Библиотека'],
+                  ['audit', 'Журнал'],
                 ] as [Tab, string][]
               ).map(([id, label]) => (
                 <button
@@ -405,6 +439,65 @@ export function App() {
                     ? `файлов ${tracker.blobs}, без источника ${tracker.noSource}, устройств ${tracker.devices}`
                     : 'трекер реплик недоступен'}
                 </p>
+              </div>
+            )}
+
+            {tab === 'audit' && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div className="row row--between">
+                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                    {AUDIT_FILTERS.map((filter) => (
+                      <button
+                        key={filter.value || 'all'}
+                        type="button"
+                        className={`btn btn--small${auditFilter === filter.value ? '' : ' btn--ghost'}`}
+                        onClick={() => {
+                          setAuditFilter(filter.value);
+                          void loadAudit(filter.value);
+                        }}
+                      >
+                        {filter.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--ghost"
+                    disabled={busy === 'audit'}
+                    onClick={() => void loadAudit()}
+                  >
+                    {busy === 'audit' ? 'Читаю…' : 'Обновить'}
+                  </button>
+                </div>
+
+                {audit === null && <p className="muted">Читаю журнал…</p>}
+                {audit !== null && audit.entries.length === 0 && (
+                  <p className="muted">
+                    Пока пусто. Журнал заполняется сам: вход, загрузка и удаление треков, правка
+                    плейлистов, ссылки и комментарии гостей.
+                  </p>
+                )}
+                {audit?.entries.map((entry) => (
+                  <div key={entry.id} className="link-row">
+                    <div className="row row--between">
+                      <span className="link-row__title">{entry.label}</span>
+                      <span className="badge">{auditClock(entry.at)}</span>
+                    </div>
+                    <span className="muted">
+                      {entry.actor} · {entry.action}
+                      {entry.ipHash ? ` · гость ${entry.ipHash.slice(0, 8)}` : ''}
+                      {entry.requestId ? ` · запрос ${entry.requestId}` : ''}
+                    </span>
+                  </div>
+                ))}
+                {audit !== null && audit.entries.length > 0 && (
+                  <p className="hint">
+                    Показаны последние {audit.entries.length} из {audit.total}. Журнал хранится{' '}
+                    {audit.retentionDays} дн.; адреса гостей — только необратимые хеши, токены ссылок
+                    не записываются никогда.
+                    {audit.entries[0]?.shareId && ` По ссылке ${audit.entries[0].shareId.slice(0, 8)}… можно фильтровать через API.`}
+                  </p>
+                )}
               </div>
             )}
 

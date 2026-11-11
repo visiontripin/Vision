@@ -125,6 +125,20 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - Клиент собирает код встраивания из уже выданной ссылки (`embedCode`/`oembedUrl`
   в `@vision/shared`), потому что токен показывается один раз.
 
+## 8.3 Журнал действий (G10)
+
+- `services/api/src/audit.js`: словарь действий (`AUDIT_ACTIONS`), `audit()` (запись),
+  `listAudit()` (лента с фильтрами), `auditSummary()`, `pruneAudit()`, `auditIpHash()`.
+  Таблица `audit_log` — миграция `010`.
+- `audit()` вызывается из обработчиков (`server.js`) в точке успеха действия, а не из
+  middleware: журнал описывает то, что произошло, а не то, что запросили. Исключение —
+  гость на `/s/*`, где событие и есть запрос (`share.open/stream/download`).
+- Запись никогда не роняет запрос: ошибка БД уходит в лог как `audit write failed`.
+  Схлопывание (`share.open` за 10 минут от того же `ip_hash`) — `UPDATE details.repeat`,
+  поэтому журнал не превращается в список обновлений страницы.
+- `request_id` = `X-Request-Id` ответа: строка журнала сопоставима с логом и с ответом,
+  который видел клиент. Читается только владельцем (`/api/audit/*`).
+
 ## 9. Нативные приложения
 
 - **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`

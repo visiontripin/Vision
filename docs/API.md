@@ -1,4 +1,4 @@
-# API v0.16.0
+# API v0.17.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -156,6 +156,52 @@ media-src 'self' https: http:; img-src 'self' data: https:; frame-ancestors *` �
 CSP `default-src 'none'` + `style-src 'unsafe-inline'`, `script-src 'unsafe-inline'`
 (только наш скрипт перемотки по таймкоду), `form-action 'self'` (форма комментария),
 `media-src`/`img-src` — свои адреса и адреса сидов.
+
+## Аудит действий (G10)
+
+Задача — ответить на вопрос «кто удалил трек и кто открывал ссылку», не заводя
+полноценный SIEM. Журнал пишется в БД (переживает рестарт и попадает в бэкап) и
+читается владельцем лентой.
+
+### Модель
+
+- Таблица `audit_log` (миграция `010-audit-log`): `at`, `actor` (`owner` | `guest` | `system`),
+  `action` (см. справочник), `target_kind`/`target_id`, `share_id`, `ip_hash`,
+  `details` (JSON, ≤ 2 КБ) и `request_id` (совпадает с `X-Request-Id` ответа и строкой лога).
+- **Без PII**: адрес хранится как `sha256(VISION_SECRET + ip)` — тот же хеш, что в `share_hits`,
+  поэтому «гость 3f9c… открыл ссылку и слушал трек» сопоставимо, а сам адрес восстановить нельзя.
+- **Без секретов**: токен ссылки в журнал не попадает никогда, только `share_id`.
+- **Ретеншен**: `AUDIT_RETENTION_DAYS` (по умолчанию 180) — при старте и раз в сутки
+  старые записи удаляются. `AUDIT_ENABLED=0` отключает запись целиком (журнал читается).
+
+### Действия
+
+| `action` | `actor` | Когда пишется |
+|---|---|---|
+| `track.upload` / `track.update` / `track.delete` | owner | загрузка, правка метаданных, удаление (в `details` — заголовок) |
+| `playlist.create` / `playlist.update` / `playlist.delete` | owner | плейлисты |
+| `share.create` / `share.revoke` / `share.rotate` / `share.delete` | owner | жизненный цикл ссылок |
+| `comment.add` / `comment.delete` | guest / owner | комментарии к секундам |
+| `share.open` / `share.stream` / `share.download` | guest | визит по ссылке (агрегируются: см. ниже) |
+| `auth.login` / `auth.fail` | owner / system | вход и неудачная попытка (без пароля в `details`) |
+| `migration.apply` / `server.start` | system | старт и миграции — «что менялось на этой неделе» |
+
+Гостевые визиты **схлопываются**: повторное открытие той же ссылки с тем же `ip_hash`
+в течение 10 минут не создаёт новую запись (в `details.repeat` растёт счётчик). Иначе
+обновление страницы забивало бы журнал и он перестал бы отвечать на свой вопрос.
+
+### Эндпоинты
+
+| Маршрут | Ответ |
+|---|---|
+| `GET /api/audit?limit=100&offset=0&action=&actor=&shareId=&since=&until=` | `{ entries: AuditEntry[], total, limit, offset }`, новые сверху |
+| `GET /api/audit/actions` | справочник действий и их русские подписи (для UI панели) |
+| `GET /api/audit/summary?days=1` | сводка за период: `{ since, total, byActor, actions }` — для панели |
+| `DELETE /api/audit?keepDays=180` | ручная чистка, `{ removed }` |
+
+`AuditEntry`: `{ id, at, actor, action, label, targetKind, targetId, shareId, ipHash,
+requestId, details }`; `label` — готовая подпись на русском («удалён трек „Ночь“»).
+Требуется токен владельца; гость на `/api/audit` получает `401`.
 
 ## Медиа и подписи
 

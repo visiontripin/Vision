@@ -40,6 +40,10 @@ import {
   DEFAULT_WIDTH, embedMeta, embedSize, embedTheme, oembedPayload, oembedXml,
   parseShareUrl, renderEmbedGone, renderEmbedWidget, shareIsUsable,
 } from './embed.js';
+import {
+  AUDIT_ACTIONS, AUDIT_ACTOR_LABELS, AUDIT_RETENTION_DAYS, audit, auditIpHash,
+  auditSummary, listAudit, pruneAudit,
+} from './audit.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -207,9 +211,12 @@ async function handleLogin(req, res) {
   }
   if (!safeEqual(body.password || '', PASSWORD)) {
     inc('vision_auth_failures_total');
+    // факт попытки без пароля: видно подбор, но нечем воспользоваться
+    audit('auth.fail', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
     return fail(res, 401, 'unauthorized', 'Неверный пароль.');
   }
   inc('vision_auth_success_total');
+  audit('auth.login', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
   json(res, 200, issueToken());
 }
 
@@ -598,6 +605,12 @@ async function handleUpload(req, res, url) {
   }
 
   inc('vision_upload_success_total');
+  audit('track.upload', {
+    targetId: id,
+    requestId: req.visionRequestId,
+    ipHash: auditIpHash(clientIp(req)),
+    details: { title, artist, bytes: received, mime: detected.mime, checksum: checksum?.slice(0, 16) },
+  });
   // файл на этом узле = блоб + живой сид: трекер сразу знает, у кого он есть
   declareBlob({ hash: checksum, bytes: received, mime: detected.mime });
   registerSeed({ hash: checksum, deviceId: DEVICE_ID, kind: 'origin', baseUrl: PUBLIC_URL || selfBaseUrl(req) });
@@ -763,6 +776,51 @@ async function handleApi(req, res, url) {
 
   if (pathname === '/api/me' && method === 'GET') {
     return json(res, 200, { ok: true, role: 'owner', version: VERSION });
+  }
+
+  /**
+   * Журнал действий (G10). Только владелец: это карта его библиотеки и гостей.
+   * Фильтры — простые query-параметры, лента отдаётся новыми сверху.
+   */
+  if (pathname === '/api/audit' && method === 'GET') {
+    const result = listAudit({
+      limit: url.searchParams.get('limit'),
+      offset: url.searchParams.get('offset'),
+      action: url.searchParams.get('action'),
+      actor: url.searchParams.get('actor'),
+      shareId: url.searchParams.get('shareId'),
+      since: url.searchParams.get('since'),
+      until: url.searchParams.get('until'),
+    });
+    // подписи действий — часть контракта: панель не должна дублировать словарь
+    return json(res, 200, {
+      ...result,
+      labels: Object.fromEntries(Object.entries(AUDIT_ACTIONS).map(([key, value]) => [key, value.label])),
+      actors: AUDIT_ACTOR_LABELS,
+      retentionDays: AUDIT_RETENTION_DAYS,
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/audit/actions' && method === 'GET') {
+    return json(res, 200, {
+      actions: Object.entries(AUDIT_ACTIONS).map(([code, value]) => ({
+        code, label: value.label, actor: value.actor, target: value.target,
+      })),
+      actors: AUDIT_ACTOR_LABELS,
+      retentionDays: AUDIT_RETENTION_DAYS,
+    }, { 'Cache-Control': 'private, max-age=300' });
+  }
+
+  if (pathname === '/api/audit/summary' && method === 'GET') {
+    return json(res, 200, auditSummary({ days: Number(url.searchParams.get('days') || 1) }), {
+      'Cache-Control': 'no-store',
+    });
+  }
+
+  if (pathname === '/api/audit' && method === 'DELETE') {
+    const removed = pruneAudit({ keepDays: Number(url.searchParams.get('keepDays') || AUDIT_RETENTION_DAYS) });
+    audit('audit.prune', { details: removed, requestId: req.visionRequestId });
+    return json(res, 200, removed);
   }
 
   if (pathname === '/api/stats' && method === 'GET') {
@@ -1091,6 +1149,18 @@ async function handleApi(req, res, url) {
       }
 
       inc('vision_share_created_total', 1, { kind: targetKind });
+      audit('share.create', {
+        targetKind: 'share',
+        targetId: created.share.id,
+        shareId: created.share.id,
+        requestId: req.visionRequestId,
+        details: {
+          kind: targetKind,
+          title: created.share.title || null,
+          expiresAt: created.share.expiresAt,
+          maxPlays: created.share.maxPlays,
+        },
+      });
       const base = externalBase(PUBLIC_URL, req);
       return json(res, 201, {
         ...publicShare(created.share),
@@ -1146,6 +1216,13 @@ async function handleApi(req, res, url) {
         revokeShareById(shareId);
       }
       inc('vision_share_revoked_total');
+      audit(hard ? 'share.delete' : 'share.revoke', {
+        targetKind: 'share',
+        targetId: shareId,
+        shareId,
+        requestId: req.visionRequestId,
+        details: { kind: share.targetKind, title: share.title || null, hard },
+      });
       res.writeHead(204);
       return res.end();
     }
@@ -1180,6 +1257,14 @@ async function handleApi(req, res, url) {
           { ip: clientIp(req), duration: track.duration }
         );
         inc('vision_share_comment_total', 1);
+        audit('comment.add', {
+          actor: 'owner',
+          targetKind: 'comment',
+          targetId: created.id,
+          shareId: share.id,
+          requestId: req.visionRequestId,
+          details: { at: created.at, trackId },
+        });
         return json(res, 201, created);
       } catch (error) {
         if (error instanceof CommentError) return fail(res, error.status, error.code, error.message);
@@ -1190,7 +1275,15 @@ async function handleApi(req, res, url) {
     if (method === 'DELETE') {
       const commentId = url.searchParams.get('commentId') || '';
       try {
-        return json(res, 200, removeComment(commentId, { owner: true }));
+        const removed = removeComment(commentId, { owner: true });
+        audit('comment.delete', {
+          actor: 'owner',
+          targetKind: 'comment',
+          targetId: commentId,
+          shareId: share.id,
+          requestId: req.visionRequestId,
+        });
+        return json(res, 200, removed);
       } catch (error) {
         if (error instanceof CommentError) return fail(res, error.status, error.code, error.message);
         throw error;
@@ -1205,6 +1298,13 @@ async function handleApi(req, res, url) {
     try {
       const rotated = rotateShare(shareRotate[1]);
       inc('vision_share_rotated_total');
+      audit('share.rotate', {
+        targetKind: 'share',
+        targetId: shareRotate[1],
+        shareId: shareRotate[1],
+        requestId: req.visionRequestId,
+        details: { kind: rotated.share.targetKind },
+      });
       return json(res, 200, {
         ...publicShare(rotated.share),
         token: rotated.token,
@@ -1284,7 +1384,13 @@ async function handleApi(req, res, url) {
       if ('liked' in body) patch.liked = Boolean(body.liked);
       if (!Object.keys(patch).length) return fail(res, 400, 'nothing_to_update', 'Нет полей для обновления.');
 
-      return json(res, 200, withSources(updateTrackFields(id, patch), { selfBase: selfBaseUrl(req) }));
+      const updated = updateTrackFields(id, patch);
+      audit('track.update', {
+        targetId: id,
+        requestId: req.visionRequestId,
+        details: { title: updated?.title ?? track.title, fields: Object.keys(patch) },
+      });
+      return json(res, 200, withSources(updated, { selfBase: selfBaseUrl(req) }));
     }
 
     if (!action && method === 'DELETE') {
@@ -1298,6 +1404,11 @@ async function handleApi(req, res, url) {
       void removeVariants(track.id);
       revokeForTarget('track', track.id);
       inc('vision_track_deleted_total');
+      audit('track.delete', {
+        targetId: track.id,
+        requestId: req.visionRequestId,
+        details: { title: track.title, artist: track.artist, bytes: meta?.size ?? null },
+      });
       res.writeHead(204);
       return res.end();
     }
@@ -1411,6 +1522,7 @@ async function handleApi(req, res, url) {
       const id = uid();
       db.prepare('INSERT INTO playlists (id, name, description, created_at) VALUES (?, ?, ?, ?)')
         .run(id, name, str(body.description, 500), new Date().toISOString());
+      audit('playlist.create', { targetId: id, requestId: req.visionRequestId, details: { title: name } });
       return json(res, 201, getPlaylist(id));
     }
     return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
@@ -1430,12 +1542,22 @@ async function handleApi(req, res, url) {
       if (!name) return fail(res, 400, 'invalid_name', 'Нужно название плейлиста.');
       const description = 'description' in body ? str(body.description, 500) : playlist.description;
       db.prepare('UPDATE playlists SET name = ?, description = ? WHERE id = ?').run(name, description, playlistId);
+      audit('playlist.update', {
+        targetId: playlistId,
+        requestId: req.visionRequestId,
+        details: { title: name, fields: Object.keys(body) },
+      });
       return json(res, 200, getPlaylist(playlistId));
     }
 
     if (!sub && method === 'DELETE') {
       db.prepare('DELETE FROM playlists WHERE id = ?').run(playlistId);
       revokeForTarget('playlist', playlistId);
+      audit('playlist.delete', {
+        targetId: playlistId,
+        requestId: req.visionRequestId,
+        details: { title: playlist.name },
+      });
       res.writeHead(204);
       return res.end();
     }
@@ -1516,6 +1638,15 @@ async function handleGuestCommentForm(req, res, { share, token }) {
     );
     inc('vision_share_comment_total', 1);
     log('info', 'share comment added (form)', { share: share.id, track: created.trackId });
+    audit('comment.add', {
+      actor: 'guest',
+      targetKind: 'comment',
+      targetId: created.id,
+      shareId: share.id,
+      ipHash: auditIpHash(clientIp(req)),
+      requestId: req.visionRequestId,
+      details: { at: created.at, trackId: created.trackId, author: created.author },
+    });
   } catch (error) {
     const text = error instanceof CommentError ? error.message : 'Не удалось добавить комментарий.';
     res.writeHead(error instanceof CommentError ? error.status : 400, {
@@ -1609,6 +1740,15 @@ async function serveShare(req, res, url) {
         );
         inc('vision_share_comment_total', 1);
         log('info', 'share comment added', { share: share.id, track: created.trackId });
+        audit('comment.add', {
+          actor: 'guest',
+          targetKind: 'comment',
+          targetId: created.id,
+          shareId: share.id,
+          ipHash: auditIpHash(clientIp(req)),
+          requestId: req.visionRequestId,
+          details: { at: created.at, trackId: created.trackId, author: created.author },
+        });
         return json(res, 201, created);
       } catch (error) {
         return guestError(error);
@@ -1623,7 +1763,16 @@ async function serveShare(req, res, url) {
           headerIp: req.headers['x-forwarded-for'] || null,
           sock: req.socket.remoteAddress || null,
         });
-        return json(res, 200, removeComment(commentId, { ip }));
+        const removed = removeComment(commentId, { ip });
+        audit('comment.delete', {
+          actor: 'guest',
+          targetKind: 'comment',
+          targetId: commentId,
+          shareId: share.id,
+          ipHash: auditIpHash(ip),
+          requestId: req.visionRequestId,
+        });
+        return json(res, 200, removed);
       } catch (error) {
         return guestError(error);
       }
@@ -1638,6 +1787,14 @@ async function serveShare(req, res, url) {
       return res.end();
     }
     logShareHit(share, action, clientIp(req));
+    audit(`share.${action}`, {
+      shareId: share.id,
+      targetKind: 'share',
+      targetId: trackId,
+      ipHash: auditIpHash(clientIp(req)),
+      requestId: req.visionRequestId,
+      details: { trackId, kind: share.targetKind },
+    });
     return action === 'stream'
       ? serveGuestStream(req, res, share, trackId, { selfBase })
       : serveGuestDownload(req, res, share, trackId, { selfBase });
@@ -1655,6 +1812,14 @@ async function serveShare(req, res, url) {
 
   logShareHit(share, 'open', clientIp(req));
   inc('vision_share_open_total', 1, { kind: share.targetKind });
+  audit('share.open', {
+    shareId: share.id,
+    targetKind: 'share',
+    targetId: share.targetId,
+    ipHash: auditIpHash(clientIp(req)),
+    requestId: req.visionRequestId,
+    details: { kind: share.targetKind, title: view.kind === 'track' ? view.track?.title : view.playlist?.name },
+  });
 
   const html = renderSharePage(view, { token, selfBase });
   res.writeHead(200, {
@@ -1860,6 +2025,9 @@ function serveStatic(req, res, url) {
 const server = createServer(async (req, res) => {
   const started = process.hrtime.bigint();
   const requestId = randomUUID().slice(0, 8);
+  // аудит пишет тот же id, что клиент видит в X-Request-Id: строку журнала
+  // можно сопоставить с ответом и логом
+  req.visionRequestId = requestId;
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   res.setHeader('X-Request-Id', requestId);
 
@@ -1944,6 +2112,16 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
+  // отметка в журнале: «когда поднимался сервер» — первое, что спрашивают при разборе
+  audit('server.start', {
+    details: { version: VERSION, platform: process.platform, node: process.version },
+  });
+  try {
+    const pruned = pruneAudit();
+    if (pruned.removed) log('info', 'audit pruned', pruned);
+  } catch {
+    /* ретеншен не должен мешать старту */
+  }
   log('info', 'server started', {
     host: HOST,
     port: PORT,

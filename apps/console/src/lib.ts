@@ -173,3 +173,28 @@ export function isReady(checks: ServerCheck[]): boolean {
 export function adminUrl(base: string): string {
   return base ? `${base}/admin` : '/admin';
 }
+
+/**
+ * Время в журнале действий (G10): «сегодня 14:03», «вчера 09:12», дальше — дата.
+ * Панель смотрят с телефона, поэтому абсолютный ISO-штамп бесполезен: нужен
+ * ответ на вопрос «давно ли это было».
+ */
+export function auditClock(iso: string, now = Date.now()): string {
+  const date = new Date(iso);
+  const time = date.getTime();
+  if (!Number.isFinite(time)) return '—';
+
+  const at = new Date(time);
+  const hh = String(at.getHours()).padStart(2, '0');
+  const mm = String(at.getMinutes()).padStart(2, '0');
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const dayMs = 86_400_000;
+
+  if (time >= startOfToday.getTime()) return `сегодня ${hh}:${mm}`;
+  if (time >= startOfToday.getTime() - dayMs) return `вчера ${hh}:${mm}`;
+  if (time >= startOfToday.getTime() - dayMs * 6) {
+    return `${at.toLocaleDateString('ru-RU', { weekday: 'short' })} ${hh}:${mm}`;
+  }
+  return at.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}

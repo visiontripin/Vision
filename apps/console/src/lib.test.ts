@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adminUrl, ago, diagnose, diskState, expiry, humanBytes, isReady } from './lib.ts';
+import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady } from './lib.ts';
 import { baseHint, normalizeBase } from './api.ts';
 
 /**
@@ -95,4 +95,20 @@ test('диагностика: типичные поломки объяснены
 test('адрес панели для телефона', () => {
   assert.equal(adminUrl('http://192.168.1.10:4000'), 'http://192.168.1.10:4000/admin');
   assert.equal(adminUrl(''), '/admin');
+});
+
+test('время в журнале: сегодня, вчера, на этой неделе, давно', () => {
+  // фиксированный «сейчас»: 11 ноября 2026, 15:00 — иначе тест зависит от запуска
+  const now = new Date(2026, 10, 11, 15, 0, 0).getTime();
+  const at = (day: number, hour: number, minute: number) =>
+    new Date(2026, 10, day, hour, minute, 0).toISOString();
+
+  assert.equal(auditClock(at(11, 14, 3), now), 'сегодня 14:03');
+  assert.equal(auditClock(at(11, 0, 5), now), 'сегодня 00:05');
+  assert.match(auditClock(at(10, 9, 12), now), /^вчера 09:12$/);
+  // 8 ноября — воскресенье на этой же неделе: показываем день недели
+  assert.match(auditClock(at(8, 22, 41), now), /^.*22:41$/);
+  // старше недели — короткая дата
+  assert.match(auditClock(at(1, 12, 0), now), /^01\.11\.26$/);
+  assert.equal(auditClock('не дата', now), '—');
 });

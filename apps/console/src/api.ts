@@ -39,6 +39,34 @@ export type LoginResult = {
   ttlMs?: number;
 };
 
+/**
+ * Запись журнала действий (G10). Панель показывает их лентой: разбирать
+ * «кто удалил трек» по логам сервера — это ssh, а не администрирование.
+ */
+export type AuditEntry = {
+  id: number;
+  at: string;
+  actor: 'owner' | 'guest' | 'system' | string;
+  action: string;
+  label: string;
+  targetKind: string | null;
+  targetId: string | null;
+  shareId: string | null;
+  ipHash: string | null;
+  requestId: string | null;
+  details: Record<string, unknown> | null;
+};
+
+export type AuditPage = {
+  entries: AuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  labels: Record<string, string>;
+  actors: Record<string, string>;
+  retentionDays: number;
+};
+
 const TOKEN_KEY = 'vision.console.token';
 const BASE_KEY = 'vision.console.base';
 
@@ -245,6 +273,29 @@ export class ConsoleClient {
     return this.request<{ tracks: Array<{ id: string; title: string; artist: string }>; total: number }>(
       `/api/tracks?limit=${limit}`
     );
+  }
+
+  /**
+   * Журнал действий. `filter` — код действия или группа (`track` → все `track.*`),
+   * пустое значение означает «всё».
+   */
+  audit(params: { limit?: number; offset?: number; action?: string; actor?: string; shareId?: string } = {}) {
+    const search = new URLSearchParams();
+    search.set('limit', String(params.limit ?? 50));
+    if (params.offset) search.set('offset', String(params.offset));
+    if (params.action) search.set('action', params.action);
+    if (params.actor) search.set('actor', params.actor);
+    if (params.shareId) search.set('shareId', params.shareId);
+    return this.request<AuditPage>(`/api/audit?${search}`);
+  }
+
+  auditSummary(days = 1) {
+    return this.request<{
+      since: string;
+      total: number;
+      byActor: Record<string, number>;
+      actions: Array<{ action: string; actor: string; count: number }>;
+    }>(`/api/audit/summary?days=${days}`);
   }
 
   deleteTrack(id: string) {
