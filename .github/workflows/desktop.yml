@@ -55,20 +55,28 @@ jobs:
       - name: Зависимости WebKitGTK и GTK
         timeout-minutes: 20
         run: |
-          # Зеркала apt периодически залипают, а unattended-upgrades держит
-          # блокировку dpkg — шаг висел часами и выглядел как «CI сломан».
-          # Ограничиваем и сеть, и ожидание блокировки, и общее время.
+          # Сборка падала не из-за кода: шаг висел 10+ минут на блокировке dpkg
+          # (unattended-upgrades) и на медленных зеркалах. Порядок такой:
+          #   1) если пакеты уже есть в образе — ничего не делаем;
+          #   2) `apt-get update` — необязательный: индексы в образе уже есть,
+          #      а именно update чаще всего и залипает;
+          #   3) install с таймаутом блокировки и всей команды, три попытки.
+          if pkg-config --exists webkit2gtk-4.1 && pkg-config --exists gtk+-3.0; then
+            echo "::notice::WebKitGTK и GTK уже есть в образе — установка не нужна"
+            exit 0
+          fi
           APT_OPTS=(-o Acquire::http::Timeout=20 -o Acquire::Retries=2
                     -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=90)
+          timeout 180 sudo apt-get "${APT_OPTS[@]}" update \
+            || echo "::warning::apt-get update не прошёл — пробую install по индексам из образа"
           for attempt in 1 2 3; do
-            if timeout 240 sudo apt-get "${APT_OPTS[@]}" update \
-               && timeout 420 sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
-                    libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-                    librsvg2-dev patchelf libssl-dev libfuse2; then
+            if timeout 420 sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
+                 libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+                 librsvg2-dev patchelf libssl-dev libfuse2; then
               echo "::notice::зависимости GTK/WebKit установлены (попытка $attempt)"
               exit 0
             fi
-            echo "::warning::apt не сработал (попытка $attempt), повторяю"
+            echo "::warning::apt install не сработал (попытка $attempt), повторяю"
             sleep 10
           done
           echo "::error::Не удалось поставить зависимости WebKitGTK/GTK за три попытки"
