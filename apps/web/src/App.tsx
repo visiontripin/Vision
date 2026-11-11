@@ -13,6 +13,7 @@ import {
   SharesPage,
   StatsPage,
 } from './pages';
+import { ShareTargetPage } from './components/ShareTargetPage';
 import { isTrackCached } from './offline';
 import { syncReplicas } from './seeds';
 import { AuthProvider, useAuth } from './state/auth';
@@ -93,6 +94,8 @@ function Shell() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
   const [drawerHint, setDrawerHint] = useState(false);
+  /** какую ссылку уже открыли: защита от повторного seek при перерендере */
+  const openedLink = useRef<string | null>(null);
 
   useEffect(() => {
     if (player.current) setDrawerHint(false);
@@ -126,6 +129,25 @@ function Shell() {
   };
 
   const playlistMatch = /^\/playlists\/([a-f0-9]{32})$/.exec(route);
+  // F5: ссылка `#/track/<id>/90` приходит из чата — открываем трек, а не главную
+  const trackLinkMatch = /^\/track\/([a-f0-9]{32})(?:\/(\d+))?$/.exec(route);
+
+  /**
+   * F5: переход по ссылке на трек. Включаем воспроизведение ровно один раз на
+   * «ссылку», иначе каждое обновление состояния возвращало бы позицию в начало.
+   */
+  useEffect(() => {
+    if (!trackLinkMatch) return;
+    const [, id, seconds] = trackLinkMatch;
+    const track = tracks.find((item) => item.id === id);
+    if (!track) return;
+    const key = `${id}:${seconds ?? ''}`;
+    if (openedLink.current === key) return;
+    openedLink.current = key;
+    const list = tracks.length ? tracks : undefined;
+    if (seconds) player.playAt(track, list, Number(seconds));
+    else player.play(track, list);
+  }, [trackLinkMatch, tracks, player]);
 
   const content = (() => {
     if (playlistMatch) return <PlaylistPage key={playlistMatch[1]} id={playlistMatch[1]} search={search} />;
@@ -136,6 +158,7 @@ function Shell() {
       return <SharesPage tracksById={new Map(tracks.map((track) => [track.id, track]))} playlists={playlists} />;
     }
     if (route === '/external') return <ExternalPage />;
+    if (route === '/share') return <ShareTargetPage />;
     return <LibraryPage search={search} onUpload={openUpload} />;
   })();
 

@@ -78,12 +78,13 @@ npm run dev              # Vite на :5173, проксирует /api
 Тесты API:
 
 ```bash
-npm test                 # 95 контрактных тестов API: auth, upload+теги, дедуп, FTS, media, range,
+npm test                 # 99 контрактных тестов API: auth, upload+теги, дедуп, FTS, media, range,
                          # history, metrics, v1/OpenAPI, трекер реплик, приватные ссылки,
-                         # комментарии к секундам, панель /admin, oEmbed и /embed-виджет, журнал
-npm run test:local       # 66 клиентских тестов: локальный режим (IndexedDB), zip, офлайн-кэш,
+                         # комментарии к секундам, панель /admin, oEmbed и /embed-виджет, журнал,
+                         # SPA-маршруты /share и хэш-ссылки
+npm run test:local       # 83 клиентских теста: локальный режим (IndexedDB), zip, офлайн-кэш,
                          # геометрия волны и очередь в мобильном приложении, диагностика панели,
-                         # сборка кода встраивания, время в журнале
+                         # код встраивания, время в журнале, разбор deep links и share target
 npm run test:all         # всё вместе
 ```
 

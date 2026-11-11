@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Share, ShareComment, ShareWithToken } from '@vision/shared';
 import { embedCode, oembedUrl } from '@vision/shared';
+import { canNativeShare } from '../deep-link';
 import { api, IS_LOCAL_MODE } from '../api';
 import { Cover, Icon, useToast } from '../ui';
 import type { Track } from '@vision/shared';
@@ -320,9 +321,20 @@ export function ShareModal({
                     type="button"
                     className="btn btn--small btn--ghost"
                     onClick={() => {
+                      // F5: на мобильном — системный диалог (там же «скопировать»),
+                      // на десктопе его обычно нет: сразу кладём текст в буфер
                       const text = `${title} — Vision Audio\n${fresh.url}`;
-                      if (navigator.share) void navigator.share({ title, text, url: fresh.url }).catch(() => {});
-                      else void copy(text);
+                      const native = canNativeShare({
+                        hasNavigatorShare: typeof navigator !== 'undefined' && Boolean(navigator.share),
+                        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+                      });
+                      if (native) {
+                        void navigator
+                          .share({ title, text, url: fresh.url })
+                          .catch(() => void copy(text));
+                      } else {
+                        void copy(text);
+                      }
                     }}
                   >
                     Отправить

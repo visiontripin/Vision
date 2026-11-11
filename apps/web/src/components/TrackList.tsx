@@ -8,6 +8,7 @@ import {
 } from '../offline';
 import { announceReplica, sourceLabel, withdrawReplica } from '../seeds';
 import { ShareModal } from './ShareModal';
+import { canNativeShare, trackLink } from '../deep-link';
 import { SourcesModal } from './SourcesModal';
 import { useLibrary } from '../state/library';
 import { usePlayer } from '../state/player';
@@ -418,6 +419,30 @@ function TrackRow({
               <Icon name="share" size={15} />
               <span>Поделиться ссылкой</span>
             </button>
+            {canNativeShare({
+              hasNavigatorShare: typeof navigator !== 'undefined' && Boolean(navigator.share),
+              userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+            }) && (
+              <button
+                type="button"
+                role="menuitem"
+                className="menu__item"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  // F5: системный диалог «Поделиться». Ссылка — веб-адрес трека:
+                  // получатель без приложения откроет его в браузере.
+                  const url = trackLink(track.id, window.location.origin);
+                  const text = `${track.title} — ${track.artist}`;
+                  void navigator
+                    .share({ title: 'Vision Audio', text, url })
+                    .catch(() => void navigator.clipboard.writeText(`${text}\n${url}`));
+                }}
+              >
+                <Icon name="external" size={15} />
+                <span>Отправить в…</span>
+              </button>
+            )}
             {!IS_LOCAL_MODE && track.checksum && (
               <button
                 type="button"

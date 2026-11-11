@@ -139,6 +139,26 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - `request_id` = `X-Request-Id` ответа: строка журнала сопоставима с логом и с ответом,
   который видел клиент. Читается только владельцем (`/api/audit/*`).
 
+## 8.4 Вход по ссылке и share target (F1/F5)
+
+- Разбор входящих адресов — чистые модули: `apps/web/src/deep-link.ts`
+  (`parseDeepLink`, `parseShareTarget`, `canNativeShare`) и
+  `apps/mobile/src/lib/deeplink.ts` (`parseIncoming`, `parseSharedIntent`).
+  Никакого React внутри: ссылки приходят из чужих приложений, и «пустой экран»
+  отлаживать дороже всего.
+- Схема `visionaudio://` и веб-хэш `#/track/<id>` разбираются одной функцией:
+  схема приводится к http-адресу через подставную базу (`new URL` с нестандартной
+  схемой делает первый сегмент хостом и теряет путь — это был реальный дефект).
+- Веб: маршрут `#/track/<id>(/<секунды>)` включает трек один раз на ссылку
+  (`openedLink` в `App.tsx`), иначе любой перерендер возвращал бы позицию в начало.
+- Share target: `manifest.webmanifest` → `/share` (GET). Страница
+  `ShareTargetPage.tsx` показывает, что пришло, и загружает только по нажатию —
+  автоматическая загрузка по чужой ссылке была бы способом залить что угодно.
+- Android: `intentFilters` (`VIEW` + `visionaudio`, `SEND` + `audio/*`/`text/plain`),
+  `DeepLinkHandler` обрабатывает и холодный старт, и ссылку в открытом приложении.
+- Сервер новых эндпоинтов не получил: `/share` отдаётся обычным SPA-фолбэком
+  (проверяется `services/api/test/spa.test.js`).
+
 ## 9. Нативные приложения
 
 - **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`

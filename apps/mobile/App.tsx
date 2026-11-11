@@ -5,7 +5,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, initApi } from './src/api';
 import { KEYS, loadBase, saveBase } from './src/config';
 import { DownloadsProvider } from './src/downloads';
-import { PlayerProvider } from './src/player';
+import { PlayerProvider, usePlayer } from './src/player';
+import { DeepLinkHandler } from './src/components/DeepLinkHandler';
+import { useLibrary } from './src/useLibrary';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { colors } from './src/theme';
@@ -69,7 +71,10 @@ export default function App() {
         {phase === 'anon' ? (
           <LoginScreen initialBase={base} onDone={() => void onLoggedIn()} />
         ) : (
-          <LibraryScreen onLogout={() => void logout()} />
+          <>
+            <DeepLinks />
+            <LibraryScreen onLogout={() => void logout()} />
+          </>
         )}
       </PlayerProvider>
     </DownloadsProvider>
@@ -79,3 +84,14 @@ export default function App() {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
 });
+
+/**
+ * Ссылки из других приложений приходят в уже открытое приложение или запускают
+ * его «холодным». Обработчик живёт рядом с библиотекой, потому что для перехода
+ * нужен список треков, а он грузится внутри экрана.
+ */
+function DeepLinks() {
+  const { tracks } = useLibrary();
+  const player = usePlayer();
+  return <DeepLinkHandler tracks={tracks} player={player} />;
+}
