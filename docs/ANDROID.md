@@ -49,6 +49,38 @@ https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-late
 Android 6 и ниже. Universal-APK удобнее для ручной раздачи, чем отдельные
 сборки под ABI: один файл ставится на любой телефон.
 
+
+## Второй APK: приложение «Vision Server» (админка)
+
+`apps/console` собирается тем же способом, но **отдельным** скриптом
+`scripts/android-sign-console.mjs`. Он нужен, потому что `tauri android build --apk`
+собирает *release*-APK, а release без `signingConfig` остаётся неподписанным — Android
+такой файл не ставит и пишет «Приложение не установлено: пакет недействителен
+(например, повреждён)». Именно так в `console-v0.1.0` уехал
+`app-universal-release-unsigned.apk`.
+
+```bash
+cd apps/console && npx tauri android init --ci
+node scripts/android-sign-console.mjs     # версия + signingConfig visionRelease
+npx tauri android build --apk --ci
+```
+
+- Ключ тот же, что у плеера: `apps/mobile/vision-release.p12` (alias `vision`,
+  пароль `vision-audio`). Один ключ на все свои APK — обновления ставятся поверх.
+- `versionCode` берётся из `GITHUB_RUN_NUMBER`, `versionName` — из
+  `apps/console/src-tauri/tauri.conf.json`.
+- Скрипт дописывает блок `signingConfigs` в `build.gradle.kts` **после** генерации и
+  самопроверяется: если шаблон Tauri изменится и подпись не подключится, сборка
+  упадёт сразу, а не на телефоне.
+- В CI (`console.yml`) после сборки стоит `apksigner verify` + `aapt2 dump badging`:
+  сборка с `unsigned`/`does not verify` в выводе роняет джобу.
+- В релиз кладутся `VisionServer-<версия>-android.apk`, `.sha256` и
+  `VisionServer-latest.apk` (постоянная ссылка).
+
+Важно: приложение «Vision Server» **не запускает Node внутри телефона** — оно
+открывает панель и проверяет, что сервер отвечает (`apps/console/src-tauri/src/lib.rs`).
+На Android сам сервер живёт в Termux (`docs/TERMUX.md`).
+
 ## Подпись
 
 - Ключ: `apps/mobile/vision-release.p12` (PKCS#12, RSA 2048, самоподписанный,
