@@ -3,7 +3,8 @@ name: Desktop (Tauri)
 # Собирает десктопное приложение (тот же web-бандл + Rust-оболочка Tauri 2).
 #
 #   pull_request / push → проверка, что Rust собирается, и артефакт .deb/.AppImage
-#   git tag desktop-v0.2.0 && git push origin desktop-v0.2.0 → GitHub Release
+#   git tag desktop-v0.3.0 && git push origin desktop-v0.3.0 → GitHub Release
+#   (тег ставить на merge-коммит main, см. docs/RELEASES.md)
 #
 # Локально Rust собирается той же командой: npm --prefix apps/desktop run build:linux
 
