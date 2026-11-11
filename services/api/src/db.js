@@ -287,6 +287,71 @@ export function getPlaylist(id) {
   return listPlaylists().find((playlist) => playlist.id === id) || null;
 }
 
+/* --------------------------- умные плейлисты ----------------------------- */
+
+export function listSmartPlaylists() {
+  return db
+    .prepare('SELECT * FROM smart_playlists ORDER BY created_at DESC')
+    .all()
+    .map(toSmartPlaylist);
+}
+
+export function getSmartPlaylist(id) {
+  const row = db.prepare('SELECT * FROM smart_playlists WHERE id = ?').get(id);
+  return toSmartPlaylist(row);
+}
+
+function toSmartPlaylist(row) {
+  if (!row) return null;
+  let rules = null;
+  try {
+    rules = JSON.parse(row.rules);
+  } catch {
+    rules = null; // битые правила не должны ронять список
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? null,
+    rules,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function insertSmartPlaylist({ id, name, description, rules, createdAt }) {
+  db.prepare(
+    'INSERT INTO smart_playlists (id, name, description, rules, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, name, description ?? null, JSON.stringify(rules), createdAt, createdAt);
+}
+
+export function updateSmartPlaylist(id, { name, description, rules }) {
+  db.prepare('UPDATE smart_playlists SET name = ?, description = ?, rules = ?, updated_at = ? WHERE id = ?')
+    .run(name, description ?? null, JSON.stringify(rules), new Date().toISOString(), id);
+}
+
+export function deleteSmartPlaylist(id) {
+  db.prepare('DELETE FROM smart_playlists WHERE id = ?').run(id);
+}
+
+/**
+ * Треки умного плейлиста: правила → SQL. Лимит берётся из правил (это часть
+ * «Топ-40», а не украшение запроса).
+ */
+export function listSmartTracks(query) {
+  const rows = db
+    .prepare(`SELECT t.* ${query.from} WHERE ${query.where} ORDER BY ${query.order} LIMIT ?`)
+    .all(...query.params, query.limit);
+  return rows.map((row) => toTrack(row));
+}
+
+/** Сколько всего подходит под правила — нужно, чтобы показать «40 из 213». */
+export function countSmartTracks(query) {
+  return db
+    .prepare(`SELECT COUNT(*) AS n ${query.from} WHERE ${query.where}`)
+    .get(...query.params).n;
+}
+
 /* ------------------------------- статистика ------------------------------ */
 
 export function stats() {

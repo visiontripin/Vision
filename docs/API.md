@@ -1,4 +1,4 @@
-# API v0.20.0
+# API v0.21.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -463,6 +463,64 @@ Body: изображение (jpeg/png/webp, ≤ 8 МБ). → `204`
 "plays": 3, "listenedAt": "2026-11-10T08:20:00.000Z" }]`
 
 ### DELETE /api/history → `204`
+
+## Умные плейлисты (C7, v0.21.0)
+
+Плейлист, который хранит **правила**, а не треки: состав пересчитывается при каждом
+открытии, поэтому новый трек с нужным жанром попадает в него сам.
+
+### GET /api/smart-playlists → `200 SmartPlaylist[]`
+### POST /api/smart-playlists `{ "name": "Вечер", "description": "…", "rules": { … } }` → `201 SmartPlaylist`
+### GET /api/smart-playlists/:id → `200 SmartPlaylist`
+### PATCH /api/smart-playlists/:id `{ "name"?, "description"?, "rules"? }` → `200 SmartPlaylist`
+### DELETE /api/smart-playlists/:id → `204`
+### GET /api/smart-playlists/:id/tracks → `200 Track[]` + `X-Total-Count` (все совпадения, не только выданные)
+
+`SmartPlaylist` = `id, name, description, rules, smart: true, trackCount, summary,
+createdAt, updatedAt`. `trackCount` — сколько треков подходит **сейчас** (а не длина
+сохранённого списка), `summary` — подписи правил по-русски («жанр = Ambient и
+длительность ≥ 300»), чтобы клиенту не нужен был свой словарь.
+
+**Правила**
+
+```json
+{
+  "match": "all",
+  "rules": [
+    { "field": "genre", "op": "is", "value": "Ambient" },
+    { "field": "duration", "op": "gte", "value": 300 },
+    { "field": "notPlayedDays", "op": "gte", "value": 30 }
+  ],
+  "sort": "plays",
+  "limit": 40
+}
+```
+
+| Поле | Операторы | Смысл |
+|---|---|---|
+| `genre`, `artist`, `album` | `is`, `contains`, `empty`, `any` | жанр/исполнитель/альбом; `any` — «заполнено» |
+| `title` | `is`, `contains` | название трека |
+| `liked` | `is` (`true`/`false`) | лайк |
+| `year` | `gte`, `lte`, `eq` | год добавления в библиотеку (не год выпуска) |
+| `plays`, `duration` | `gte`, `lte`, `eq` | прослушивания, секунды |
+| `addedDays` | `lte` | добавлен не позже N дней назад |
+| `notPlayedDays` | `gte`, `lte` | не слушали N дней; «никогда» считается как 1 000 000 дней |
+
+`match`: `all` (И, по умолчанию) или `any` (ИЛИ). `sort`: `recent`, `oldest`, `title`,
+`artist`, `plays`, `duration`, `random`, `field:<поле>` (без учёта регистра).
+`limit`: 1…500, по умолчанию 100 — **часть правила**: «Топ-40» без него перестаёт быть
+топ-40.
+
+**Ошибки правил** — `400` с кодом `invalid_rules`, `invalid_rule`, `unknown_field`,
+`unknown_op`, `invalid_value`, `too_many_rules` и текстом, где именно ошибка
+(«Правило №2: оператор «gte» не подходит для поля «genre»»). Если правила в базе
+испорчены (например, руками поправили JSON), `GET …/tracks` отвечает `422 invalid_rules`
+— это лучше, чем `500`.
+
+**Безопасность.** `field` и `op` сверяются с закрытым списком, а значения уходят в SQL
+**только параметрами** — правило вида `{"value": "Ambient'; DROP TABLE tracks; --"}`
+становится просто несуществующим жанром. Покрыто тестами (`services/api/test/smart.test.js`,
+в том числе проверка, что таблица `tracks` после такой попытки на месте).
 
 ## Playlists
 

@@ -6,12 +6,15 @@ import {
   type HistoryEntry,
   type Playlist,
   type Share,
+  type SmartPlaylist,
   type Track,
 } from '@vision/shared';
 import { api, apiBase, IS_LOCAL_MODE } from './api';
 import { clearOffline, formatBytes as formatOfflineBytes, setOfflineLimitMb, useOffline } from './offline';
 import { readSnapshot, snapshotAge } from './library-cache';
 import { ShareModal } from './components/ShareModal';
+import { SmartPlaylistForm } from './components/SmartPlaylistForm';
+import { toRules } from './smart-form';
 import { TrackList } from './components/TrackList';
 import { useLibrary } from './state/library';
 import { usePlayer } from './state/player';
@@ -281,6 +284,45 @@ export function PlaylistsPage() {
   const { push } = useToast();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [smart, setSmart] = useState<SmartPlaylist[] | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Умные плейлисты живут отдельным запросом: их состав считает сервер, и в
+  // снимке библиотеки (I5) их нет — офлайн-список правил ничего не даёт.
+  useEffect(() => {
+    if (IS_LOCAL_MODE) {
+      setSmart([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .smartPlaylists()
+      .then((items) => {
+        if (!cancelled) setSmart(items);
+      })
+      .catch(() => {
+        if (!cancelled) setSmart([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const createSmart = async (draft: Parameters<typeof toRules>[0] & { name: string }) => {
+    setBusy(true);
+    setFormError(null);
+    try {
+      await api.createSmartPlaylist({ name: draft.name, rules: toRules(draft) });
+      setFormOpen(false);
+      setSmart(await api.smartPlaylists());
+      push('Умный плейлист создан');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Не удалось создать плейлист');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -319,7 +361,7 @@ export function PlaylistsPage() {
         </form>
       </header>
 
-      {playlists.length === 0 ? (
+      {playlists.length === 0 && !smart?.length && !formOpen ? (
         <div className="empty">
           <div className="empty__icon">
             <Icon name="disc" size={34} />
@@ -332,6 +374,48 @@ export function PlaylistsPage() {
           {playlists.map((playlist) => (
             <PlaylistCard key={playlist.id} playlist={playlist} />
           ))}
+          {smart?.map((playlist) => (
+            <SmartPlaylistCard key={playlist.id} playlist={playlist} />
+          ))}
+        </div>
+      )}
+
+      {!IS_LOCAL_MODE && (
+        <div className="panel smart-panel">
+          <div className="smart-panel__head">
+            <div>
+              <h2>Умные плейлисты</h2>
+              <p>
+                Подборка по правилам: «жанр = Ambient и не слушал 30 дней». Состав пересчитывается
+                сам — добавите подходящий трек, и он окажется внутри.
+              </p>
+            </div>
+            {!formOpen && (
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setFormOpen(true)}>
+                <Icon name="plus" size={15} />
+                Собрать по правилам
+              </button>
+            )}
+          </div>
+
+          {formOpen && (
+            <SmartPlaylistForm
+              busy={busy}
+              error={formError}
+              onSubmit={(draft) => void createSmart(draft)}
+              onCancel={() => {
+                setFormOpen(false);
+                setFormError(null);
+              }}
+            />
+          )}
+
+          {!formOpen && (smart?.length ?? 0) === 0 && (
+            <p className="muted smart-panel__hint">
+              Пока ни одного. Начните с простого: «Длительность не короче 300 секунд, сначала
+              старые» — так находится то, что давно не слушали.
+            </p>
+          )}
         </div>
       )}
     </section>
@@ -355,6 +439,193 @@ function PlaylistCard({ playlist }: { playlist: Playlist }) {
         </span>
       </div>
     </a>
+  );
+}
+
+function SmartPlaylistCard({ playlist }: { playlist: SmartPlaylist }) {
+  const hue = (playlist.name.charCodeAt(0) * 41 + playlist.name.length * 13) % 360;
+  return (
+    <a className="playlist-card playlist-card--smart" href={`#/smart/${playlist.id}`}>
+      <div
+        className="playlist-card__art"
+        style={{ background: `linear-gradient(140deg, hsl(${hue} 70% 38%), hsl(${(hue + 150) % 360} 55% 14%))` }}
+      >
+        <Icon name="search" size={28} />
+      </div>
+      <div className="playlist-card__meta">
+        <strong>{playlist.name}</strong>
+        <span>{playlist.trackCount} треков · по правилам</span>
+        {playlist.summary && <em className="playlist-card__rules">{playlist.summary}</em>}
+      </div>
+    </a>
+  );
+}
+
+/**
+ * Умный плейлист (C7): тот же список, что у обычного, но состав вычисляет
+ * сервер. Правила можно поправить на месте — иначе «умный» превращался бы в
+ * «одноразовый мастер».
+ */
+export function SmartPlaylistPage({ id, search }: { id: string; search: string }) {
+  const player = usePlayer();
+  const { push } = useToast();
+  const [playlist, setPlaylist] = useState<SmartPlaylist | null>(null);
+  const [tracks, setTracks] = useState<Track[] | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const [meta, list] = await Promise.all([api.smartPlaylist(id), api.smartPlaylistTracks(id)]);
+      setPlaylist(meta);
+      setTracks(list);
+    } catch (error) {
+      setFailed(error instanceof Error ? error.message : 'Не удалось открыть плейлист');
+      setTracks([]);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const visible = useMemo(() => {
+    if (!tracks) return [];
+    const needle = search.trim().toLowerCase();
+    if (!needle) return tracks;
+    return tracks.filter((track) =>
+      `${track.title} ${track.artist} ${track.genre ?? ''}`.toLowerCase().includes(needle)
+    );
+  }, [tracks, search]);
+
+  const save = async (draft: Parameters<typeof toRules>[0] & { name: string }) => {
+    setBusy(true);
+    setFormError(null);
+    try {
+      const updated = await api.updateSmartPlaylist(id, { name: draft.name, rules: toRules(draft) });
+      setPlaylist(updated);
+      setTracks(await api.smartPlaylistTracks(id));
+      setEditing(false);
+      push('Правила обновлены');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Не удалось сохранить правила');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!playlist || !window.confirm(`Удалить «${playlist.name}»? Треки останутся в библиотеке.`)) return;
+    try {
+      await api.deleteSmartPlaylist(id);
+      push('Умный плейлист удалён');
+      window.location.hash = '#/playlists';
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось удалить', 'error');
+    }
+  };
+
+  if (failed) {
+    return (
+      <section className="page">
+        <div className="empty">
+          <h3>Плейлист не открылся</h3>
+          <p>{failed}</p>
+          <a className="btn" href="#/playlists">
+            Ко всем плейлистам
+          </a>
+        </div>
+      </section>
+    );
+  }
+
+  if (!playlist) {
+    return (
+      <section className="page">
+        <div className="skeleton-list">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  const initialDraft = {
+    name: playlist.name,
+    match: playlist.rules?.match ?? ('all' as const),
+    sort: playlist.rules?.sort ?? ('recent' as const),
+    limit: playlist.rules?.limit ?? 40,
+    rules: (playlist.rules?.rules ?? []).map((rule) => ({
+      field: rule.field,
+      op: rule.op,
+      value: rule.value === undefined || rule.value === null ? '' : String(rule.value),
+    })),
+  };
+
+  return (
+    <section className="page">
+      <header className="page__head page__head--playlist">
+        <div>
+          <a className="backlink" href="#/playlists">
+            ← Плейлисты
+          </a>
+          <h1>{playlist.name}</h1>
+          <p>
+            {playlist.trackCount} треков по правилам · {playlist.summary}
+          </p>
+        </div>
+        <div className="page__tools">
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!visible.length}
+            onClick={() => player.playQueue(visible, 0)}
+          >
+            <Icon name="play" size={16} />
+            Слушать
+          </button>
+          <button type="button" className="btn btn--ghost" onClick={() => setEditing((prev) => !prev)}>
+            <Icon name="settings" size={16} />
+            {editing ? 'Свернуть' : 'Правила'}
+          </button>
+          <button type="button" className="btn btn--ghost" onClick={() => void remove()}>
+            <Icon name="trash" size={16} />
+            Удалить
+          </button>
+        </div>
+      </header>
+
+      {editing && (
+        <SmartPlaylistForm
+          title="Правила подборки"
+          submitLabel="Сохранить"
+          initial={initialDraft}
+          busy={busy}
+          error={formError}
+          onSubmit={(draft) => void save(draft)}
+          onCancel={() => setEditing(false)}
+        />
+      )}
+
+      {tracks === null ? (
+        <div className="skeleton-list">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      ) : (
+        <TrackList
+          tracks={visible}
+          onPlay={(track) => player.play(track, visible)}
+          emptyTitle="Под правила пока ничего не подходит"
+          emptyHint="Правила можно ослабить: уберите условие или уменьшите число дней."
+        />
+      )}
+    </section>
   );
 }
 

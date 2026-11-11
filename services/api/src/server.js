@@ -13,6 +13,8 @@ import {
   setCoverMime, getCoverInfo, listPlaylists, getPlaylist, stats, genres, migrationStatus,
   listExternal, getExternal, upsertExternal, updateExternalNote, deleteExternal,
   listVariants, getVariant, deleteVariants, trackByChecksum, getShare,
+  listSmartPlaylists, getSmartPlaylist, insertSmartPlaylist, updateSmartPlaylist,
+  deleteSmartPlaylist, listSmartTracks, countSmartTracks,
 } from './db.js';
 import {
   STORAGE_MODE, SEED_ENABLED, DEVICE_ID, PUBLIC_URL, SEED_TTL_MS,
@@ -36,6 +38,7 @@ import {
 } from './comments.js';
 import { listShareComments, countShareComments } from './db.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
+import { RuleError, buildSmartQuery, describeRules, normalizeRules } from './smart.js';
 import {
   DEFAULT_WIDTH, embedMeta, embedSize, embedTheme, oembedPayload, oembedXml,
   parseShareUrl, renderEmbedGone, renderEmbedWidget, shareIsUsable,
@@ -232,6 +235,26 @@ function selfBaseUrl(req) {
 }
 
 const TRACK_URL = (id) => `/api/tracks/${id}`;
+
+/**
+ * Умный плейлист + сколько треков подходит сейчас (C7). `trackCount` — не
+ * «длина списка», а результат правил: он меняется, когда меняется библиотека.
+ */
+function withSmartCount(playlist) {
+  if (!playlist) return null;
+  try {
+    const query = buildSmartQuery(normalizeRules(playlist.rules ?? {}));
+    return {
+      ...playlist,
+      smart: true,
+      trackCount: countSmartTracks(query),
+      matched: countSmartTracks(query),
+      summary: describeRules(normalizeRules(playlist.rules ?? {})),
+    };
+  } catch {
+    return { ...playlist, smart: true, trackCount: 0, matched: 0, summary: 'правила не разбираются' };
+  }
+}
 
 /**
  * Отдача блоба с этого устройства: `/seed/<sha256>?exp&sig`.
@@ -1502,6 +1525,100 @@ async function handleApi(req, res, url) {
     }
     if (method === 'DELETE') {
       clearHistory();
+      res.writeHead(204);
+      return res.end();
+    }
+  }
+
+  /* ---- умные плейлисты (C7) ---- */
+  if (pathname === '/api/smart-playlists') {
+    if (method === 'GET') {
+      return json(res, 200, listSmartPlaylists().map((item) => withSmartCount(item)));
+    }
+    if (method === 'POST') {
+      const body = await readJson(req).catch(() => null);
+      if (!body) return fail(res, 400, 'invalid_json', 'Ожидался JSON.');
+      const name = str(body.name, 120);
+      if (!name) return fail(res, 400, 'invalid_name', 'Нужно название плейлиста.');
+      let rules;
+      try {
+        rules = normalizeRules(body.rules);
+      } catch (error) {
+        if (error instanceof RuleError) return fail(res, 400, error.code, error.message);
+        throw error;
+      }
+      const id = uid();
+      const createdAt = new Date().toISOString();
+      insertSmartPlaylist({ id, name, description: str(body.description, 500), rules, createdAt });
+      audit('playlist.create', {
+        targetId: id,
+        requestId: req.visionRequestId,
+        details: { title: name, smart: true, rules: describeRules(rules) },
+      });
+      return json(res, 201, withSmartCount(getSmartPlaylist(id)));
+    }
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
+
+  const smartMatch = /^\/api\/smart-playlists\/([a-f0-9]{32})(\/tracks)?$/.exec(pathname);
+  if (smartMatch) {
+    const [, smartId, tracksSub] = smartMatch;
+    const playlist = getSmartPlaylist(smartId);
+    if (!playlist) return fail(res, 404, 'not_found', 'Плейлист не найден.');
+
+    // Битые правила в базе (руками поправили JSON) — это 422, а не 500:
+    // человеку нужен внятный текст, а не «внутренняя ошибка».
+    let query;
+    try {
+      query = buildSmartQuery(normalizeRules(playlist.rules ?? {}));
+    } catch (error) {
+      if (error instanceof RuleError) {
+        return fail(res, 422, 'invalid_rules', `Правила плейлиста не разбираются: ${error.message}`);
+      }
+      throw error;
+    }
+
+    if (tracksSub && method === 'GET') {
+      const tracks = listSmartTracks(query);
+      return json(res, 200, withSources(tracks, { selfBase: selfBaseUrl(req) }), {
+        'X-Total-Count': String(countSmartTracks(query)),
+      });
+    }
+
+    if (!tracksSub && method === 'GET') {
+      return json(res, 200, withSmartCount(playlist));
+    }
+
+    if (!tracksSub && method === 'PATCH') {
+      const body = await readJson(req).catch(() => ({}));
+      const name = 'name' in body ? str(body.name, 120) : playlist.name;
+      if (!name) return fail(res, 400, 'invalid_name', 'Нужно название плейлиста.');
+      let rules = playlist.rules;
+      if ('rules' in body) {
+        try {
+          rules = normalizeRules(body.rules);
+        } catch (error) {
+          if (error instanceof RuleError) return fail(res, 400, error.code, error.message);
+          throw error;
+        }
+      }
+      const description = 'description' in body ? str(body.description, 500) : playlist.description;
+      updateSmartPlaylist(smartId, { name, description, rules });
+      audit('playlist.update', {
+        targetId: smartId,
+        requestId: req.visionRequestId,
+        details: { title: name, smart: true, rules: describeRules(rules) },
+      });
+      return json(res, 200, withSmartCount(getSmartPlaylist(smartId)));
+    }
+
+    if (!tracksSub && method === 'DELETE') {
+      deleteSmartPlaylist(smartId);
+      audit('playlist.delete', {
+        targetId: smartId,
+        requestId: req.visionRequestId,
+        details: { title: playlist.name, smart: true },
+      });
       res.writeHead(204);
       return res.end();
     }

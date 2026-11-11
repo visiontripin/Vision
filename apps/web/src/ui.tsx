@@ -168,6 +168,15 @@ const ICONS: Record<string, ReactNode> = {
       <circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none" />
     </>
   ),
+  /** Правила/настройки: три ползунка — не шестерёнка общего вида. */
+  settings: (
+    <>
+      <path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3" strokeLinecap="round" />
+      <circle cx="15" cy="7" r="2.2" />
+      <circle cx="9" cy="12" r="2.2" />
+      <circle cx="15" cy="17" r="2.2" />
+    </>
+  ),
   logo: (
     <>
       <path d="M5 15V9l4 3-4 3z" fill="currentColor" stroke="none" />

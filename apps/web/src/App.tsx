@@ -9,6 +9,7 @@ import {
   LibraryPage,
   LikedPage,
   PlaylistPage,
+  SmartPlaylistPage,
   PlaylistsPage,
   SharesPage,
   StatsPage,
@@ -131,6 +132,8 @@ function Shell() {
   };
 
   const playlistMatch = /^\/playlists\/([a-f0-9]{32})$/.exec(route);
+  // C7: умный плейлист — отдельный адрес, чтобы на него можно было дать ссылку
+  const smartMatch = /^\/smart\/([a-f0-9]{32})$/.exec(route);
   // F5: ссылка `#/track/<id>/90` приходит из чата — открываем трек, а не главную
   const trackLinkMatch = /^\/track\/([a-f0-9]{32})(?:\/(\d+))?$/.exec(route);
 
@@ -153,6 +156,7 @@ function Shell() {
 
   const content = (() => {
     if (playlistMatch) return <PlaylistPage key={playlistMatch[1]} id={playlistMatch[1]} search={search} />;
+    if (smartMatch) return <SmartPlaylistPage key={smartMatch[1]} id={smartMatch[1]} search={search} />;
     if (route === '/liked') return <LikedPage />;
     if (route === '/playlists') return <PlaylistsPage />;
     if (route === '/stats') return <StatsPage />;

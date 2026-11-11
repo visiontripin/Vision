@@ -50,6 +50,41 @@ export type Playlist = {
   duration: number;
 };
 
+/**
+ * Правило умного плейлиста (C7). Состав такого плейлиста не хранится: он
+ * пересчитывается из правил при каждом открытии.
+ */
+export type SmartRule = {
+  field:
+    | 'genre' | 'artist' | 'album' | 'title' | 'liked'
+    | 'year' | 'plays' | 'duration' | 'addedDays' | 'notPlayedDays';
+  op: 'is' | 'contains' | 'gte' | 'lte' | 'eq' | 'empty' | 'any';
+  value?: string | number | boolean;
+};
+
+export type SmartRules = {
+  /** `all` — все правила (И), `any` — любое (ИЛИ). По умолчанию `all`. */
+  match?: 'all' | 'any';
+  rules: SmartRule[];
+  sort?: 'recent' | 'oldest' | 'title' | 'artist' | 'plays' | 'duration' | 'random' | `field:${string}`;
+  /** Лимит — часть правила: «Топ-40» перестаёт быть топ-40 без него. */
+  limit?: number;
+};
+
+export type SmartPlaylist = {
+  id: string;
+  name: string;
+  description: string | null;
+  rules: SmartRules | null;
+  smart: true;
+  /** Сколько треков подходит под правила **сейчас**. */
+  trackCount: number;
+  /** Подписи правил по-русски — чтобы не дублировать словарь в каждом клиенте. */
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Stats = {
   tracks: number;
   plays: number;
@@ -642,6 +677,26 @@ export function createClient(options: ClientOptions = {}) {
     },
     removeFromPlaylist(playlistId: string, trackId: string) {
       return request<void>(`/api/playlists/${playlistId}/tracks/${trackId}`, { method: 'DELETE' });
+    },
+
+    /* умные плейлисты (C7) */
+    smartPlaylists() {
+      return request<SmartPlaylist[]>('/api/smart-playlists');
+    },
+    smartPlaylist(id: string) {
+      return request<SmartPlaylist>(`/api/smart-playlists/${id}`);
+    },
+    createSmartPlaylist(input: { name: string; description?: string; rules: SmartRules }) {
+      return request<SmartPlaylist>('/api/smart-playlists', { method: 'POST', body: JSON.stringify(input) });
+    },
+    updateSmartPlaylist(id: string, patch: { name?: string; description?: string; rules?: SmartRules }) {
+      return request<SmartPlaylist>(`/api/smart-playlists/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    },
+    deleteSmartPlaylist(id: string) {
+      return request<void>(`/api/smart-playlists/${id}`, { method: 'DELETE' });
+    },
+    smartPlaylistTracks(id: string) {
+      return request<Track[]>(`/api/smart-playlists/${id}/tracks`);
     },
 
     stats() {

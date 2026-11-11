@@ -23,6 +23,7 @@ export const OPENAPI = {
     { name: 'media' },
     { name: 'history' },
     { name: 'playlists' },
+    { name: 'smart-playlists' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
@@ -170,6 +171,46 @@ export const OPENAPI = {
           createdAt: { type: 'string', format: 'date-time' },
           trackCount: { type: 'integer' },
           duration: { type: 'number' },
+        },
+      },
+      SmartRule: {
+        type: 'object',
+        required: ['field', 'op'],
+        properties: {
+          field: {
+            type: 'string',
+            enum: ['genre', 'artist', 'album', 'title', 'liked', 'year', 'plays', 'duration', 'addedDays', 'notPlayedDays'],
+          },
+          op: { type: 'string', enum: ['is', 'contains', 'gte', 'lte', 'eq', 'empty', 'any'] },
+          value: { oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] },
+        },
+      },
+      SmartRules: {
+        type: 'object',
+        required: ['rules'],
+        properties: {
+          match: { type: 'string', enum: ['all', 'any'], default: 'all' },
+          rules: { type: 'array', minItems: 1, maxItems: 12, items: { $ref: '#/components/schemas/SmartRule' } },
+          sort: {
+            type: 'string',
+            description: 'recent | oldest | title | artist | plays | duration | random | field:<поле>',
+            default: 'recent',
+          },
+          limit: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
+        },
+      },
+      SmartPlaylist: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          description: { type: ['string', 'null'] },
+          rules: { $ref: '#/components/schemas/SmartRules' },
+          smart: { type: 'boolean', enum: [true] },
+          trackCount: { type: 'integer', description: 'Сколько треков подходит под правила сейчас' },
+          summary: { type: 'string', description: 'Подписи правил по-русски' },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
         },
       },
       HistoryEntry: {
@@ -1158,6 +1199,85 @@ export const OPENAPI = {
         tags: ['history'],
         summary: 'Очистить историю',
         responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/smart-playlists': {
+      get: {
+        tags: ['smart-playlists'],
+        summary: 'Список умных плейлистов',
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/SmartPlaylist' } },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        tags: ['smart-playlists'],
+        summary: 'Создать умный плейлист',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name', 'rules'],
+                properties: {
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  rules: { $ref: '#/components/schemas/SmartRules' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Создан',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SmartPlaylist' } } },
+          },
+          400: { description: 'Правила не разбираются (invalid_rules, unknown_field, unknown_op, invalid_value)' },
+        },
+      },
+    },
+    '/smart-playlists/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: {
+        tags: ['smart-playlists'],
+        summary: 'Умный плейлист',
+        responses: { 200: { description: 'OK' }, 404: { description: 'Не найден' } },
+      },
+      patch: {
+        tags: ['smart-playlists'],
+        summary: 'Изменить правила или название',
+        responses: { 200: { description: 'OK' }, 400: { description: 'Правила не разбираются' } },
+      },
+      delete: {
+        tags: ['smart-playlists'],
+        summary: 'Удалить',
+        responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/smart-playlists/{id}/tracks': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: {
+        tags: ['smart-playlists'],
+        summary: 'Треки, подходящие под правила (до limit из правил)',
+        responses: {
+          200: {
+            description: 'OK, X-Total-Count — все совпадения',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/Track' } },
+              },
+            },
+          },
+          422: { description: 'Правила в базе не разбираются' },
+        },
       },
     },
     '/playlists': {
