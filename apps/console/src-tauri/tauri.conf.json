@@ -38,6 +38,9 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
+    "android": {
+      "versionCode": 1
+    },
     "shortDescription": "Запуск сервера и админка Vision Audio",
     "longDescription": "Vision Server: подключение к домашнему серверу Vision Audio, диагностика, ссылки и библиотека — с Windows-ПК или Android-телефона."
   }

@@ -53,22 +53,35 @@ const versionCode =
 let gradle = readFileSync(GRADLE, 'utf8');
 
 // --- 1. версия -------------------------------------------------------------
-if (/versionCode\s*=\s*\d+/.test(gradle)) {
-  gradle = gradle.replace(/versionCode\s*=\s*\d+/, `versionCode = ${versionCode}`);
-} else if (/versionCode\s+\d+/.test(gradle)) {
-  gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
-} else {
-  console.error('✖ В build.gradle.kts не нашёлся versionCode — шаблон Tauri изменился');
-  process.exit(1);
+/*
+ * В Tauri 2.12 `app/build.gradle.kts` не содержит versionCode/versionName —
+ * плагин Tauri берёт их из `tauri.conf.json` (`version`) и из `--config`
+ * (`bundle.android.versionCode`). Поэтому версию пишем в конфиг, а Gradle
+ * трогаем только если он действительно генерирует эти поля (старые шаблоны).
+ */
+const configPath = path.join(APP_DIR, 'src-tauri/tauri.conf.json');
+const config = JSON.parse(readFileSync(configPath, 'utf8'));
+const previousCode = config.bundle?.android?.versionCode;
+if (previousCode !== versionCode) {
+  config.bundle = config.bundle || {};
+  config.bundle.android = { ...(config.bundle.android || {}), versionCode };
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-if (/versionName\s*=\s*"[^"]*"/.test(gradle)) {
-  gradle = gradle.replace(/versionName\s*=\s*"[^"]*"/, `versionName = "${versionName}"`);
-} else if (/versionName\s+"[^"]*"/.test(gradle)) {
-  gradle = gradle.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
+const gradleWritesVersion = /version(Name|Code)\s*=?\s*"?\d/.test(gradle);
+if (gradleWritesVersion) {
+  gradle = /versionCode\s*=\s*\d+/.test(gradle)
+    ? gradle.replace(/versionCode\s*=\s*\d+/, `versionCode = ${versionCode}`)
+    : gradle;
+  gradle = /versionCode\s+\d+/.test(gradle)
+    ? gradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
+    : gradle;
+  gradle = /versionName\s*=\s*"[^"]*"/.test(gradle)
+    ? gradle.replace(/versionName\s*=\s*"[^"]*"/, `versionName = "${versionName}"`)
+    : gradle.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
+  console.log('· версия продублирована в build.gradle.kts (шаблон со своими полями)');
 } else {
-  console.error('✖ В build.gradle.kts не нашёлся versionName — шаблон Tauri изменился');
-  process.exit(1);
+  console.log('· версия берётся из tauri.conf.json + bundle.android.versionCode (Tauri 2.12)');
 }
 
 // --- 2. подпись ------------------------------------------------------------
@@ -128,6 +141,12 @@ if (failed.length) {
   process.exit(1);
 }
 
-console.log(`✓ build.gradle.kts: versionName ${versionName}, versionCode ${versionCode}`);
+const savedConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+if (savedConfig.version !== versionName || savedConfig.bundle?.android?.versionCode !== versionCode) {
+  console.error('✖ Версия не записалась в tauri.conf.json');
+  process.exit(1);
+}
+
+console.log(`✓ tauri.conf.json: version ${versionName}, bundle.android.versionCode ${versionCode}`);
 console.log(`✓ подпись: ${path.relative(ROOT, KEYSTORE)} (alias ${process.env.VISION_KEY_ALIAS || 'vision'})`);
 console.log('✓ release-сборка APK подписана — Android не отвергнет пакет');
