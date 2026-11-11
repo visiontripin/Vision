@@ -499,6 +499,8 @@ export function renderSharePage(view, { token, selfBase = '' }) {
 <meta property="og:url" content="${esc(link)}">
 ${ogImage ? `<meta property="og:image" content="${esc(ogImage)}">\n<meta name="twitter:card" content="summary_large_image">` : '<meta name="twitter:card" content="summary">'}
 <meta name="robots" content="noindex, nofollow">
+<link rel="alternate" type="application/json+oembed" href="${esc(`${base}/api/oembed?url=${encodeURIComponent(link)}`)}" title="${esc(title)}">
+<link rel="alternate" type="text/xml+oembed" href="${esc(`${base}/api/oembed?format=xml&url=${encodeURIComponent(link)}`)}" title="${esc(title)}">
 <style>
   :root { color-scheme: dark; --accent:#ff5a1f; --panel:#121218; --line:rgba(255,255,255,.09); --muted:#9a9aab; }
   * { box-sizing: border-box; }

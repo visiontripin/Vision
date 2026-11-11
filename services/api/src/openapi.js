@@ -26,6 +26,7 @@ export const OPENAPI = {
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
+    { name: 'embed', description: 'Встраивание: oEmbed 1.0 и виджет /embed/:token для блогов' },
     { name: 'system' },
   ],
   security: [{ bearerAuth: [] }],
@@ -727,6 +728,57 @@ export const OPENAPI = {
         summary: 'Отозвать ссылку (?purge=1 — удалить запись и журнал)',
         parameters: [{ name: 'purge', in: 'query', schema: { type: 'string', enum: ['1'] } }],
         responses: { 204: { description: 'Отозвана' } },
+      },
+    },
+    '/oembed': {
+      get: {
+        tags: ['embed'],
+        summary: 'oEmbed-описание приватной ссылки (публичный, без авторизации)',
+        description:
+          'Принимает только адреса Vision Audio (`/s/:token` или `/embed/:token`). '
+          + 'Неактивная ссылка даёт 404. Считается как встраивание: `plays` не растёт.',
+        security: [],
+        parameters: [
+          { name: 'url', in: 'query', required: true, schema: { type: 'string' }, description: 'Ссылка /s/<токен> или /embed/<токен>' },
+          { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'xml'], default: 'json' } },
+          { name: 'maxwidth', in: 'query', schema: { type: 'integer', minimum: 40, maximum: 960 } },
+          { name: 'maxheight', in: 'query', schema: { type: 'integer', minimum: 40, maximum: 960 } },
+        ],
+        responses: {
+          200: {
+            description: 'Описание для встраивания',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    version: { type: 'string', example: '1.0' },
+                    type: { type: 'string', example: 'rich' },
+                    provider_name: { type: 'string', example: 'Vision Audio' },
+                    provider_url: { type: 'string' },
+                    title: { type: 'string' },
+                    author_name: { type: 'string' },
+                    thumbnail_url: { type: 'string' },
+                    html: { type: 'string', description: '<iframe> с виджетом /embed/:token' },
+                    width: { type: 'integer', example: 480 },
+                    height: { type: 'integer', example: 180 },
+                    vision: {
+                      type: 'object',
+                      properties: {
+                        kind: { type: 'string', enum: ['track', 'playlist'] },
+                        tracks: { type: 'integer' },
+                        duration: { type: 'integer' },
+                      },
+                    },
+                  },
+                },
+              },
+              'text/xml': { schema: { type: 'string' } },
+            },
+          },
+          400: { description: '`invalid_url` — чужой адрес, `invalid_format` — не json/xml' },
+          404: { description: '`not_found` — ссылка отозвана, истекла или не существует' },
+        },
       },
     },
     '/shares/{id}/rotate': {

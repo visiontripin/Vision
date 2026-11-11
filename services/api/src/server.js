@@ -36,6 +36,10 @@ import {
 } from './comments.js';
 import { listShareComments, countShareComments } from './db.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
+import {
+  DEFAULT_WIDTH, embedMeta, embedSize, embedTheme, oembedPayload, oembedXml,
+  parseShareUrl, renderEmbedGone, renderEmbedWidget, shareIsUsable,
+} from './embed.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -54,6 +58,11 @@ const WEB_DIST = path.join(ROOT, 'apps', 'web', 'dist');
  * самого сервера, а не только из окна Windows/APK.
  */
 const CONSOLE_DIST = path.join(ROOT, 'apps', 'console', 'dist');
+/**
+ * Стили встраиваемого виджета (E4) лежат рядом с модулем и отдаются с диска,
+ * а не из веб-сборки: виджет должен работать и на сервере без `apps/web/dist`.
+ */
+const EMBED_CSS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'embed.css');
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_UPLOAD = 500 * 1024 * 1024;
@@ -689,6 +698,50 @@ async function handleApi(req, res, url) {
         setGauge('vision_blobs_no_source', t.noSource);
         return { blobs: t.blobs, seeds: t.seeds, servableBlobs: t.servableBlobs, noSource: t.noSource, ttlMs: t.ttlMs };
       })(),
+    });
+  }
+
+  /**
+   * oEmbed (E4). Публичный эндпоинт по спецификации 1.0, фиксированный путь —
+   * так его указывают в `<link rel="alternate" type="application/json+oembed">`.
+   * Принимаем только наши ссылки: чужой `url` не должен превращаться в
+   * описание произвольного сайта (иначе мы — открытый прокси).
+   */
+  if ((pathname === '/api/oembed' || pathname === '/api/v1/oembed') && method === 'GET') {
+    const format = String(url.searchParams.get('format') || 'json').toLowerCase();
+    if (format !== 'json' && format !== 'xml') {
+      return fail(res, 400, 'invalid_format', 'Поддерживаются format=json и format=xml.');
+    }
+    const parsed = parseShareUrl(url.searchParams.get('url'));
+    if (!parsed) {
+      return fail(res, 400, 'invalid_url', 'Ожидалась ссылка Vision Audio вида /s/<токен>.');
+    }
+    const resolved = resolveShareToken(parsed.token);
+    if (resolved.error || !shareIsUsable(resolved.share)) {
+      return fail(res, 404, 'not_found', 'Ссылка недоступна.');
+    }
+    const view = guestView(resolved.share, { selfBase: externalBase(PUBLIC_URL, req) });
+    if (!view) return fail(res, 404, 'not_found', 'Ссылка недоступна.');
+    const payload = oembedPayload(view, {
+      token: parsed.token,
+      selfBase: externalBase(PUBLIC_URL, req),
+      maxwidth: url.searchParams.get('maxwidth'),
+      maxheight: url.searchParams.get('maxheight'),
+    });
+    inc('vision_embed_open_total', 1, { kind: view.kind });
+    log('info', 'oembed', { share: resolved.share.id, kind: view.kind });
+    if (format === 'xml') {
+      res.writeHead(200, {
+        'Content-Type': 'text/xml; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
+      return res.end(oembedXml(payload));
+    }
+    return json(res, 200, payload, {
+      'Cache-Control': 'no-store',
+      // oEmbed-клиенты (CMS, Notion) запрашивают описание кросс-доменно
+      'Access-Control-Allow-Origin': '*',
     });
   }
 
@@ -1620,6 +1673,75 @@ async function serveShare(req, res, url) {
   res.end(html);
 }
 
+/* ------------------------------ встраивание /embed/* ----------------------- */
+
+/**
+ * `/embed/:token` — та же гостевая ссылка, но в виде, пригодном для `<iframe>`.
+ *
+ * Отличия от `/s/:token` только в оболочке: `frame-ancestors *` (иначе виджет
+ * не встроить), компактная вёрстка, `plays` не растёт (иначе вставка в блог
+ * сжигала бы лимит открытий), а `stream`/`cover` идут обычными гостевыми
+ * маршрутами — статистика ссылки остаётся честной.
+ */
+async function serveEmbed(req, res, url) {
+  const theme = embedTheme(url.searchParams.get('theme'));
+
+  if (url.pathname === '/embed/widget.css') {
+    if (!existsSync(EMBED_CSS)) return fail(res, 404, 'not_found', 'Файл не найден.');
+    const css = readFileSync(EMBED_CSS);
+    res.writeHead(200, {
+      'Content-Type': 'text/css; charset=utf-8',
+      'Content-Length': css.length,
+      'Cache-Control': 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(css);
+  }
+
+  const match = /^\/embed\/([A-Za-z0-9_-]{20,128})\/?$/.exec(url.pathname);
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  // Встраивание — смысл этого маршрута; X-Frame-Options намеренно не ставим.
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'none'; style-src 'unsafe-inline' 'self'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'none'; frame-ancestors *"
+  );
+
+  const gone = (status, reason) => {
+    const html = renderEmbedGone(reason, theme);
+    res.writeHead(status, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(html),
+    });
+    return res.end(html);
+  };
+
+  if (!match) return gone(404, 'not_found');
+
+  const token = match[1];
+  const resolved = resolveShareToken(token);
+  if (resolved.error || !shareIsUsable(resolved.share)) {
+    return gone(resolved.error === 'not_found' || !resolved.error ? 404 : resolved.status || 410, resolved.error || 'not_found');
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { Allow: 'GET, HEAD' });
+    return res.end();
+  }
+
+  const selfBase = externalBase(PUBLIC_URL, req);
+  const view = guestView(resolved.share, { selfBase });
+  if (!view) return gone(404, 'not_found');
+
+  inc('vision_embed_open_total', 1, { kind: view.kind });
+  const html = renderEmbedWidget(view, { token, selfBase, theme });
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+  });
+  return res.end(req.method === 'HEAD' ? undefined : html);
+}
+
 /* --------------------------------- static --------------------------------- */
 
 
@@ -1799,6 +1921,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname.startsWith('/s/')) {
       return await serveShare(req, res, url);
+    }
+    if (url.pathname.startsWith('/embed/')) {
+      return await serveEmbed(req, res, url);
     }
     if (url.pathname.startsWith('/api/')) {
       const internal = versionedPath(url.pathname);

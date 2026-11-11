@@ -672,6 +672,30 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+/**
+ * Код для вставки приватной ссылки (E4). Токен живёт только в том ответе, где
+ * его выдали, поэтому embed-код строится из уже известного `url`: из адреса
+ * вырезается `/s/<токен>` и превращается в `/embed/<токен>`.
+ *
+ * Возвращает `null`, если адрес не наш — тогда честнее показать «нет кода»,
+ * чем вставить в блог чужую ссылку.
+ */
+export function embedCode(url: string, kind: 'track' | 'playlist' = 'track'): string | null {
+  const match = /^(.+?)\/(?:s|embed)\/([A-Za-z0-9_-]{20,128})\/?$/.exec(String(url || '').trim());
+  if (!match) return null;
+  const [, base, token] = match;
+  const height = kind === 'playlist' ? 320 : 180;
+  return `<iframe src="${base}/embed/${token}" width="480" height="${height}" style="border:0;max-width:100%" title="Vision Audio" loading="lazy" allow="autoplay"></iframe>`;
+}
+
+/** oEmbed-адрес для того же токена — его понимают CMS без ручного кода. */
+export function oembedUrl(url: string): string | null {
+  const match = /^(.+?)\/(?:s|embed)\/([A-Za-z0-9_-]{20,128})\/?$/.exec(String(url || '').trim());
+  if (!match) return null;
+  const [, base, token] = match;
+  return `${base}/api/oembed?url=${encodeURIComponent(`${base}/s/${token}`)}`;
+}
+
 /** Детерминированная «псевдо-волна» по строке — для треков без peaks. */
 export function pseudoPeaks(seed: string, count = 120): number[] {
   let h = 2166136261;

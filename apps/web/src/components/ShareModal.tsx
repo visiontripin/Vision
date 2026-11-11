@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Share, ShareComment, ShareWithToken } from '@vision/shared';
+import { embedCode, oembedUrl } from '@vision/shared';
 import { api, IS_LOCAL_MODE } from '../api';
 import { Cover, Icon, useToast } from '../ui';
 import type { Track } from '@vision/shared';
@@ -69,6 +70,8 @@ export function ShareModal({
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState<'create' | string | null>(null);
   const [fresh, setFresh] = useState<ShareWithToken | null>(null);
+  /** E4: код встраивания строится из выданной ссылки — токен второй раз не показывают */
+  const [embedFor, setEmbedFor] = useState<ShareWithToken | null>(null);
   /** лента комментариев выбранной ссылки: у каждой ссылки своя */
   const [openComments, setOpenComments] = useState<string | null>(null);
   const [feed, setFeed] = useState<ShareComment[] | null>(null);
@@ -324,7 +327,64 @@ export function ShareModal({
                   >
                     Отправить
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--ghost"
+                    onClick={() => setEmbedFor((current) => (current?.id === fresh.id ? null : fresh))}
+                    aria-expanded={embedFor?.id === fresh.id}
+                    title="Виджет для блога или Notion: iframe или oEmbed"
+                  >
+                    Встроить
+                  </button>
                 </div>
+
+                {embedFor?.id === fresh.id && (
+                  <div className="share__embed" role="group" aria-label="Код встраивания">
+                    <p className="muted">
+                      Вставьте код в блог, Notion или Telegram-канал. Виджет показывает обложку,
+                      название и плеер; открытия виджета не расходуют лимит ссылки, а
+                      прослушивания учитываются.
+                    </p>
+                    {(() => {
+                      const code = embedCode(fresh.url, targetKind);
+                      const oembed = oembedUrl(fresh.url);
+                      if (!code) return <p className="muted">Не удалось собрать код — скопируйте ссылку.</p>;
+                      return (
+                        <>
+                          <textarea
+                            className="share__code"
+                            readOnly
+                            rows={3}
+                            value={code}
+                            aria-label="iframe для вставки"
+                            onFocus={(event) => event.currentTarget.select()}
+                          />
+                          <div className="share__freshActions">
+                            <button type="button" className="btn btn--small" onClick={() => void copy(code)}>
+                              Копировать iframe
+                            </button>
+                            {oembed && (
+                              <button type="button" className="btn btn--small btn--ghost" onClick={() => void copy(oembed)}>
+                                Копировать oEmbed
+                              </button>
+                            )}
+                            <a
+                              className="btn btn--small btn--ghost"
+                              href={`${fresh.url.replace(/\/s\//, '/embed/')}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Посмотреть виджет
+                            </a>
+                          </div>
+                          <p className="muted">
+                            Тема виджета — тёмная; для светлого блога добавьте <code>?theme=light</code>.
+                          </p>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             )}
 

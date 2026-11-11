@@ -110,6 +110,21 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - Чистая логика (`src/lib.ts`: `diagnose`, `diskState`, `humanBytes`, `expiry`, `ago`)
   под тестами; интерфейс только показывает её результат.
 
+## 8.2 Встраивание (E4): `/embed/:token` и `/api/oembed`
+
+- `services/api/src/embed.js` — чистые функции (`parseShareUrl`, `embedSize`, `embedMeta`,
+  `renderEmbedWidget`, `oembedPayload`, `oembedXml`) и CSS рядом (`embed.css` → `/embed/widget.css`).
+- Виджет не ходит в API: `<audio src="/s/:token/stream/:id">` использует гостевые маршруты,
+  поэтому статистика ссылки остаётся единой. Открытие виджета **не** инкрементирует `plays`
+  (вставка в блог не должна сжигать лимит), прослушивание пишется в `share_hits`.
+- `frame-ancestors *` без `X-Frame-Options` — иначе встраивание невозможно; всё остальное
+  закрыто (`default-src 'none'`, `Referrer-Policy: no-referrer`, `noindex`).
+- oEmbed — публичный эндпоинт без авторизации, принимает только свои адреса (`invalid_url`),
+  отдаёт `no-store` и `Access-Control-Allow-Origin: *`; `PUBLIC_URL` определяет абсолютные
+  адреса в `html`/`thumbnail_url` (за прокси без него они собираются из заголовков запроса).
+- Клиент собирает код встраивания из уже выданной ссылки (`embedCode`/`oembedUrl`
+  в `@vision/shared`), потому что токен показывается один раз.
+
 ## 9. Нативные приложения
 
 - **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`

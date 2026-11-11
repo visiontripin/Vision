@@ -1,4 +1,4 @@
-# API v0.15.0
+# API v0.16.0
 
 Базовый URL: `http://<host>:4000`. Ответы — JSON, кроме стриминга, обложек и `/metrics`.
 
@@ -98,8 +98,56 @@
 Открытия страницы инкрементируют `plays`; `stream`/`download` пишутся только в журнал,
 поэтому браузер с десятком Range-запросов не съедает лимит.
 
+### Встраивание (E4): `/embed/:token` и oEmbed
+
+Встраиваемый виджет — та же гостевая ссылка в компактном виде: одна дорожка
+(трек) или плейлист с нативным `<audio>` и кнопкой «Открыть в Vision Audio».
+Без JavaScript, без бандла, без API-запросов: работает в блоге, Notion, Telegram.
+
+| Маршрут | Ответ |
+|---|---|
+| `GET /embed/:token` | HTML без `X-Frame-Options`, `frame-ancestors *` — встраивается в `<iframe>` |
+| `GET /api/oembed?url=<ссылка>&format=json&maxwidth=&maxheight=` | oEmbed-описание (JSON по умолчанию, `format=xml` — XML) |
+| `GET /embed/:token?theme=light` | Светлая тема виджета (по умолчанию тёмная) |
+
+`url` в oEmbed — любая из наших ссылок: `/s/:token`, `/embed/:token`, с хвостовым
+слэшем и без, `http`/`https`. Чужие адреса отклоняются: `400 invalid_url`, чтобы
+oEmbed-прокси не превратился в открытый редирект. Неактивная ссылка (отозвана,
+истекла, лимит открытий) → `404 not_found`, битый параметр `format` → `400 invalid_format`.
+
+Ответ oEmbed (поля по спецификации 1.0 + наши):
+
+```json
+{
+  "version": "1.0",
+  "type": "rich",
+  "provider_name": "Vision Audio",
+  "provider_url": "https://audio.example.com",
+  "title": "Ночной микс",
+  "author_name": "…",
+  "thumbnail_url": "https://audio.example.com/s/<token>/cover/<trackId>",
+  "thumbnail_width": 512,
+  "thumbnail_height": 512,
+  "html": "<iframe src=\"https://audio.example.com/embed/<token>\" width=\"480\" height=\"180\" …></iframe>",
+  "width": 480,
+  "height": 180,
+  "vision": { "kind": "playlist", "tracks": 7, "duration": 1840 }
+}
+```
+
+Размеры: `maxwidth`/`maxheight` (40…960) подгоняют `width`/`height` с сохранением
+пропорций; по умолчанию 480×180 для трека и 480×320 для плейлиста.
+
+Виджет отдаёт `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';
+media-src 'self' https: http:; img-src 'self' data: https:; frame-ancestors *` и
+`Referrer-Policy: no-referrer`. Прослушивания внутри виджета идут тем же маршрутом
+`/s/:token/stream/:id`, поэтому учитываются в статистике ссылки как обычно;
+открытия самого виджета `plays` **не** увеличивают — иначе одна вставка в блог
+сжигала бы лимит открытий.
+
 ### Метрики
 `vision_share_created_total{kind}`, `vision_share_open_total{kind}`,
+`vision_embed_open_total{kind}`,
 `vision_share_revoked_total`, `vision_share_rotated_total`,
 `vision_share_comment_total`.
 

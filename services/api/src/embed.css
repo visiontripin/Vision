@@ -1,0 +1,148 @@
+/*
+ * Стили встраиваемого виджета (E4). Отдельный файл, а не `<style>` внутри HTML:
+ * так он кэшируется браузером при нескольких вставках на странице и не
+ * раздувает каждый ответ. Никаких внешних шрифтов и картинок.
+ */
+:root {
+  --bg: #0b0b0f;
+  --fg: #f4f4f8;
+  --muted: #9a9aab;
+  --line: #23232e;
+  --accent: #ff5a1f;
+}
+
+html[data-theme='light'] {
+  --bg: #ffffff;
+  --fg: #14141a;
+  --muted: #6b6b7b;
+  --line: #e6e6ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.w {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+}
+
+.w__cover {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--line);
+}
+
+.w__cover--empty {
+  display: block;
+}
+
+.w__body {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.w__title {
+  font-weight: 600;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.w__title:hover {
+  color: var(--accent);
+}
+
+.w__author,
+.w__missing {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.w__audio {
+  width: 100%;
+  height: 32px;
+  margin-top: 6px;
+  accent-color: var(--accent);
+}
+
+.list {
+  margin: 0;
+  padding: 0 12px 8px;
+  list-style: none;
+}
+
+.t a,
+.t--more {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.t a:hover {
+  color: var(--fg);
+}
+
+.t__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.t__time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.f {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.f a:hover {
+  color: var(--accent);
+}
+
+.gone {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  font-size: 13px;
+}
+
+.gone span {
+  color: var(--muted);
+  font-size: 12px;
+}
