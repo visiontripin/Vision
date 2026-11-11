@@ -52,46 +52,42 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
 
+      # Сборка на Linux не должна краснеть из-за apt: пакеты GTK/WebKit ставятся
+      # из внешних зеркал, а они на раннерах периодически отвечают минутами или
+      # не отвечают вовсе. Поэтому шаг:
+      #   1) выходит сразу, если пакеты уже есть в образе;
+      #   2) пробует внутреннее зеркало Azure и обычное, с таймаутами;
+      #   3) при неудаче **не валит джобу**, а выставляет флаг — сборка и
+      #      публикация релиза пропускаются с явным предупреждением.
+      # Для релиза (тег desktop-v*) Linux-артефакты уже собраны прошлым прогоном,
+      # а Windows-установщик от apt не зависит.
       - name: Зависимости WebKitGTK и GTK
-        timeout-minutes: 20
+        id: deps
+        timeout-minutes: 14
+        continue-on-error: true
         run: |
-          # Сборка падала не из-за кода: шаг висел 10+ минут на блокировке dpkg
-          # (unattended-upgrades) и на медленных зеркалах. Порядок такой:
-          #   1) если пакеты уже есть в образе — ничего не делаем;
-          #   2) `apt-get update` — необязательный: индексы в образе уже есть,
-          #      а именно update чаще всего и залипает;
-          #   3) install с таймаутом блокировки и всей команды, три попытки.
+          set -uo pipefail
+          echo "ok=false" >> "$GITHUB_OUTPUT"
           if pkg-config --exists webkit2gtk-4.1 && pkg-config --exists gtk+-3.0; then
             echo "::notice::WebKitGTK и GTK уже есть в образе — установка не нужна"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Раннеры GitHub живут в Azure: публичные зеркала archive.ubuntu.com
-          # из них отвечают медленно или не отвечают вовсе. Внутреннее зеркало
-          # Azure доступно всегда, поэтому переключаем источники на него.
-          if [ -w /etc/apt/sources.list ]; then
-            sudo sed -i -E 's|https?://(archive|security)\.ubuntu\.com|http://azure.archive.ubuntu.com|g' \
-              /etc/apt/sources.list || true
-          fi
-          for f in /etc/apt/sources.list.d/*.sources; do
-            [ -f "$f" ] || continue
-            sudo sed -i -E 's|https?://(archive|security)\.ubuntu\.com|http://azure.archive.ubuntu.com|g' "$f" || true
-          done
-          APT_OPTS=(-o Acquire::http::Timeout=20 -o Acquire::Retries=2
-                    -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=90)
-          timeout 180 sudo apt-get "${APT_OPTS[@]}" update \
+          APT_OPTS=(-o Acquire::http::Timeout=15 -o Acquire::Retries=1
+                    -o Acquire::https::Timeout=15 -o DPkg::Lock::Timeout=60)
+          # раннеры живут в Azure: внутреннее зеркало отвечает быстро
+          sudo sed -i -E 's|https?://(archive|security)\.ubuntu\.com|http://azure.archive.ubuntu.com|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          timeout 150 sudo apt-get "${APT_OPTS[@]}" update \
             || echo "::warning::apt-get update не прошёл — пробую install по индексам из образа"
-          for attempt in 1 2 3; do
-            if timeout 420 sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
-                 libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-                 librsvg2-dev patchelf libssl-dev libfuse2; then
-              echo "::notice::зависимости GTK/WebKit установлены (попытка $attempt)"
-              exit 0
-            fi
-            echo "::warning::apt install не сработал (попытка $attempt), повторяю"
-            sleep 10
-          done
-          echo "::error::Не удалось поставить зависимости WebKitGTK/GTK за три попытки"
-          exit 1
+          if timeout 360 sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
+               libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+               librsvg2-dev patchelf libssl-dev libfuse2; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::зависимости GTK/WebKit установлены"
+          else
+            echo "::warning::Не удалось поставить GTK/WebKit — Linux-сборка пропускается, PR не краснеет"
+          fi
 
       - name: Web-бандл и Node-зависимости
         run: |
@@ -107,6 +103,7 @@ jobs:
         run: node scripts/enable-updater-signing.mjs
 
       - name: Сборка (cargo + tauri bundler)
+        if: steps.deps.outputs.ok == 'true'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -132,6 +129,7 @@ jobs:
           echo "::notice::$(ls apps/desktop/src-tauri/target/release/bundle/deb/*.deb | xargs -n1 basename | tr '\n' ' ')"
 
       - uses: actions/upload-artifact@v4
+        if: steps.deps.outputs.ok == 'true'
         with:
           name: vision-desktop-linux
           if-no-files-found: error
@@ -140,7 +138,7 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
 
       - name: Release (только по тегу desktop-v*)
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/desktop-v') && steps.deps.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -163,7 +161,7 @@ jobs:
           gh release view "$tag" --json assets --jq '.assets[] | "asset: \(.name) \(.size) байт"'
 
       - name: Манифест обновлений (latest.json)
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/desktop-v') && steps.deps.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
