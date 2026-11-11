@@ -27,7 +27,9 @@ const { PLAY_DEDUPE_MS, dashboard, logPlayback } = await import('../src/dashboar
  */
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../..');
-const PORT = 4797;
+// 4797 занят панелью (console.test.js): у каждого файла свой порт, иначе в CI
+// `node --test` запускает файлы параллельно и второй сервер падает с EADDRINUSE.
+const PORT = 4800;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-11-11T20:00:00Z');
