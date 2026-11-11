@@ -133,6 +133,11 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
+  chevronDown: (
+    <>
+      <path d="M6 9.5l6 6 6-6" />
+    </>
+  ),
   share: (
     <>
       <circle cx="18" cy="5.5" r="2.5" />
@@ -275,6 +280,7 @@ export function Waveform({
   height = 42,
   compact = false,
   seekable = true,
+  timeAt,
 }: {
   peaks: number[] | null;
   progress: number;
@@ -282,9 +288,12 @@ export function Waveform({
   height?: number;
   compact?: boolean;
   seekable?: boolean;
+  /** формат времени под курсором; без него подсказка не рисуется */
+  timeAt?: (fraction: number) => string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(600);
+  const [hover, setHover] = useState<number | null>(null);
   const dragging = useRef(false);
 
   useEffect(() => {
@@ -357,33 +366,45 @@ export function Waveform({
   };
 
   return (
-    <canvas
-      ref={canvasRef}
-      className={`waveform${seekable ? ' waveform--seekable' : ''}`}
-      style={{ height }}
-      role={seekable ? 'slider' : 'img'}
-      aria-label={seekable ? 'Позиция воспроизведения' : 'Форма волны'}
-      aria-valuemin={seekable ? 0 : undefined}
-      aria-valuemax={seekable ? 100 : undefined}
-      aria-valuenow={seekable ? Math.round(progress * 100) : undefined}
-      tabIndex={seekable ? 0 : -1}
-      onPointerDown={(event) => {
-        if (!seekable) return;
-        dragging.current = true;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        seekFromEvent(event.clientX);
-      }}
-      onPointerMove={(event) => {
-        if (dragging.current) seekFromEvent(event.clientX);
-      }}
-      onPointerUp={() => {
-        dragging.current = false;
-      }}
-      onKeyDown={(event) => {
-        if (!seekable || !onSeek) return;
-        if (event.key === 'ArrowLeft') onSeek(Math.max(0, progress - 0.02));
-        if (event.key === 'ArrowRight') onSeek(Math.min(1, progress + 0.02));
-      }}
-    />
+    <div className={`waveform__wrap${timeAt ? ' waveform__wrap--hover' : ''}`} style={{ height }}>
+      <canvas
+        ref={canvasRef}
+        className={`waveform${seekable ? ' waveform--seekable' : ''}`}
+        style={{ height }}
+        role={seekable ? 'slider' : 'img'}
+        aria-label={seekable ? 'Позиция воспроизведения' : 'Форма волны'}
+        aria-valuemin={seekable ? 0 : undefined}
+        aria-valuemax={seekable ? 100 : undefined}
+        aria-valuenow={seekable ? Math.round(progress * 100) : undefined}
+        tabIndex={seekable ? 0 : -1}
+        onPointerDown={(event) => {
+          if (!seekable) return;
+          dragging.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          seekFromEvent(event.clientX);
+        }}
+        onPointerMove={(event) => {
+          if (dragging.current) seekFromEvent(event.clientX);
+        }}
+        onPointerUp={() => {
+          dragging.current = false;
+          setHover(null);
+        }}
+        onPointerLeave={() => {
+          if (!dragging.current) setHover(null);
+        }}
+        onPointerMoveCapture={(event) => {
+          if (!timeAt) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          setHover(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)));
+        }}
+        onKeyDown={(event) => {
+          if (!seekable || !onSeek) return;
+          if (event.key === 'ArrowLeft') onSeek(Math.max(0, progress - 0.02));
+          if (event.key === 'ArrowRight') onSeek(Math.min(1, progress + 0.02));
+        }}
+      />
+      {timeAt && hover !== null && <span className="waveform__hover">{timeAt(hover)}</span>}
+    </div>
   );
 }

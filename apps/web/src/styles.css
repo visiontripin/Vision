@@ -1367,6 +1367,13 @@ select:focus {
   box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.35);
 }
 
+.player__nowWrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .player__now {
   display: flex;
   align-items: center;
@@ -2875,5 +2882,326 @@ select:focus {
   .shares__actions .btn,
   .share__rowActions .btn {
     flex: 1;
+  }
+}
+
+/* ============================ полный экран плеера ============================ */
+/* Тап по нижней панели (или F / ⌃) открывает экран «сейчас играет»: обложка-фон,
+   большая волна, время над курсором. Всё на fixed-слоях, поэтому вёрстка под ним
+   не пересчитывается и ничего не «прыгает» при открытии. */
+
+.player__nowWrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.player__now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 8px;
+  margin-left: -8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.player__now:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.player__now:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.player__expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--muted-2);
+}
+
+.player__expandIcon {
+  transform: rotate(180deg);
+}
+
+.np {
+  position: fixed;
+  inset: 0;
+  z-index: 65; /* выше панели плеера (50), ниже модалок (70) и тостов */
+  display: flex;
+  flex-direction: column;
+}
+
+.np__backdrop {
+  position: absolute;
+  inset: 0;
+  background-color: var(--bg);
+}
+
+.np__sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(760px, 100%);
+  height: 100%;
+  margin: 0 auto;
+  padding: 18px 24px calc(22px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.np__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.np__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.np__topActions {
+  display: flex;
+  gap: 8px;
+}
+
+.np__round {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: rgba(18, 18, 24, 0.72);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.np__round:hover:not(:disabled) {
+  background: rgba(30, 30, 40, 0.9);
+}
+
+.np__round:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.np__percent {
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.np__cover {
+  display: flex;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.np__cover .cover {
+  border-radius: 18px;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6);
+}
+
+.np__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.np__title {
+  font-size: clamp(22px, 4vw, 30px);
+  line-height: 1.15;
+  letter-spacing: -0.6px;
+}
+
+.np__artist {
+  color: rgba(244, 244, 248, 0.78);
+  font-size: 14.5px;
+}
+
+.np__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.np__wave {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.np__times {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.np__times strong {
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.waveform__wrap {
+  position: relative;
+  width: 100%;
+}
+
+.waveform__wrap--hover .waveform {
+  cursor: pointer;
+}
+
+.waveform__hover {
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: rgba(10, 10, 14, 0.92);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.np__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.np__control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(244, 244, 248, 0.85);
+  cursor: pointer;
+}
+
+.np__control:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.np__control.is-active {
+  color: var(--accent);
+}
+
+.np__play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #120a05;
+  cursor: pointer;
+  box-shadow: 0 14px 40px rgba(255, 90, 31, 0.4);
+}
+
+.np__play:hover {
+  filter: brightness(1.06);
+}
+
+.np__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.np__ghost {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.np__ghost:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.np__ghost.is-active {
+  color: var(--accent);
+  border-color: rgba(255, 90, 31, 0.5);
+}
+
+.np__hint {
+  color: var(--muted-2);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.np__link {
+  border: none;
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .np__sheet {
+    gap: 14px;
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .np__cover .cover {
+    border-radius: 14px;
+  }
+
+  .np__play {
+    width: 64px;
+    height: 64px;
+  }
+
+  .np__control {
+    width: 46px;
+    height: 46px;
   }
 }

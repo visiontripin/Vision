@@ -273,6 +273,11 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
         cover={currentCover}
         onClose={() => setNowPlayingOpen(false)}
         onDownload={() => player.current && toggleDownload(player.current)}
+        queueLength={player.queue.length}
+        onOpenQueue={() => {
+          setNowPlayingOpen(false);
+          setTab('tracks');
+        }}
       />
 
       <SettingsScreen

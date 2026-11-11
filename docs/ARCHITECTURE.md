@@ -93,11 +93,18 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - Роутинг: hash-роутер (без зависимостей): `#/`, `#/liked`, `#/playlists/:id`, `#/stats`.
 - Стили: CSS-переменные-токены, тёмная тема, orange-акцент; компоненты лежат в `src/components`.
 - Клиентские пики: `AudioContext.decodeAudioData` → RMS по блокам → 200 значений.
+- Полный экран плеера — `src/components/NowPlaying.tsx` (слой `z-index: 65`, состояние только
+  из `usePlayer`). Волна рисуется на `<canvas>` (`Waveform` в `ui.tsx`), перемотка —
+  `pointerdown/move` + `setPointerCapture`, подсказка времени — параметр `timeAt`.
 
 ## 9. Нативные приложения
 
 - **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`
   для офлайн-кэша, `expo-notifications` для медиа-контролов. Общий клиент — `@vision/shared`.
+- **Mobile, полный плеер**: `src/screens/NowPlaying.tsx` (модалка на весь экран) + волна
+  `src/components/Waveform.tsx` на `PanResponder` (без сторонних слайдеров). Геометрия
+  волны — чистая `src/lib/wave.ts` под `node --test`: усреднение пиков, раскладка столбцов,
+  «проигран ли столбец», автоскролл, формат времени.
 - **Desktop**: Tauri 2, `frontendDist` указывает на `apps/web/dist`; плагины: `global-shortcut`,
   `tray-icon`, `updater`. Capabilities — минимальные (окно, события, hotkeys, updater).
   Трей и «свернуть в трей» — в `src-tauri/src/main.rs`, связь с плеером — `apps/web/src/desktop.ts`
