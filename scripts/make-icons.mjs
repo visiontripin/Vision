@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIR = path.join(ROOT, 'apps/web/public');
 const MOBILE_DIR = path.join(ROOT, 'apps/mobile/assets');
+const CONSOLE_ICONS = path.join(ROOT, 'apps/console/src-tauri/icons');
+const DESKTOP_ICONS = path.join(ROOT, 'apps/desktop/src-tauri/icons');
 
 const BG = [255, 90, 31]; // #ff5a1f — акцент приложения
 const INK = [8, 8, 11]; // #08080b
@@ -132,6 +134,28 @@ function render(size, { padding, rounded, background = BG, ink = INK, transparen
   ]);
 }
 
+/**
+ * ICO из PNG: Windows-оболочка Tauri встраивает иконку в .exe через `icon.ico`,
+ * без неё `tauri-build` падает ещё до компиляции. Формат ICO допускает PNG внутри
+ * (Vista+), поэтому достаточно обернуть готовый 256×256 — без новых зависимостей.
+ */
+function icoFromPng(png, size) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type: icon
+  header.writeUInt16LE(1, 4); // одно изображение
+  const entry = Buffer.alloc(16);
+  entry[0] = size >= 256 ? 0 : size; // 0 означает 256
+  entry[1] = size >= 256 ? 0 : size;
+  entry[2] = 0; // палитра
+  entry[3] = 0; // reserved
+  entry.writeUInt16LE(1, 4); // цветовые плоскости
+  entry.writeUInt16LE(32, 6); // бит на пиксель
+  entry.writeUInt32LE(png.length, 8);
+  entry.writeUInt32LE(22, 12); // смещение данных
+  return Buffer.concat([header, entry, png]);
+}
+
 const targets = [
   // ---- PWA (apps/web/public) ----
   { dir: WEB_DIR, file: 'icon-192.png', size: 192, padding: 0.14, rounded: true },
@@ -143,6 +167,18 @@ const targets = [
   // adaptive icon: прозрачный фон + акцентная волна (Android накладывает маску сам)
   { dir: MOBILE_DIR, file: 'adaptive-icon.png', size: 1024, padding: 0.3, rounded: false, transparent: true },
   { dir: MOBILE_DIR, file: 'splash-icon.png', size: 1024, padding: 0.34, rounded: false, transparent: true },
+  // ---- Vision Server (apps/console/src-tauri/icons) ----
+  // Tauri требует PNG здесь; .ico/.icns делает `tauri icon` (см. ниже в выводе)
+  { dir: CONSOLE_ICONS, file: 'icon.png', size: 1024, padding: 0.18, rounded: false },
+  { dir: CONSOLE_ICONS, file: '128x128.png', size: 128, padding: 0.18, rounded: false },
+  { dir: CONSOLE_ICONS, file: '128x128@2x.png', size: 256, padding: 0.18, rounded: false },
+  { dir: CONSOLE_ICONS, file: '32x32.png', size: 32, padding: 0.18, rounded: false },
+  // ---- Десктоп-плеер (apps/desktop/src-tauri/icons) ----
+  // Windows-бандлеру нужен .ico, NSIS/MSI без него падают ещё до компиляции
+  { dir: DESKTOP_ICONS, file: 'icon.png', size: 1024, padding: 0.18, rounded: false },
+  { dir: DESKTOP_ICONS, file: '128x128.png', size: 128, padding: 0.18, rounded: false },
+  { dir: DESKTOP_ICONS, file: '128x128@2x.png', size: 256, padding: 0.18, rounded: false },
+  { dir: DESKTOP_ICONS, file: '32x32.png', size: 32, padding: 0.18, rounded: false },
 ];
 
 for (const target of targets) {
@@ -151,3 +187,13 @@ for (const target of targets) {
   writeFileSync(path.join(target.dir, target.file), png);
   console.log(`✓ ${path.relative(ROOT, path.join(target.dir, target.file))} — ${(png.length / 1024).toFixed(1)} КБ`);
 }
+
+// Windows .exe требует .ico; Tauri ищет его в icons/.
+const ico = icoFromPng(render(256, { size: 256, padding: 0.18, rounded: false }), 256);
+writeFileSync(path.join(CONSOLE_ICONS, 'icon.ico'), ico);
+console.log(`✓ apps/console/src-tauri/icons/icon.ico — ${(ico.length / 1024).toFixed(1)} КБ`);
+
+// то же для десктопного плеера: без .ico не собираются .msi/.exe
+mkdirSync(DESKTOP_ICONS, { recursive: true });
+writeFileSync(path.join(DESKTOP_ICONS, 'icon.ico'), ico);
+console.log(`✓ apps/desktop/src-tauri/icons/icon.ico — ${(ico.length / 1024).toFixed(1)} КБ`);

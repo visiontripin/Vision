@@ -133,6 +133,35 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
+  /** Дашборд: столбики, а не «статистика» — раздел про время, не про состав. */
+  chart: (
+    <>
+      <path d="M5 19V11" />
+      <path d="M12 19V5" />
+      <path d="M19 19v-5" />
+    </>
+  ),
+  chevronDown: (
+    <>
+      <path d="M6 9.5l6 6 6-6" />
+    </>
+  ),
+  share: (
+    <>
+      <circle cx="18" cy="5.5" r="2.5" />
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="18" cy="18.5" r="2.5" />
+      <path d="M8.2 10.8l7.6-4" />
+      <path d="M8.2 13.2l7.6 4" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M12 4v11" />
+      <path d="M7.5 11l4.5 4.5 4.5-4.5" />
+      <path d="M4 19h16" />
+    </>
+  ),
   external: (
     <>
       <path d="M14 4h6v6" />
@@ -145,6 +174,22 @@ const ICONS: Record<string, ReactNode> = {
       <circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none" />
       <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
       <circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </>
+  ),
+  /** «Для вас»: искры — подборка, а не раздел библиотеки. */
+  sparkle: (
+    <>
+      <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+      <path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" />
+    </>
+  ),
+  /** Правила/настройки: три ползунка — не шестерёнка общего вида. */
+  settings: (
+    <>
+      <path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3" strokeLinecap="round" />
+      <circle cx="15" cy="7" r="2.2" />
+      <circle cx="9" cy="12" r="2.2" />
+      <circle cx="15" cy="17" r="2.2" />
     </>
   ),
   logo: (
@@ -259,6 +304,7 @@ export function Waveform({
   height = 42,
   compact = false,
   seekable = true,
+  timeAt,
 }: {
   peaks: number[] | null;
   progress: number;
@@ -266,9 +312,12 @@ export function Waveform({
   height?: number;
   compact?: boolean;
   seekable?: boolean;
+  /** формат времени под курсором; без него подсказка не рисуется */
+  timeAt?: (fraction: number) => string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(600);
+  const [hover, setHover] = useState<number | null>(null);
   const dragging = useRef(false);
 
   useEffect(() => {
@@ -341,33 +390,45 @@ export function Waveform({
   };
 
   return (
-    <canvas
-      ref={canvasRef}
-      className={`waveform${seekable ? ' waveform--seekable' : ''}`}
-      style={{ height }}
-      role={seekable ? 'slider' : 'img'}
-      aria-label={seekable ? 'Позиция воспроизведения' : 'Форма волны'}
-      aria-valuemin={seekable ? 0 : undefined}
-      aria-valuemax={seekable ? 100 : undefined}
-      aria-valuenow={seekable ? Math.round(progress * 100) : undefined}
-      tabIndex={seekable ? 0 : -1}
-      onPointerDown={(event) => {
-        if (!seekable) return;
-        dragging.current = true;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        seekFromEvent(event.clientX);
-      }}
-      onPointerMove={(event) => {
-        if (dragging.current) seekFromEvent(event.clientX);
-      }}
-      onPointerUp={() => {
-        dragging.current = false;
-      }}
-      onKeyDown={(event) => {
-        if (!seekable || !onSeek) return;
-        if (event.key === 'ArrowLeft') onSeek(Math.max(0, progress - 0.02));
-        if (event.key === 'ArrowRight') onSeek(Math.min(1, progress + 0.02));
-      }}
-    />
+    <div className={`waveform__wrap${timeAt ? ' waveform__wrap--hover' : ''}`} style={{ height }}>
+      <canvas
+        ref={canvasRef}
+        className={`waveform${seekable ? ' waveform--seekable' : ''}`}
+        style={{ height }}
+        role={seekable ? 'slider' : 'img'}
+        aria-label={seekable ? 'Позиция воспроизведения' : 'Форма волны'}
+        aria-valuemin={seekable ? 0 : undefined}
+        aria-valuemax={seekable ? 100 : undefined}
+        aria-valuenow={seekable ? Math.round(progress * 100) : undefined}
+        tabIndex={seekable ? 0 : -1}
+        onPointerDown={(event) => {
+          if (!seekable) return;
+          dragging.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          seekFromEvent(event.clientX);
+        }}
+        onPointerMove={(event) => {
+          if (dragging.current) seekFromEvent(event.clientX);
+        }}
+        onPointerUp={() => {
+          dragging.current = false;
+          setHover(null);
+        }}
+        onPointerLeave={() => {
+          if (!dragging.current) setHover(null);
+        }}
+        onPointerMoveCapture={(event) => {
+          if (!timeAt) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          setHover(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)));
+        }}
+        onKeyDown={(event) => {
+          if (!seekable || !onSeek) return;
+          if (event.key === 'ArrowLeft') onSeek(Math.max(0, progress - 0.02));
+          if (event.key === 'ArrowRight') onSeek(Math.min(1, progress + 0.02));
+        }}
+      />
+      {timeAt && hover !== null && <span className="waveform__hover">{timeAt(hover)}</span>}
+    </div>
   );
 }

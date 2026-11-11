@@ -45,3 +45,12 @@ export async function saveBase(base: string): Promise<string> {
   }
   return value;
 }
+
+/** Токен владельца: в приложении он живёт в защищённом хранилище ОС. */
+export async function loadToken(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(KEYS.token);
+  } catch {
+    return null;
+  }
+}

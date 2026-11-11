@@ -287,6 +287,112 @@ export function getPlaylist(id) {
   return listPlaylists().find((playlist) => playlist.id === id) || null;
 }
 
+/**
+ * Библиотека вместе с историей — вход для персональных подборок (J3).
+ *
+ * Один запрос, а не N: `progress` считается из позиции и длительности, поэтому
+ * «Продолжить слушать» знает о незаконченном треке без похода в `/api/history`.
+ * Ограничение 2000 — как у списка треков: подборки строятся из того, что человек
+ * реально листает.
+ */
+export function listPersonalTracks(limit = 2000) {
+  const rows = db
+    .prepare(
+      `SELECT t.id, t.title, t.artist, t.genre, t.duration, t.plays, t.liked, t.created_at,
+              l.updated_at AS listened_at, l.position AS listen_position,
+              l.duration AS listen_duration, l.completed AS listen_completed
+       FROM tracks t
+       LEFT JOIN listens l ON l.track_id = t.id
+       ORDER BY t.created_at DESC
+       LIMIT ?`
+    )
+    .all(Math.min(Math.max(Number(limit) || 2000, 1), 5000));
+
+  return rows.map((row) => {
+    const position = Number(row.listen_position ?? 0);
+    const duration = Number(row.listen_duration ?? 0) || Number(row.duration ?? 0);
+    const progress = duration > 0 ? Math.min(1, Math.max(0, position / duration)) : null;
+    return {
+      id: row.id,
+      title: row.title,
+      artist: row.artist,
+      genre: row.genre ?? null,
+      duration: row.duration,
+      plays: row.plays,
+      liked: Boolean(row.liked),
+      addedAt: row.created_at,
+      listenedAt: row.listened_at ?? null,
+      // 300-секундный трек, на котором остановились на 120 — это 0.4
+      progress: row.listen_completed ? 1 : progress,
+    };
+  });
+}
+
+/* --------------------------- умные плейлисты ----------------------------- */
+
+export function listSmartPlaylists() {
+  return db
+    .prepare('SELECT * FROM smart_playlists ORDER BY created_at DESC')
+    .all()
+    .map(toSmartPlaylist);
+}
+
+export function getSmartPlaylist(id) {
+  const row = db.prepare('SELECT * FROM smart_playlists WHERE id = ?').get(id);
+  return toSmartPlaylist(row);
+}
+
+function toSmartPlaylist(row) {
+  if (!row) return null;
+  let rules = null;
+  try {
+    rules = JSON.parse(row.rules);
+  } catch {
+    rules = null; // битые правила не должны ронять список
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? null,
+    rules,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function insertSmartPlaylist({ id, name, description, rules, createdAt }) {
+  db.prepare(
+    'INSERT INTO smart_playlists (id, name, description, rules, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, name, description ?? null, JSON.stringify(rules), createdAt, createdAt);
+}
+
+export function updateSmartPlaylist(id, { name, description, rules }) {
+  db.prepare('UPDATE smart_playlists SET name = ?, description = ?, rules = ?, updated_at = ? WHERE id = ?')
+    .run(name, description ?? null, JSON.stringify(rules), new Date().toISOString(), id);
+}
+
+export function deleteSmartPlaylist(id) {
+  db.prepare('DELETE FROM smart_playlists WHERE id = ?').run(id);
+}
+
+/**
+ * Треки умного плейлиста: правила → SQL. Лимит берётся из правил (это часть
+ * «Топ-40», а не украшение запроса).
+ */
+export function listSmartTracks(query) {
+  const rows = db
+    .prepare(`SELECT t.* ${query.from} WHERE ${query.where} ORDER BY ${query.order} LIMIT ?`)
+    .all(...query.params, query.limit);
+  return rows.map((row) => toTrack(row));
+}
+
+/** Сколько всего подходит под правила — нужно, чтобы показать «40 из 213». */
+export function countSmartTracks(query) {
+  return db
+    .prepare(`SELECT COUNT(*) AS n ${query.from} WHERE ${query.where}`)
+    .get(...query.params).n;
+}
+
 /* ------------------------------- статистика ------------------------------ */
 
 export function stats() {
@@ -432,4 +538,247 @@ export function updateExternalNote(id, note) {
 
 export function deleteExternal(id) {
   return db.prepare('DELETE FROM external_tracks WHERE id = ?').run(id).changes > 0;
+}
+
+/* ------------------------------ приватные ссылки -------------------------- */
+
+function toShare(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    targetKind: row.target_kind,
+    targetId: row.target_id,
+    title: row.title ?? null,
+    expiresAt: row.expires_at ?? null,
+    maxPlays: row.max_plays ?? null,
+    plays: row.plays,
+    revokedAt: row.revoked_at ?? null,
+    lastSeenAt: row.last_seen_at ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+export function insertShare(share) {
+  db.prepare(
+    `INSERT INTO shares (id, token_hash, target_kind, target_id, title, expires_at, max_plays,
+                         plays, revoked_at, last_seen_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?)`
+  ).run(
+    share.id, share.tokenHash, share.targetKind, share.targetId,
+    share.title ?? null, share.expiresAt ?? null, share.maxPlays ?? null, share.createdAt
+  );
+  return getShare(share.id);
+}
+
+export function getShare(id) {
+  return toShare(db.prepare('SELECT * FROM shares WHERE id = ?').get(id));
+}
+
+export function getShareByTokenHash(tokenHash) {
+  return toShare(db.prepare('SELECT * FROM shares WHERE token_hash = ?').get(tokenHash));
+}
+
+/**
+ * Поиск по действующему и по предыдущему токену. Второй нужен, чтобы человек
+ * со старой ссылкой увидел «ссылка перевыпущена», а не «такой ссылки нет».
+ */
+export function findShareByTokenHash(tokenHash) {
+  const current = db.prepare('SELECT * FROM shares WHERE token_hash = ?').get(tokenHash);
+  if (current) return { share: toShare(current), previous: false };
+  const previous = db.prepare('SELECT * FROM shares WHERE prev_token_hash = ?').get(tokenHash);
+  return previous ? { share: toShare(previous), previous: true } : null;
+}
+
+/** Перевыпуск: старый хеш остаётся в prev_token_hash, новый становится рабочим. */
+export function rotateShareToken(id, tokenHash) {
+  db.prepare(
+    'UPDATE shares SET prev_token_hash = token_hash, token_hash = ? WHERE id = ?'
+  ).run(tokenHash, id);
+  return getShare(id);
+}
+
+export function listShares({ targetKind, targetId, includeRevoked = false } = {}) {
+  const clauses = [];
+  const params = [];
+  if (targetKind) {
+    clauses.push('target_kind = ?');
+    params.push(targetKind);
+  }
+  if (targetId) {
+    clauses.push('target_id = ?');
+    params.push(targetId);
+  }
+  if (!includeRevoked) clauses.push("revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)");
+  if (!includeRevoked) params.push(new Date().toISOString());
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return db
+    .prepare(`SELECT * FROM shares ${where} ORDER BY created_at DESC`)
+    .all(...params)
+    .map(toShare);
+}
+
+export function updateShare(id, patch = {}) {
+  const fields = [];
+  const values = [];
+  const map = { title: 'title', expiresAt: 'expires_at', maxPlays: 'max_plays' };
+  for (const [key, column] of Object.entries(map)) {
+    if (key in patch) {
+      fields.push(`${column} = ?`);
+      values.push(patch[key]);
+    }
+  }
+  if (!fields.length) return getShare(id);
+  values.push(id);
+  db.prepare(`UPDATE shares SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  return getShare(id);
+}
+
+export function revokeShare(id) {
+  const result = db
+    .prepare('UPDATE shares SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL')
+    .run(new Date().toISOString(), id);
+  return result.changes > 0;
+}
+
+export function deleteShare(id) {
+  return db.prepare('DELETE FROM shares WHERE id = ?').run(id).changes > 0;
+}
+
+/**
+ * Журнал обращений по ссылке. `plays` растёт только на открытие страницы:
+ * браузер делает несколько Range-запросов на один трек, и считать каждый
+ * из них «прослушиванием» значило бы врать в статистике и жечь лимит открытий.
+ */
+export function recordShareHit(id, { kind = 'open', ipHash = null } = {}) {
+  const now = new Date().toISOString();
+  db.exec('BEGIN');
+  try {
+    db.prepare(
+      `INSERT INTO share_hits (share_id, ip_hash, kind, at) VALUES (?, ?, ?, ?)`
+    ).run(id, ipHash, kind, now);
+    if (kind === 'open') {
+      db.prepare('UPDATE shares SET plays = plays + 1, last_seen_at = ? WHERE id = ?').run(now, id);
+    } else {
+      db.prepare('UPDATE shares SET last_seen_at = ? WHERE id = ?').run(now, id);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Статистика ссылки: сколько открытий и с каких адресов (только хеши). */
+export function shareStats(id) {
+  const hits = db
+    .prepare('SELECT kind, COUNT(*) AS n FROM share_hits WHERE share_id = ? GROUP BY kind')
+    .all(id);
+  const visitors = db
+    .prepare('SELECT COUNT(DISTINCT ip_hash) AS n FROM share_hits WHERE share_id = ? AND ip_hash IS NOT NULL')
+    .get(id);
+  return {
+    hits: Object.fromEntries(hits.map((row) => [row.kind, row.n])),
+    visitors: visitors?.n ?? 0,
+    lastHitAt: db.prepare('SELECT MAX(at) AS at FROM share_hits WHERE share_id = ?').get(id)?.at ?? null,
+  };
+}
+
+/** Удалённый трек/плейлист не должен оставлять рабочие ссылки. */
+export function revokeSharesForTarget(targetKind, targetId) {
+  return db
+    .prepare('UPDATE shares SET revoked_at = ? WHERE target_kind = ? AND target_id = ? AND revoked_at IS NULL')
+    .run(new Date().toISOString(), targetKind, targetId).changes;
+}
+
+/* --------------------------- комментарии к секунде ------------------------- */
+
+/**
+ * Лента комментариев привязана к ссылке и треку: гость видит только тред
+ * присланного микса. `author_hash` — не PII, а способ понять «свой ли это
+ * комментарий» и притормозить спам; сырого IP нет.
+ */
+function toShareComment(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    shareId: row.share_id,
+    trackId: row.track_id,
+    at: row.at_seconds,
+    author: row.author,
+    authorHash: row.author_hash ?? null,
+    body: row.body,
+    createdAt: row.created_at,
+    deletedAt: row.deleted_at ?? null,
+  };
+}
+
+export function insertShareComment(comment) {
+  db.prepare(
+    `INSERT INTO share_comments (id, share_id, track_id, at_seconds, author, author_hash, body,
+                                 created_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+  ).run(
+    comment.id, comment.shareId, comment.trackId, comment.at, comment.author,
+    comment.authorHash ?? null, comment.body, comment.createdAt
+  );
+  return getShareComment(comment.id);
+}
+
+export function getShareComment(id) {
+  return toShareComment(db.prepare('SELECT * FROM share_comments WHERE id = ?').get(id));
+}
+
+/**
+ * Список для гостя и владельца. Удалённые не отдаём (тред не рвём в БД, но
+ * наружу «[удалено]» не нужно), сортировка по времени в треке.
+ */
+export function listShareComments({ shareId, trackId = null, includeDeleted = false, limit = 500 } = {}) {
+  const where = ['share_id = ?'];
+  const values = [shareId];
+  if (trackId) {
+    where.push('track_id = ?');
+    values.push(trackId);
+  }
+  if (!includeDeleted) where.push('deleted_at IS NULL');
+  values.push(Math.min(Math.max(Number(limit) || 500, 1), 2000));
+  return db
+    .prepare(
+      `SELECT * FROM share_comments WHERE ${where.join(' AND ')}
+       ORDER BY at_seconds ASC, created_at ASC LIMIT ?`
+    )
+    .all(...values)
+    .map(toShareComment);
+}
+
+/** Сколько комментариев по ссылке: для бейджа в списке ссылок владельца. */
+export function countShareComments(shareId, trackId = null) {
+  const row = trackId
+    ? db.prepare('SELECT COUNT(*) AS n FROM share_comments WHERE share_id = ? AND track_id = ? AND deleted_at IS NULL').get(shareId, trackId)
+    : db.prepare('SELECT COUNT(*) AS n FROM share_comments WHERE share_id = ? AND deleted_at IS NULL').get(shareId);
+  return row?.n ?? 0;
+}
+
+/** Антиспам: сколько комментариев с одного адреса по ссылке за последние N минут. */
+export function countRecentComments(shareId, authorHash, windowMs = 60_000) {
+  const since = new Date(Date.now() - windowMs).toISOString();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM share_comments
+       WHERE share_id = ? AND author_hash = ? AND created_at >= ?`
+    )
+    .get(shareId, authorHash, since);
+  return row?.n ?? 0;
+}
+
+/** Мягкое удаление: тред ссылок остаётся, текст гостям больше не отдаётся. */
+export function deleteShareComment(id) {
+  return db
+    .prepare('UPDATE share_comments SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL')
+    .run(new Date().toISOString(), id).changes > 0;
+}
+
+/** Удаление ссылки не должно оставлять «сиротские» комментарии. */
+export function deleteCommentsForShare(shareId) {
+  return db.prepare('DELETE FROM share_comments WHERE share_id = ?').run(shareId).changes;
 }

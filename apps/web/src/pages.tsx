@@ -4,11 +4,21 @@ import {
   formatDuration,
   type ExternalTrack,
   type HistoryEntry,
+  type CrashItem,
+  type CrashSummary,
+  type Dashboard,
+  type PersonalFeed,
   type Playlist,
+  type Share,
+  type SmartPlaylist,
   type Track,
 } from '@vision/shared';
-import { api, IS_LOCAL_MODE } from './api';
+import { api, apiBase, IS_LOCAL_MODE } from './api';
 import { clearOffline, formatBytes as formatOfflineBytes, setOfflineLimitMb, useOffline } from './offline';
+import { readSnapshot, snapshotAge } from './library-cache';
+import { ShareModal } from './components/ShareModal';
+import { SmartPlaylistForm } from './components/SmartPlaylistForm';
+import { toRules } from './smart-form';
 import { TrackList } from './components/TrackList';
 import { useLibrary } from './state/library';
 import { usePlayer } from './state/player';
@@ -81,6 +91,130 @@ function useServerSearch(search: string, sort: SortValue) {
   }, [query, sort]);
 
   return result;
+}
+
+/**
+ * «Для вас» (J3): подборки из собственной истории — без внешних сервисов и без
+ * «рекомендаций», которые нечем объяснить. У каждой секции есть причина, и это
+ * главное отличие от бесконечной ленты: человек видит, **почему** эти треки.
+ *
+ * В локальном режиме (IndexedDB на GitHub Pages) подборок нет: серверная история
+ * прослушиваний там не ведётся, а притворяться, что мы что-то знаем, нельзя.
+ */
+export function PersonalPage() {
+  const player = usePlayer();
+  const [feed, setFeed] = useState<PersonalFeed | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) return;
+    let cancelled = false;
+    api
+      .personal()
+      .then((result) => {
+        if (!cancelled) setFeed(result);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Не удалось собрать подборки');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (IS_LOCAL_MODE) {
+    return (
+      <section className="page">
+        <header className="page__head">
+          <div>
+            <h1>Для вас</h1>
+            <p>Подборки по истории прослушиваний</p>
+          </div>
+        </header>
+        <div className="empty">
+          <h3>Здесь нужен сервер</h3>
+          <p>
+            Подборки строятся по истории прослушиваний на сервере. В локальном режиме
+            (GitHub Pages) история не ведётся — откройте свою копию Vision Server.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="page">
+        <div className="empty">
+          <h3>Подборки не собрались</h3>
+          <p>{error}</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (!feed) {
+    return (
+      <section className="page">
+        <div className="skeleton-list">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="page">
+      <header className="page__head">
+        <div>
+          <h1>{feed.greeting}</h1>
+          <p>
+            {feed.sections.length
+              ? `${feed.libraryTracks} треков в библиотеке · подборки обновляются раз в день`
+              : 'Пока нечего показать'}
+          </p>
+        </div>
+        <a className="btn btn--ghost btn--sm" href="#/">
+          <Icon name="home" size={15} />
+          Вся библиотека
+        </a>
+      </header>
+
+      {!feed.sections.length && (
+        <div className="empty">
+          <h3>Подборок пока нет</h3>
+          <p>{feed.hint ?? 'Послушайте несколько треков — и они появятся.'}</p>
+        </div>
+      )}
+
+      {feed.sections.map((section) => (
+        <div className="personal-section" key={section.key}>
+          <div className="personal-section__head">
+            <div>
+              <h2>{section.title}</h2>
+              <p>{section.reason}</p>
+            </div>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => player.playQueue(section.tracks, 0)}
+            >
+              <Icon name="play" size={14} />
+              Слушать всё
+            </button>
+          </div>
+          <TrackList
+            tracks={section.tracks}
+            onPlay={(track) => player.play(track, section.tracks)}
+            emptyTitle="Пусто"
+            emptyHint="Подборка пересчитается после следующих прослушиваний."
+          />
+        </div>
+      ))}
+    </section>
+  );
 }
 
 export function LibraryPage({ search, onUpload }: LibraryProps) {
@@ -278,6 +412,45 @@ export function PlaylistsPage() {
   const { push } = useToast();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [smart, setSmart] = useState<SmartPlaylist[] | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Умные плейлисты живут отдельным запросом: их состав считает сервер, и в
+  // снимке библиотеки (I5) их нет — офлайн-список правил ничего не даёт.
+  useEffect(() => {
+    if (IS_LOCAL_MODE) {
+      setSmart([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .smartPlaylists()
+      .then((items) => {
+        if (!cancelled) setSmart(items);
+      })
+      .catch(() => {
+        if (!cancelled) setSmart([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const createSmart = async (draft: Parameters<typeof toRules>[0] & { name: string }) => {
+    setBusy(true);
+    setFormError(null);
+    try {
+      await api.createSmartPlaylist({ name: draft.name, rules: toRules(draft) });
+      setFormOpen(false);
+      setSmart(await api.smartPlaylists());
+      push('Умный плейлист создан');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Не удалось создать плейлист');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -316,7 +489,7 @@ export function PlaylistsPage() {
         </form>
       </header>
 
-      {playlists.length === 0 ? (
+      {playlists.length === 0 && !smart?.length && !formOpen ? (
         <div className="empty">
           <div className="empty__icon">
             <Icon name="disc" size={34} />
@@ -329,6 +502,48 @@ export function PlaylistsPage() {
           {playlists.map((playlist) => (
             <PlaylistCard key={playlist.id} playlist={playlist} />
           ))}
+          {smart?.map((playlist) => (
+            <SmartPlaylistCard key={playlist.id} playlist={playlist} />
+          ))}
+        </div>
+      )}
+
+      {!IS_LOCAL_MODE && (
+        <div className="panel smart-panel">
+          <div className="smart-panel__head">
+            <div>
+              <h2>Умные плейлисты</h2>
+              <p>
+                Подборка по правилам: «жанр = Ambient и не слушал 30 дней». Состав пересчитывается
+                сам — добавите подходящий трек, и он окажется внутри.
+              </p>
+            </div>
+            {!formOpen && (
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setFormOpen(true)}>
+                <Icon name="plus" size={15} />
+                Собрать по правилам
+              </button>
+            )}
+          </div>
+
+          {formOpen && (
+            <SmartPlaylistForm
+              busy={busy}
+              error={formError}
+              onSubmit={(draft) => void createSmart(draft)}
+              onCancel={() => {
+                setFormOpen(false);
+                setFormError(null);
+              }}
+            />
+          )}
+
+          {!formOpen && (smart?.length ?? 0) === 0 && (
+            <p className="muted smart-panel__hint">
+              Пока ни одного. Начните с простого: «Длительность не короче 300 секунд, сначала
+              старые» — так находится то, что давно не слушали.
+            </p>
+          )}
         </div>
       )}
     </section>
@@ -355,11 +570,199 @@ function PlaylistCard({ playlist }: { playlist: Playlist }) {
   );
 }
 
+function SmartPlaylistCard({ playlist }: { playlist: SmartPlaylist }) {
+  const hue = (playlist.name.charCodeAt(0) * 41 + playlist.name.length * 13) % 360;
+  return (
+    <a className="playlist-card playlist-card--smart" href={`#/smart/${playlist.id}`}>
+      <div
+        className="playlist-card__art"
+        style={{ background: `linear-gradient(140deg, hsl(${hue} 70% 38%), hsl(${(hue + 150) % 360} 55% 14%))` }}
+      >
+        <Icon name="search" size={28} />
+      </div>
+      <div className="playlist-card__meta">
+        <strong>{playlist.name}</strong>
+        <span>{playlist.trackCount} треков · по правилам</span>
+        {playlist.summary && <em className="playlist-card__rules">{playlist.summary}</em>}
+      </div>
+    </a>
+  );
+}
+
+/**
+ * Умный плейлист (C7): тот же список, что у обычного, но состав вычисляет
+ * сервер. Правила можно поправить на месте — иначе «умный» превращался бы в
+ * «одноразовый мастер».
+ */
+export function SmartPlaylistPage({ id, search }: { id: string; search: string }) {
+  const player = usePlayer();
+  const { push } = useToast();
+  const [playlist, setPlaylist] = useState<SmartPlaylist | null>(null);
+  const [tracks, setTracks] = useState<Track[] | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const [meta, list] = await Promise.all([api.smartPlaylist(id), api.smartPlaylistTracks(id)]);
+      setPlaylist(meta);
+      setTracks(list);
+    } catch (error) {
+      setFailed(error instanceof Error ? error.message : 'Не удалось открыть плейлист');
+      setTracks([]);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const visible = useMemo(() => {
+    if (!tracks) return [];
+    const needle = search.trim().toLowerCase();
+    if (!needle) return tracks;
+    return tracks.filter((track) =>
+      `${track.title} ${track.artist} ${track.genre ?? ''}`.toLowerCase().includes(needle)
+    );
+  }, [tracks, search]);
+
+  const save = async (draft: Parameters<typeof toRules>[0] & { name: string }) => {
+    setBusy(true);
+    setFormError(null);
+    try {
+      const updated = await api.updateSmartPlaylist(id, { name: draft.name, rules: toRules(draft) });
+      setPlaylist(updated);
+      setTracks(await api.smartPlaylistTracks(id));
+      setEditing(false);
+      push('Правила обновлены');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Не удалось сохранить правила');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!playlist || !window.confirm(`Удалить «${playlist.name}»? Треки останутся в библиотеке.`)) return;
+    try {
+      await api.deleteSmartPlaylist(id);
+      push('Умный плейлист удалён');
+      window.location.hash = '#/playlists';
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось удалить', 'error');
+    }
+  };
+
+  if (failed) {
+    return (
+      <section className="page">
+        <div className="empty">
+          <h3>Плейлист не открылся</h3>
+          <p>{failed}</p>
+          <a className="btn" href="#/playlists">
+            Ко всем плейлистам
+          </a>
+        </div>
+      </section>
+    );
+  }
+
+  if (!playlist) {
+    return (
+      <section className="page">
+        <div className="skeleton-list">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  const initialDraft = {
+    name: playlist.name,
+    match: playlist.rules?.match ?? ('all' as const),
+    sort: playlist.rules?.sort ?? ('recent' as const),
+    limit: playlist.rules?.limit ?? 40,
+    rules: (playlist.rules?.rules ?? []).map((rule) => ({
+      field: rule.field,
+      op: rule.op,
+      value: rule.value === undefined || rule.value === null ? '' : String(rule.value),
+    })),
+  };
+
+  return (
+    <section className="page">
+      <header className="page__head page__head--playlist">
+        <div>
+          <a className="backlink" href="#/playlists">
+            ← Плейлисты
+          </a>
+          <h1>{playlist.name}</h1>
+          <p>
+            {playlist.trackCount} треков по правилам · {playlist.summary}
+          </p>
+        </div>
+        <div className="page__tools">
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!visible.length}
+            onClick={() => player.playQueue(visible, 0)}
+          >
+            <Icon name="play" size={16} />
+            Слушать
+          </button>
+          <button type="button" className="btn btn--ghost" onClick={() => setEditing((prev) => !prev)}>
+            <Icon name="settings" size={16} />
+            {editing ? 'Свернуть' : 'Правила'}
+          </button>
+          <button type="button" className="btn btn--ghost" onClick={() => void remove()}>
+            <Icon name="trash" size={16} />
+            Удалить
+          </button>
+        </div>
+      </header>
+
+      {editing && (
+        <SmartPlaylistForm
+          title="Правила подборки"
+          submitLabel="Сохранить"
+          initial={initialDraft}
+          busy={busy}
+          error={formError}
+          onSubmit={(draft) => void save(draft)}
+          onCancel={() => setEditing(false)}
+        />
+      )}
+
+      {tracks === null ? (
+        <div className="skeleton-list">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      ) : (
+        <TrackList
+          tracks={visible}
+          onPlay={(track) => player.play(track, visible)}
+          emptyTitle="Под правила пока ничего не подходит"
+          emptyHint="Правила можно ослабить: уберите условие или уменьшите число дней."
+        />
+      )}
+    </section>
+  );
+}
+
 export function PlaylistPage({ id, search }: { id: string; search: string }) {
   const { playlists, reload } = useLibrary();
   const player = usePlayer();
   const { push } = useToast();
   const [tracks, setTracks] = useState<Track[] | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const playlist = playlists.find((item) => item.id === id);
 
   useEffect(() => {
@@ -446,6 +849,10 @@ export function PlaylistPage({ id, search }: { id: string; search: string }) {
             <Icon name="play" size={16} />
             Слушать
           </button>
+          <button type="button" className="btn btn--ghost" onClick={() => setShareOpen(true)}>
+            <Icon name="share" size={16} />
+            Ссылка
+          </button>
           <button type="button" className="btn btn--ghost" onClick={removePlaylist}>
             <Icon name="trash" size={16} />
             Удалить
@@ -468,6 +875,433 @@ export function PlaylistPage({ id, search }: { id: string; search: string }) {
           emptyHint="Откройте библиотеку и добавьте треки через меню «⋯» рядом с треком."
         />
       )}
+
+      {shareOpen && playlist && (
+        <ShareModal
+          target={{
+            kind: 'playlist',
+            id: playlist.id,
+            name: playlist.name,
+            cover: visible[0] ?? null,
+          }}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+    </section>
+  );
+}
+
+/**
+ * «Ссылки» — все приватные ссылки владельца в одном месте: что открывали, сколько
+ * раз, что истекло. Отзыв и перевыпуск здесь же; сам токен повторно не показывается
+ * (в БД только хеш), поэтому скомпрометированную ссылку именно перевыпускают.
+ */
+export function SharesPage({
+  tracksById,
+  playlists,
+}: {
+  tracksById: Map<string, Track>;
+  playlists: Playlist[];
+}) {
+  const { push } = useToast();
+  const [shares, setShares] = useState<Share[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showDead, setShowDead] = useState(false);
+
+  const load = async () => {
+    try {
+      setShares(await api.shares({ includeRevoked: true }));
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось получить ссылки', 'error');
+      setShares([]);
+    }
+  };
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) {
+      setShares([]);
+      return;
+    }
+    void load();
+  }, []);
+
+  const revoke = async (share: Share) => {
+    setBusy(share.id);
+    try {
+      await api.deleteShare(share.id);
+      push('Ссылка отозвана');
+      await load();
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось отозвать', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rotate = async (share: Share) => {
+    setBusy(share.id);
+    try {
+      const next = await api.rotateShare(share.id);
+      await navigator.clipboard.writeText(next.url).catch(() => {});
+      push('Новая ссылка скопирована, старая больше не работает');
+      await load();
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Не удалось перевыпустить', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (IS_LOCAL_MODE) {
+    return (
+      <section className="page">
+        <header className="page__head">
+          <div>
+            <h1>Ссылки</h1>
+            <p>Приватные ссылки живут на сервере</p>
+          </div>
+        </header>
+        <div className="empty">
+          <div className="empty__icon">
+            <Icon name="share" size={30} />
+          </div>
+          <h3>В локальном режиме ссылок нет</h3>
+          <p>
+            Здесь библиотека хранится в браузере, и отдать файл другу некому. Запустите сервер
+            (<code>npm start</code>) — и ссылка откроется у любого, кому вы её отправите.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  const all = shares ?? [];
+  const visible = all.filter((share) => showDead || !isDeadShare(share));
+  const deadCount = all.filter(isDeadShare).length;
+
+  return (
+    <section className="page">
+      <header className="page__head">
+        <div>
+          <h1>Ссылки</h1>
+          <p>Что вы отправили, сколько раз открыли и что уже не работает</p>
+        </div>
+        {deadCount > 0 && (
+          <div className="page__tools">
+            <button type="button" className="btn btn--ghost" onClick={() => setShowDead((value) => !value)}>
+              {showDead ? 'Скрыть неактивные' : `Показать неактивные (${deadCount})`}
+            </button>
+          </div>
+        )}
+      </header>
+
+      {shares === null && (
+        <div className="skeleton-list">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      )}
+
+      {shares !== null && visible.length === 0 && (
+        <div className="empty">
+          <div className="empty__icon">
+            <Icon name="share" size={30} />
+          </div>
+          <h3>Пока ни одной ссылки</h3>
+          <p>
+            Меню трека → «Поделиться ссылкой» или кнопка «Ссылка» на странице плейлиста.
+            Гость откроет плеер без пароля и сможет скачать файл.
+          </p>
+        </div>
+      )}
+
+      {shares !== null && visible.length > 0 && (
+        <div className="shares">
+          {visible.map((share) => {
+            const track = share.targetKind === 'track' ? tracksById.get(share.targetId) : null;
+            const playlist = share.targetKind === 'playlist'
+              ? playlists.find((item) => item.id === share.targetId)
+              : null;
+            const dead = isDeadShare(share);
+            const hits = share.stats?.hits ?? {};
+            return (
+              <div key={share.id} className={`shares__row${dead ? ' is-dead' : ''}`}>
+                {track ? (
+                  <Cover track={track} size={44} />
+                ) : (
+                  <span className="brand__mark" aria-hidden="true">
+                    <Icon name="disc" size={18} />
+                  </span>
+                )}
+                <div className="shares__meta">
+                  <strong>{share.title || track?.title || playlist?.name || 'Ссылка'}</strong>
+                  <span>
+                    {share.targetKind === 'track' ? 'трек' : 'плейлист'}
+                    {track ? ` · ${track.artist}` : playlist ? ` · ${playlist.trackCount} треков` : ' · удалено'}
+                    {' · '}
+                    {dead
+                      ? share.revokedAt
+                        ? 'отозвана'
+                        : 'истекла'
+                      : share.expiresAt
+                        ? `до ${new Date(share.expiresAt).toLocaleDateString('ru-RU')}`
+                        : 'бессрочная'}
+                  </span>
+                  <span className="muted">
+                    открытий {share.plays}
+                    {share.maxPlays ? ` из ${share.maxPlays}` : ''} · прослушиваний {hits.stream ?? 0} ·
+                    скачиваний {hits.download ?? 0} · гостей {share.stats?.visitors ?? 0}
+                  </span>
+                </div>
+                {!dead && (
+                  <div className="shares__actions">
+                    <button
+                      type="button"
+                      className="btn btn--small btn--ghost"
+                      disabled={busy === share.id}
+                      onClick={() => void rotate(share)}
+                    >
+                      Перевыпустить
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--small btn--ghost"
+                      disabled={busy === share.id}
+                      onClick={() => void revoke(share)}
+                    >
+                      Отозвать
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function isDeadShare(share: Share): boolean {
+  if (share.revokedAt) return true;
+  if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) return true;
+  if (share.maxPlays !== null && share.plays >= share.maxPlays) return true;
+  return false;
+}
+
+/**
+ * Дашборд владельца (D1): что слушают и когда.
+ *
+ * Это не аналитика по людям: адресов нет, география — по короткому отпечатку
+ * хеша. Поэтому вместо карты — «сколько разных мест» и «мои прослушивания против
+ * гостевых по ссылкам»: цифра «20 по ссылкам» и «3 моих» отвечают на разные
+ * вопросы, и смешивать их в одну было бы враньём.
+ *
+ * График — обычные div-ы, без библиотеки: тридцать столбиков не стоят лишних
+ * 40 КБ в бандле, а шкала считается из максимума.
+ */
+/** «2 часа назад» для дашборда: точная дата в таблице мешает читать. */
+function ago(iso: string): string {
+  const time = Date.parse(iso);
+  if (!Number.isFinite(time)) return 'неизвестно когда';
+  const minutes = Math.max(0, Math.round((Date.now() - time) / 60_000));
+  if (minutes < 1) return 'только что';
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  return `${Math.round(hours / 24)} дн назад`;
+}
+
+export function DashboardPage() {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<Dashboard | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (IS_LOCAL_MODE) return;
+    let cancelled = false;
+    setData(null);
+    api
+      .dashboard(days)
+      .then((result) => {
+        if (!cancelled) {
+          setError(null);
+          setData(result);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Не удалось получить статистику');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [days]);
+
+  if (IS_LOCAL_MODE) {
+    return (
+      <section className="page">
+        <header className="page__head">
+          <div>
+            <h1>Дашборд</h1>
+            <p>Прослушивания по дням, топ-треки, источники</p>
+          </div>
+        </header>
+        <div className="empty">
+          <h3>Здесь нужен сервер</h3>
+          <p>
+            Дашборд считает прослушивания на сервере. В локальном режиме (GitHub Pages)
+            история не ведётся — откройте свою копию Vision Server.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="page">
+        <div className="empty">
+          <h3>Дашборд не открылся</h3>
+          <p>{error}</p>
+        </div>
+      </section>
+    );
+  }
+
+  const maxPlays = Math.max(1, ...(data?.byDay ?? []).map((day) => day.plays));
+  const cards = [
+    { label: 'Прослушиваний', value: data?.totals.plays ?? 0, icon: 'play' },
+    { label: 'Дослушано до конца', value: data?.totals.completed ?? 0, icon: 'check' },
+    { label: 'Треков звучало', value: data?.totals.tracks ?? 0, icon: 'music' },
+    { label: 'По ссылкам', value: data?.totals.sharedPlays ?? 0, icon: 'share' },
+  ];
+
+  return (
+    <section className="page">
+      <header className="page__head">
+        <div>
+          <h1>Дашборд</h1>
+          <p>
+            {data
+              ? `Прослушивания за ${data.days} ${data.days === 1 ? 'день' : 'дней'} · свои и гостевые`
+              : 'Загружаем…'}
+          </p>
+        </div>
+        <div className="page__tools">
+          {[7, 30, 90].map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={`btn btn--sm${days === value ? ' btn--primary' : ' btn--ghost'}`}
+              onClick={() => setDays(value)}
+            >
+              {value} дней
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <div className="cards">
+        {cards.map((card) => (
+          <div key={card.label} className="card">
+            <span className="card__icon">
+              <Icon name={card.icon} size={18} />
+            </span>
+            <strong>{card.value}</strong>
+            <span>{card.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {!data && (
+        <div className="skeleton-list">
+          {Array.from({ length: 2 }).map((_, index) => (
+            <div key={index} className="skeleton-row" />
+          ))}
+        </div>
+      )}
+
+      {data && !data.totals.plays && (
+        <div className="empty">
+          <h3>Пока тихо</h3>
+          <p>{data.hint ?? 'Включите трек — и здесь появится статистика.'}</p>
+        </div>
+      )}
+
+      {data && data.totals.plays > 0 && (
+        <div className="panel-grid">
+          <div className="panel">
+            <h2>По дням</h2>
+            <div className="dashboard-chart" role="img" aria-label={`Прослушивания за ${data.days} дней`}>
+              {data.byDay.map((day) => (
+                <div className="dashboard-chart__col" key={day.day} title={`${day.day}: ${day.plays}`}>
+                  <i
+                    className={day.shared ? 'is-shared' : undefined}
+                    style={{ height: `${Math.max(2, (day.plays / maxPlays) * 100)}%` }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="dashboard-chart__axis">
+              <span>{data.byDay[0]?.day.slice(5)}</span>
+              <span>{data.byDay.at(-1)?.day.slice(5)}</span>
+            </div>
+            <p className="muted">
+              Свои: {data.sources.owner} · по ссылкам: {data.sources.share} · повтор одного
+              трека в течение получаса считается один раз.
+            </p>
+          </div>
+
+          <div className="panel">
+            <h2>Топ треков</h2>
+            <ol className="dashboard-top">
+              {data.topTracks.map((track) => (
+                <li key={track.id}>
+                  <span>
+                    {track.deleted ? (
+                      <em className="muted">трек удалён из библиотеки</em>
+                    ) : (
+                      <a href={`#/track/${track.id}`}>{track.title}</a>
+                    )}
+                    {track.artist ? <small> · {track.artist}</small> : null}
+                  </span>
+                  <b>
+                    {track.plays}
+                    {track.completed ? <small> / {track.completed} до конца</small> : null}
+                  </b>
+                </li>
+              ))}
+            </ol>
+            {!data.topTracks.length && <p className="muted">Топ появится после прослушиваний.</p>}
+          </div>
+
+          <div className="panel dashboard-panel--wide">
+            <h2>Откуда слушают</h2>
+            {data.listeners.length ? (
+              <>
+                <ul className="dashboard-listeners">
+                  {data.listeners.map((listener) => (
+                    <li key={listener.id}>
+                      <code>{listener.id}</code>
+                      <span>
+                        {listener.plays} прослушиваний · {listener.tracks} треков
+                      </span>
+                      <small className="muted">последний раз {ago(listener.lastSeen)}</small>
+                    </li>
+                  ))}
+                </ul>
+                <p className="muted">
+                  Адреса не хранятся: отпечаток — это начало sha256 от адреса. Так видно «слушают
+                  из одного места или из десяти», но не кто именно.
+                </p>
+              </>
+            ) : (
+              <p className="muted">Данных об адресах нет: прослушивания шли без сохранённого адреса.</p>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -476,6 +1310,14 @@ export function StatsPage() {
   const { stats, tracks } = useLibrary();
   const offline = useOffline();
   const [limit, setLimit] = useState(() => String(offline.limitMb));
+  // Снимок библиотеки (I5): показывает, что откроется без сети. Читаем один раз
+  // при входе на страницу — снимок меняется только после ответа сервера.
+  const snapshot = useMemo(() => readSnapshot({ base: apiBase() }), []);
+  const libraryCache = IS_LOCAL_MODE
+    ? 'не нужен: в локальном режиме библиотека уже в браузере'
+    : snapshot
+      ? `${snapshot.tracks.length}${snapshot.total > snapshot.tracks.length ? ` из ${snapshot.total}` : ''} треков, ${snapshotAge(snapshot.savedAt)}`
+      : 'ещё не сохранён — появится после первой загрузки библиотеки при связи с сервером';
 
   const cards = [
     { label: 'Треков', value: String(stats?.tracks ?? 0), icon: 'music' },
@@ -582,6 +1424,10 @@ export function StatsPage() {
                 <div>
                   <dt>Что скачивать</dt>
                   <dd>Меню трека → «Скачать офлайн»</dd>
+                </div>
+                <div>
+                  <dt>Список библиотеки</dt>
+                  <dd>{libraryCache}</dd>
                 </div>
               </dl>
 
@@ -914,6 +1760,154 @@ export function ExternalPage() {
           })}
         </div>
       )}
+    </section>
+  );
+}
+
+/**
+ * Падения (Фаза 3, H5).
+ *
+ * Задача экрана — не «показать красивые графики», а ответить на два вопроса:
+ * что именно падает и на какой версии. Поэтому сверху — сводка по группам и
+ * установкам, ниже — лента с раскрывающимся стеком. Одинаковые падения приходят
+ * уже схлопнутыми, счётчик `×N` показывает, сколько раз повторилось.
+ */
+export function CrashesPage() {
+  const [items, setItems] = useState<CrashItem[] | null>(null);
+  const [summary, setSummary] = useState<CrashSummary | null>(null);
+  const [open, setOpen] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { push } = useToast();
+
+  const load = () => {
+    let alive = true;
+    setBusy(true);
+    Promise.all([api.listCrashes({ limit: 50 }), api.crashSummary(7)])
+      .then(([page, sum]) => {
+        if (!alive) return;
+        setItems(page.items);
+        setSummary(sum);
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        if (alive) setError(e instanceof Error ? e.message : 'Не удалось прочитать отчёты');
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  };
+
+  useEffect(load, []);
+
+  const prune = async () => {
+    setBusy(true);
+    try {
+      const result = await api.pruneCrashes();
+      push(`Удалено отчётов: ${result.removed}`);
+      load();
+    } catch (e) {
+      push(e instanceof Error ? e.message : 'Чистка не удалась', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (error) return <p className="muted">Отчёты о падениях недоступны: {error}</p>;
+  if (!items || !summary) return <p className="muted">Читаю отчёты о падениях…</p>;
+
+  return (
+    <section className="stack">
+      <div className="row row--between">
+        <h2 className="page-title">Падения</h2>
+        <div className="row">
+          <button type="button" className="btn btn--ghost btn--small" disabled={busy} onClick={load}>
+            Обновить
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            disabled={busy || items.length === 0}
+            onClick={() => void prune()}
+            title="Удаляет отчёты старше 90 дней"
+          >
+            Чистка
+          </button>
+        </div>
+      </div>
+
+      <div className="cards">
+        <div className="card">
+          <span className="muted">Событий за 7 дней</span>
+          <strong className="card__value">{summary.events}</strong>
+        </div>
+        <div className="card">
+          <span className="muted">Разных падений</span>
+          <strong className="card__value">{summary.groups}</strong>
+        </div>
+        <div className="card">
+          <span className="muted">Установок</span>
+          <strong className="card__value">{summary.devices}</strong>
+        </div>
+      </div>
+
+      {summary.hint && <p className="hint">{summary.hint}</p>}
+
+      {summary.events > 0 && (
+        <p className="hint">
+          По приложениям: {summary.byApp.map((row) => `${row.app} — ${row.events}`).join(', ')}. По версиям:{' '}
+          {summary.byVersion.map((row) => `${row.version ?? 'без версии'} (${row.events})`).join(', ')}.
+        </p>
+      )}
+
+      {items.length === 0 ? (
+        <p className="muted">
+          Отчётов нет — это хорошая новость. Если приложение всё же падало, проверьте, что сборка
+          содержит репортер: мобильное и веб-приложения отправляют отчёты по умолчанию.
+        </p>
+      ) : (
+        <div className="stack stack--tight">
+          {items.map((item) => (
+            <article key={item.id} className="card">
+              <div className="row row--between">
+                <strong>
+                  {item.name ?? 'Ошибка'}: {item.message ?? 'без описания'}
+                </strong>
+                <span className="badge">{item.count}×</span>
+              </div>
+              <span className="muted">
+                {item.app} {item.version ?? ''} · {item.platform ?? '—'} · первый раз {ago(item.firstAt)},{' '}
+                последний {ago(item.lastAt)}
+              </span>
+              <div className="row">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--small"
+                  onClick={() => setOpen(open === item.id ? null : item.id)}
+                >
+                  {open === item.id ? 'Скрыть стек' : 'Показать стек'}
+                </button>
+              </div>
+              {open === item.id && (
+                <pre className="crash-stack">
+                  {item.stack ?? 'стека нет'}
+                  {item.context ? `\n\nконтекст: ${JSON.stringify(item.context, null, 2)}` : ''}
+                  {item.deviceId ? `\nустановка: ${item.deviceId}` : ''}
+                </pre>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+
+      <p className="hint">
+        Приём открыт без токена осознанно: приложение падает и до входа, и после истечения сессии.
+        Защита — размер отчёта (16 КБ) и лимит по установке (60 разных падений в час). Адресов нет,
+        идентификатор установки совпадает с тем, что у трекера реплик.
+      </p>
     </section>
   );
 }

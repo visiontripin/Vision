@@ -6,9 +6,12 @@ import { Icon } from '../ui';
 
 const NAV = [
   { href: '#/', label: 'Библиотека', icon: 'home' },
+  { href: '#/for-you', label: 'Для вас', icon: 'sparkle' },
   { href: '#/liked', label: 'Лайкнутое', icon: 'heart' },
   { href: '#/playlists', label: 'Плейлисты', icon: 'disc' },
+  { href: '#/dashboard', label: 'Дашборд', icon: 'chart' },
   { href: '#/stats', label: 'Статистика', icon: 'stats' },
+  { href: '#/shares', label: 'Ссылки', icon: 'share' },
   { href: '#/external', label: 'Из SoundCloud', icon: 'external' },
 ];
 

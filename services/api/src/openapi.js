@@ -23,8 +23,16 @@ export const OPENAPI = {
     { name: 'media' },
     { name: 'history' },
     { name: 'playlists' },
+    { name: 'smart-playlists' },
+    { name: 'personal' },
+    { name: 'dashboard' },
+    { name: 'backups' },
+    { name: 'crashes' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
+    { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
+    { name: 'embed', description: 'Встраивание: oEmbed 1.0 и виджет /embed/:token для блогов' },
+    { name: 'audit', description: 'Журнал действий: кто загрузил, удалил или открывал ссылку' },
     { name: 'system' },
   ],
   security: [{ bearerAuth: [] }],
@@ -39,6 +47,94 @@ export const OPENAPI = {
       },
     },
     schemas: {
+      CrashReport: {
+        type: 'object',
+        description: 'То, что присылает упавший клиент. Всё, кроме `name`/`message`, необязательно.',
+        properties: {
+          app: { type: 'string', enum: ['mobile', 'web', 'desktop', 'console'], default: 'mobile' },
+          version: { type: 'string', description: 'Версия сборки, до 40 символов' },
+          platform: { type: 'string', description: 'android / ios / web / windows' },
+          release: { type: 'string', description: 'Версия ОС или строка сборки' },
+          name: { type: 'string', description: 'Тип ошибки, до 120 символов' },
+          message: { type: 'string', description: 'Сообщение, обрезается до 500 символов' },
+          stack: { type: 'string', description: 'Стек, обрезается до 6000 символов' },
+          context: { type: 'object', description: 'Где были: экран, режим. До 2000 символов JSON' },
+          deviceId: { type: 'string', description: 'Идентификатор установки (не адрес), до 80 символов' },
+        },
+      },
+      CrashItem: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          fingerprint: { type: 'string', description: '`name:message:первый кадр` — по нему схлопываются повторы' },
+          app: { type: 'string' },
+          version: { type: ['string', 'null'] },
+          platform: { type: ['string', 'null'] },
+          release: { type: ['string', 'null'] },
+          name: { type: ['string', 'null'] },
+          message: { type: ['string', 'null'] },
+          stack: { type: ['string', 'null'] },
+          context: { type: ['object', 'string', 'null'] },
+          deviceId: { type: ['string', 'null'] },
+          count: { type: 'integer', description: 'Сколько раз повторилось' },
+          firstAt: { type: 'string', format: 'date-time' },
+          lastAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      Share: {
+        type: 'object',
+        required: ['id', 'targetKind', 'targetId', 'plays', 'createdAt'],
+        properties: {
+          id: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+          targetKind: { type: 'string', enum: ['track', 'playlist'] },
+          targetId: { type: 'string' },
+          title: { type: ['string', 'null'] },
+          expiresAt: { type: ['string', 'null'], format: 'date-time' },
+          maxPlays: { type: ['integer', 'null'] },
+          plays: { type: 'integer', description: 'Открытия страницы (не Range-запросы)' },
+          revokedAt: { type: ['string', 'null'], format: 'date-time' },
+          lastSeenAt: { type: ['string', 'null'], format: 'date-time' },
+          createdAt: { type: 'string', format: 'date-time' },
+          active: { type: 'boolean' },
+          stats: {
+            type: 'object',
+            properties: {
+              hits: { type: 'object', additionalProperties: { type: 'integer' }, examples: [{ open: 3, stream: 7, download: 1 }] },
+              visitors: { type: 'integer', description: 'Уникальные адреса (хранятся как HMAC-хеши)' },
+              lastHitAt: { type: ['string', 'null'] },
+            },
+          },
+          baseUrl: { type: 'string' },
+          comments: { type: 'integer', description: 'Сколько комментариев оставлено (только владельцу)' },
+        },
+      },
+      ShareComment: {
+        type: 'object',
+        required: ['id', 'trackId', 'at', 'author', 'body', 'createdAt'],
+        properties: {
+          id: { type: 'string' },
+          trackId: { type: 'string', description: 'Трек внутри ссылки' },
+          at: { type: 'number', description: 'Секунда трека, 0..длительность' },
+          author: { type: 'string', maxLength: 40 },
+          body: { type: 'string', maxLength: 600 },
+          createdAt: { type: 'string', format: 'date-time' },
+          deletedAt: { type: ['string', 'null'], description: 'Только для владельца' },
+        },
+      },
+      ShareWithToken: {
+        allOf: [
+          { $ref: '#/components/schemas/Share' },
+          {
+            type: 'object',
+            required: ['token', 'url'],
+            properties: {
+              token: { type: 'string', description: 'Показывается один раз' },
+              url: { type: 'string', description: 'Абсолютный адрес /s/<token>' },
+              path: { type: 'string' },
+            },
+          },
+        ],
+      },
       Error: {
         type: 'object',
         required: ['error'],
@@ -113,6 +209,172 @@ export const OPENAPI = {
           createdAt: { type: 'string', format: 'date-time' },
           trackCount: { type: 'integer' },
           duration: { type: 'number' },
+        },
+      },
+      BackupVerification: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean' },
+          problems: { type: 'array', items: { type: 'string' } },
+          counts: { type: 'object', additionalProperties: { type: ['integer', 'null'] } },
+          checkedFiles: { type: 'integer' },
+          missingFiles: { type: 'array', items: { type: 'string' } },
+          archive: { type: 'string' },
+          checkedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      BackupStatus: {
+        type: 'object',
+        properties: {
+          dir: { type: 'string' },
+          count: { type: 'integer' },
+          totalBytes: { type: 'integer' },
+          last: {
+            type: ['object', 'null'],
+            properties: {
+              name: { type: 'string' },
+              bytes: { type: 'integer' },
+              createdAt: { type: 'string', format: 'date-time' },
+            },
+          },
+          ageDays: { type: ['number', 'null'] },
+          keep: { type: 'integer' },
+          level: { type: 'string', enum: ['ok', 'warn'] },
+          hint: { type: ['string', 'null'] },
+          backups: { type: 'array', items: { type: 'object' } },
+          schedule: {
+            type: 'object',
+            properties: {
+              hours: { type: 'integer' },
+              running: { type: 'boolean' },
+              lastRun: { type: ['object', 'null'] },
+            },
+          },
+        },
+      },
+      Dashboard: {
+        type: 'object',
+        properties: {
+          since: { type: 'string', format: 'date-time' },
+          until: { type: 'string', format: 'date-time' },
+          days: { type: 'integer', minimum: 1, maximum: 365 },
+          tz: { type: 'integer', description: 'Смещение сервера в минутах: «день» — день человека' },
+          totals: {
+            type: 'object',
+            properties: {
+              plays: { type: 'integer' },
+              completed: { type: 'integer' },
+              tracks: { type: 'integer' },
+              listeners: { type: 'integer' },
+              sharedPlays: { type: 'integer' },
+            },
+          },
+          sources: {
+            type: 'object',
+            properties: { owner: { type: 'integer' }, share: { type: 'integer' } },
+          },
+          byDay: {
+            type: 'array',
+            description: 'Все дни окна, включая пустые: в графике не должно быть «дыр»',
+            items: {
+              type: 'object',
+              properties: {
+                day: { type: 'string', description: 'YYYY-MM-DD' },
+                plays: { type: 'integer' },
+                completed: { type: 'integer' },
+                shared: { type: 'integer' },
+              },
+            },
+          },
+          topTracks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                title: { type: ['string', 'null'] },
+                artist: { type: ['string', 'null'] },
+                deleted: { type: 'boolean', description: 'Трек удалён, история сохранена' },
+                plays: { type: 'integer' },
+                completed: { type: 'integer' },
+              },
+            },
+          },
+          listeners: {
+            type: 'array',
+            description: 'Отпечатки адресов (начало sha256), а не сами адреса',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                plays: { type: 'integer' },
+                tracks: { type: 'integer' },
+                firstSeen: { type: 'string', format: 'date-time' },
+                lastSeen: { type: 'string', format: 'date-time' },
+              },
+            },
+          },
+          hint: { type: ['string', 'null'] },
+        },
+      },
+      PersonalSection: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', enum: ['continue', 'top-genre', 'forgotten', 'fresh', 'liked-mix'] },
+          title: { type: 'string' },
+          reason: { type: 'string', description: 'Почему эти треки здесь' },
+          tracks: { type: 'array', items: { $ref: '#/components/schemas/Track' } },
+        },
+      },
+      PersonalFeed: {
+        type: 'object',
+        properties: {
+          greeting: { type: 'string', description: 'Доброе утро / день / вечер по времени сервера' },
+          generatedAt: { type: 'string', format: 'date-time' },
+          seed: { type: 'integer', description: 'Фиксирует перемешивание до конца дня' },
+          sections: { type: 'array', items: { $ref: '#/components/schemas/PersonalSection' } },
+          libraryTracks: { type: 'integer' },
+          hint: { type: ['string', 'null'], description: 'Заполнено, когда подборок нет' },
+        },
+      },
+      SmartRule: {
+        type: 'object',
+        required: ['field', 'op'],
+        properties: {
+          field: {
+            type: 'string',
+            enum: ['genre', 'artist', 'album', 'title', 'liked', 'year', 'plays', 'duration', 'addedDays', 'notPlayedDays'],
+          },
+          op: { type: 'string', enum: ['is', 'contains', 'gte', 'lte', 'eq', 'empty', 'any'] },
+          value: { oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] },
+        },
+      },
+      SmartRules: {
+        type: 'object',
+        required: ['rules'],
+        properties: {
+          match: { type: 'string', enum: ['all', 'any'], default: 'all' },
+          rules: { type: 'array', minItems: 1, maxItems: 12, items: { $ref: '#/components/schemas/SmartRule' } },
+          sort: {
+            type: 'string',
+            description: 'recent | oldest | title | artist | plays | duration | random | field:<поле>',
+            default: 'recent',
+          },
+          limit: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
+        },
+      },
+      SmartPlaylist: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          description: { type: ['string', 'null'] },
+          rules: { $ref: '#/components/schemas/SmartRules' },
+          smart: { type: 'boolean', enum: [true] },
+          trackCount: { type: 'integer', description: 'Сколько треков подходит под правила сейчас' },
+          summary: { type: 'string', description: 'Подписи правил по-русски' },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
         },
       },
       HistoryEntry: {
@@ -589,6 +851,313 @@ export const OPENAPI = {
         },
       },
     },
+    '/shares': {
+      post: {
+        tags: ['shares'],
+        summary: 'Создать приватную ссылку на трек или плейлист',
+        description:
+          'Токен возвращается один раз: в базе хранится только его sha256. ' +
+          'Гость открывает /s/<token> без аккаунта и получает только эту цель.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['targetKind', 'targetId'],
+                properties: {
+                  targetKind: { type: 'string', enum: ['track', 'playlist'] },
+                  targetId: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+                  title: { type: ['string', 'null'], description: 'Подпись владельца, не видна гостю в ссылке' },
+                  ttl: {
+                    type: 'string',
+                    examples: ['1h', '24h', '7d', 'forever'],
+                    description: 'Срок жизни; по умолчанию SHARE_DEFAULT_TTL_MS (7 дней), «forever» — бессрочно',
+                  },
+                  maxPlays: { type: ['integer', 'null'], description: 'Лимит открытий страницы' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Ссылка создана',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ShareWithToken' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'Трек или плейлист не найден (target_not_found)' },
+        },
+      },
+      get: {
+        tags: ['shares'],
+        summary: 'Все ссылки владельца (включая отозванные)',
+        parameters: [
+          { name: 'targetKind', in: 'query', schema: { type: 'string', enum: ['track', 'playlist'] } },
+          { name: 'targetId', in: 'query', schema: { type: 'string' } },
+          { name: 'includeRevoked', in: 'query', schema: { type: 'string', enum: ['1'] } },
+        ],
+        responses: {
+          200: {
+            description: 'Список без токенов (их нельзя восстановить, только перевыпустить)',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/Share' } },
+              },
+            },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/shares/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: {
+        tags: ['shares'],
+        summary: 'Одна ссылка со статистикой',
+        responses: {
+          200: { description: 'OK', content: { 'application/json': { schema: { $ref: '#/components/schemas/Share' } } } },
+          404: { description: 'Не найдена' },
+        },
+      },
+      patch: {
+        tags: ['shares'],
+        summary: 'Изменить подпись, срок жизни или лимит открытий',
+        responses: {
+          200: { description: 'Обновлённая ссылка' },
+          404: { description: 'Не найдена' },
+        },
+      },
+      delete: {
+        tags: ['shares'],
+        summary: 'Отозвать ссылку (?purge=1 — удалить запись и журнал)',
+        parameters: [{ name: 'purge', in: 'query', schema: { type: 'string', enum: ['1'] } }],
+        responses: { 204: { description: 'Отозвана' } },
+      },
+    },
+    '/audit': {
+      get: {
+        tags: ['audit'],
+        summary: 'Лента журнала действий (новые сверху)',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', maximum: 100, default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
+          { name: 'action', in: 'query', schema: { type: 'string' }, description: 'Код действия или группа: `track` → все `track.*`' },
+          { name: 'actor', in: 'query', schema: { type: 'string', enum: ['owner', 'guest', 'system'] } },
+          { name: 'shareId', in: 'query', schema: { type: 'string' } },
+          { name: 'since', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'until', in: 'query', schema: { type: 'string', format: 'date-time' } },
+        ],
+        responses: {
+          200: {
+            description: 'Записи журнала и словарь подписей',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    entries: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'integer' },
+                          at: { type: 'string', format: 'date-time' },
+                          actor: { type: 'string' },
+                          action: { type: 'string' },
+                          label: { type: 'string', description: 'готовая подпись на русском' },
+                          targetKind: { type: 'string', nullable: true },
+                          targetId: { type: 'string', nullable: true },
+                          shareId: { type: 'string', nullable: true },
+                          ipHash: { type: 'string', nullable: true, description: 'sha256(secret + ip)' },
+                          requestId: { type: 'string', nullable: true, description: 'совпадает с X-Request-Id' },
+                          details: { type: 'object', nullable: true },
+                        },
+                      },
+                    },
+                    total: { type: 'integer' },
+                    limit: { type: 'integer' },
+                    offset: { type: 'integer' },
+                    labels: { type: 'object', additionalProperties: { type: 'string' } },
+                    actors: { type: 'object', additionalProperties: { type: 'string' } },
+                    retentionDays: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+      delete: {
+        tags: ['audit'],
+        summary: 'Удалить записи старше keepDays',
+        parameters: [{ name: 'keepDays', in: 'query', schema: { type: 'integer', default: 180 } }],
+        responses: {
+          200: { description: '`{ removed, before }`' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/audit/actions': {
+      get: {
+        tags: ['audit'],
+        summary: 'Справочник действий и подписей',
+        responses: {
+          200: { description: '`{ actions: [{ code, label, actor, target }], actors, retentionDays }`' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/audit/summary': {
+      get: {
+        tags: ['audit'],
+        summary: 'Сводка за период: сколько действий по акторам',
+        parameters: [{ name: 'days', in: 'query', schema: { type: 'integer', default: 1 } }],
+        responses: {
+          200: { description: '`{ since, total, byActor, actions }`' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/oembed': {
+      get: {
+        tags: ['embed'],
+        summary: 'oEmbed-описание приватной ссылки (публичный, без авторизации)',
+        description:
+          'Принимает только адреса Vision Audio (`/s/:token` или `/embed/:token`). '
+          + 'Неактивная ссылка даёт 404. Считается как встраивание: `plays` не растёт.',
+        security: [],
+        parameters: [
+          { name: 'url', in: 'query', required: true, schema: { type: 'string' }, description: 'Ссылка /s/<токен> или /embed/<токен>' },
+          { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'xml'], default: 'json' } },
+          { name: 'maxwidth', in: 'query', schema: { type: 'integer', minimum: 40, maximum: 960 } },
+          { name: 'maxheight', in: 'query', schema: { type: 'integer', minimum: 40, maximum: 960 } },
+        ],
+        responses: {
+          200: {
+            description: 'Описание для встраивания',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    version: { type: 'string', example: '1.0' },
+                    type: { type: 'string', example: 'rich' },
+                    provider_name: { type: 'string', example: 'Vision Audio' },
+                    provider_url: { type: 'string' },
+                    title: { type: 'string' },
+                    author_name: { type: 'string' },
+                    thumbnail_url: { type: 'string' },
+                    html: { type: 'string', description: '<iframe> с виджетом /embed/:token' },
+                    width: { type: 'integer', example: 480 },
+                    height: { type: 'integer', example: 180 },
+                    vision: {
+                      type: 'object',
+                      properties: {
+                        kind: { type: 'string', enum: ['track', 'playlist'] },
+                        tracks: { type: 'integer' },
+                        duration: { type: 'integer' },
+                      },
+                    },
+                  },
+                },
+              },
+              'text/xml': { schema: { type: 'string' } },
+            },
+          },
+          400: { description: '`invalid_url` — чужой адрес, `invalid_format` — не json/xml' },
+          404: { description: '`not_found` — ссылка отозвана, истекла или не существует' },
+        },
+      },
+    },
+    '/shares/{id}/rotate': {
+      post: {
+        tags: ['shares'],
+        summary: 'Перевыпустить токен: старая ссылка сразу отвечает 410',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'Новый токен (единственный раз)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ShareWithToken' } } },
+          },
+          404: { description: 'Не найдена' },
+        },
+      },
+    },
+    '/shares/{id}/comments': {
+      get: {
+        tags: ['shares'],
+        summary: 'Комментарии к секундам по ссылке (владелец видит и удалённые)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'trackId', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          200: {
+            description: 'Лента',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    comments: { type: 'array', items: { $ref: '#/components/schemas/ShareComment' } },
+                    total: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'Ссылка не найдена' },
+        },
+      },
+      post: {
+        tags: ['shares'],
+        summary: 'Владелец отмечает секунду — комментарий увидят гости',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['trackId', 'body'],
+                properties: {
+                  trackId: { type: 'string' },
+                  at: { type: 'number' },
+                  author: { type: 'string' },
+                  body: { type: 'string', maxLength: 600 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Создан',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ShareComment' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          403: { description: 'Трек не входит в ссылку' },
+        },
+      },
+      delete: {
+        tags: ['shares'],
+        summary: 'Удалить комментарий (владелец — любой)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'commentId', in: 'query', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          200: { description: 'Удалён' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { description: 'Комментарий не найден' },
+        },
+      },
+    },
     '/blobs': {
       post: {
         tags: ['seeds'],
@@ -794,6 +1363,312 @@ export const OPENAPI = {
         tags: ['history'],
         summary: 'Очистить историю',
         responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/crashes': {
+      post: {
+        tags: ['crashes'],
+        summary: 'Отчёт о падении приложения (H5)',
+        description:
+          'Без токена осознанно: приложение падает и до входа, и после истечения сессии. ' +
+          'Защита — размер тела (16 КБ) и лимит по установке (60 разных падений в час). ' +
+          'Повтор с тем же fingerprint не создаёт запись, а увеличивает `count`.',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CrashReport' },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Принят (возможно, как повтор)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    accepted: { type: 'boolean' },
+                    duplicate: { type: 'boolean', description: 'Такое падение уже было' },
+                    count: { type: 'integer', description: 'Сколько раз повторилось' },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: 'Не JSON — `invalid_json`' },
+          413: { description: 'Больше 16 КБ — `too_large`' },
+          429: {
+            description: 'Слишком много разных падений с одной установки за час',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    accepted: { type: 'boolean' },
+                    reason: { type: 'string', enum: ['rate_limited'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      get: {
+        tags: ['crashes'],
+        summary: 'Лента отчётов о падениях',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 } },
+          { name: 'app', in: 'query', schema: { type: 'string', enum: ['mobile', 'web', 'desktop', 'console'] } },
+          { name: 'version', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    total: { type: 'integer' },
+                    limit: { type: 'integer' },
+                    offset: { type: 'integer' },
+                    items: { type: 'array', items: { $ref: '#/components/schemas/CrashItem' } },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Только владелец' },
+          405: { description: 'Метод не поддерживается' },
+        },
+      },
+      delete: {
+        tags: ['crashes'],
+        summary: 'Чистка старых отчётов',
+        description: 'Пишет действие `crashes.prune` в журнал. По умолчанию хранит 90 дней.',
+        parameters: [{ name: 'keepDays', in: 'query', schema: { type: 'integer', minimum: 0, default: 90 } }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { removed: { type: 'integer' }, before: { type: 'string' } },
+                },
+              },
+            },
+          },
+          401: { description: 'Только владелец' },
+        },
+      },
+    },
+    '/crashes/summary': {
+      get: {
+        tags: ['crashes'],
+        summary: 'Сводка: группы, события, установки, версии',
+        parameters: [{ name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 7 } }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    since: { type: 'string' },
+                    days: { type: 'integer' },
+                    groups: { type: 'integer' },
+                    events: { type: 'integer' },
+                    devices: { type: 'integer' },
+                    byApp: { type: 'array', items: { type: 'object' } },
+                    byVersion: { type: 'array', items: { type: 'object' } },
+                    hint: { type: ['string', 'null'] },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Только владелец' },
+        },
+      },
+    },
+    '/backups': {
+      get: {
+        tags: ['backups'],
+        summary: 'Состояние резервных копий (D5)',
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/BackupStatus' } } },
+          },
+          401: { description: 'Только владелец' },
+        },
+      },
+      post: {
+        tags: ['backups'],
+        summary: 'Создать копию и сразу проверить её',
+        description: 'Красная проверка не ошибка запроса: архив создан, об этом говорит `ok: false`.',
+        responses: {
+          200: {
+            description: 'Копия создана (проверка внутри)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/BackupVerification' } } },
+          },
+          401: { description: 'Только владелец' },
+          405: { description: 'Только GET/POST' },
+        },
+      },
+    },
+    '/backups/verify': {
+      post: {
+        tags: ['backups'],
+        summary: 'Проверить восстановление из архива',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { name: { type: 'string', description: 'По умолчанию — последняя копия' } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Результат проверки',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/BackupVerification' } } },
+          },
+          400: { description: 'Имя не похоже на копию (параметр не путь)' },
+          409: { description: 'Копий ещё нет' },
+        },
+      },
+    },
+    '/dashboard': {
+      get: {
+        tags: ['dashboard'],
+        summary: 'Прослушивания по дням, топ-треки, источники (D1)',
+        parameters: [
+          { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 30 } },
+          {
+            name: 'tz',
+            in: 'query',
+            description: 'Смещение в минутах; по умолчанию — смещение сервера',
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/Dashboard' } } },
+          },
+          401: { description: 'Только владелец' },
+          405: { description: 'Только GET' },
+        },
+      },
+    },
+    '/personal': {
+      get: {
+        tags: ['personal'],
+        summary: 'Подборки по истории прослушиваний (J3)',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 12 } },
+          {
+            name: 'seed',
+            in: 'query',
+            description: 'Фиксирует перемешивание; по умолчанию — номер дня',
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/PersonalFeed' } } },
+          },
+          401: { description: 'Только владелец: подборки строятся по его истории' },
+        },
+      },
+    },
+    '/smart-playlists': {
+      get: {
+        tags: ['smart-playlists'],
+        summary: 'Список умных плейлистов',
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/SmartPlaylist' } },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        tags: ['smart-playlists'],
+        summary: 'Создать умный плейлист',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name', 'rules'],
+                properties: {
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  rules: { $ref: '#/components/schemas/SmartRules' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Создан',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SmartPlaylist' } } },
+          },
+          400: { description: 'Правила не разбираются (invalid_rules, unknown_field, unknown_op, invalid_value)' },
+        },
+      },
+    },
+    '/smart-playlists/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: {
+        tags: ['smart-playlists'],
+        summary: 'Умный плейлист',
+        responses: { 200: { description: 'OK' }, 404: { description: 'Не найден' } },
+      },
+      patch: {
+        tags: ['smart-playlists'],
+        summary: 'Изменить правила или название',
+        responses: { 200: { description: 'OK' }, 400: { description: 'Правила не разбираются' } },
+      },
+      delete: {
+        tags: ['smart-playlists'],
+        summary: 'Удалить',
+        responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/smart-playlists/{id}/tracks': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: {
+        tags: ['smart-playlists'],
+        summary: 'Треки, подходящие под правила (до limit из правил)',
+        responses: {
+          200: {
+            description: 'OK, X-Total-Count — все совпадения',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/Track' } },
+              },
+            },
+          },
+          422: { description: 'Правила в базе не разбираются' },
+        },
       },
     },
     '/playlists': {

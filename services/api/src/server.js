@@ -12,7 +12,9 @@ import {
   deleteTrackRecord, findByChecksum, recordListen, listHistory, clearHistory,
   setCoverMime, getCoverInfo, listPlaylists, getPlaylist, stats, genres, migrationStatus,
   listExternal, getExternal, upsertExternal, updateExternalNote, deleteExternal,
-  listVariants, getVariant, deleteVariants, trackByChecksum,
+  listVariants, getVariant, deleteVariants, trackByChecksum, getShare,
+  listSmartPlaylists, getSmartPlaylist, insertSmartPlaylist, updateSmartPlaylist,
+  deleteSmartPlaylist, listSmartTracks, countSmartTracks, listPersonalTracks,
 } from './db.js';
 import {
   STORAGE_MODE, SEED_ENABLED, DEVICE_ID, PUBLIC_URL, SEED_TTL_MS,
@@ -25,7 +27,33 @@ import {
   backfillVariants, enqueueTranscode, hlsPath, removeVariants, transcodeStatus, variantPath,
 } from './transcode.js';
 import { ffmpegAvailable, ffmpegVersion, resolveFfmpeg } from './ffmpeg.js';
+import {
+  ShareError, createShare, dropShareById, externalBase, guestView,
+  isActive, logShareHit, parseTtl, publicShare, renderShareGone, renderSharePage,
+  resolveShareToken, revokeForTarget, revokeShareById, rotateShare, serveGuestCover,
+  serveGuestDownload, serveGuestStream, shareList, shareUrl, updateShareFields,
+} from './shares.js';
+import {
+  CommentError, addComment, authorHash, listComments, publicComment, removeComment,
+} from './comments.js';
+import { listShareComments, countShareComments } from './db.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
+import { RuleError, buildSmartQuery, describeRules, normalizeRules } from './smart.js';
+import { buildSections, emptyHint, greeting, SECTION_LIMIT, daySeed } from './personal.js';
+import {
+  DEFAULT_WIDTH, embedMeta, embedSize, embedTheme, oembedPayload, oembedXml,
+  parseShareUrl, renderEmbedGone, renderEmbedWidget, shareIsUsable,
+} from './embed.js';
+import {
+  AUDIT_ACTIONS, AUDIT_ACTOR_LABELS, AUDIT_RETENTION_DAYS, audit, auditIpHash,
+  auditSummary, listAudit, pruneAudit,
+} from './audit.js';
+import { dashboard, logPlayback } from './dashboard.js';
+import {
+  backupScheduleState, backupStatus, createBackup, startBackupSchedule, verifyArchive,
+} from './backup.js';
+import { boundaryOf, firstPartStream } from './multipart.js';
+import { crashSummary, listCrashes, pruneCrashes, recordCrash } from './crashes.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -37,6 +65,18 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const WEB_DIST = path.join(ROOT, 'apps', 'web', 'dist');
+/**
+ * Панель администрирования — отдельное приложение (`apps/console`). Её статика
+ * лежит рядом с веб-сборкой и отдаётся по `/admin`: этот же адрес указывают как
+ * `redirect_url` для мини-аппа Telegram, поэтому панель обязана открываться с
+ * самого сервера, а не только из окна Windows/APK.
+ */
+const CONSOLE_DIST = path.join(ROOT, 'apps', 'console', 'dist');
+/**
+ * Стили встраиваемого виджета (E4) лежат рядом с модулем и отдаются с диска,
+ * а не из веб-сборки: виджет должен работать и на сервере без `apps/web/dist`.
+ */
+const EMBED_CSS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'embed.css');
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_UPLOAD = 500 * 1024 * 1024;
@@ -155,6 +195,17 @@ function routeKey(pathname) {
   return pathname.replace(/\/[A-Za-z0-9_-]{32}(?=\/|$)/g, '/:id');
 }
 
+/**
+ * Путь для логов. Токен приватной ссылки — это секрет доступа, поэтому в лог
+ * он не попадает: `/s/<token>/stream/<id>` пишется как `/s/:token/stream/:id`.
+ * Иначе один лог-файл (или агрегатор) становится списком рабочих ссылок.
+ */
+function logPath(pathname) {
+  return pathname
+    .replace(/^\/s\/[A-Za-z0-9_-]{20,128}/, '/s/:token')
+    .replace(/^\/api\/shares\/[a-f0-9]{32}(?=\/|$)/, '/api/shares/:id');
+}
+
 /* --------------------------------- auth --------------------------------- */
 
 async function handleLogin(req, res) {
@@ -170,9 +221,12 @@ async function handleLogin(req, res) {
   }
   if (!safeEqual(body.password || '', PASSWORD)) {
     inc('vision_auth_failures_total');
+    // факт попытки без пароля: видно подбор, но нечем воспользоваться
+    audit('auth.fail', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
     return fail(res, 401, 'unauthorized', 'Неверный пароль.');
   }
   inc('vision_auth_success_total');
+  audit('auth.login', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
   json(res, 200, issueToken());
 }
 
@@ -188,6 +242,37 @@ function selfBaseUrl(req) {
 }
 
 const TRACK_URL = (id) => `/api/tracks/${id}`;
+
+/**
+ * Трек из `listPersonalTracks` в форме, привычной клиенту (`Track` без истории):
+ * подборки отдают те же поля, что и список библиотеки, плюс ссылки на поток.
+ */
+function toPublicTrack(track, req) {
+  const full = getTrack(track.id);
+  if (!full) return track;
+  const [withLinks] = withSources([full], { selfBase: selfBaseUrl(req) });
+  return withLinks;
+}
+
+/**
+ * Умный плейлист + сколько треков подходит сейчас (C7). `trackCount` — не
+ * «длина списка», а результат правил: он меняется, когда меняется библиотека.
+ */
+function withSmartCount(playlist) {
+  if (!playlist) return null;
+  try {
+    const query = buildSmartQuery(normalizeRules(playlist.rules ?? {}));
+    return {
+      ...playlist,
+      smart: true,
+      trackCount: countSmartTracks(query),
+      matched: countSmartTracks(query),
+      summary: describeRules(normalizeRules(playlist.rules ?? {})),
+    };
+  } catch {
+    return { ...playlist, smart: true, trackCount: 0, matched: 0, summary: 'правила не разбираются' };
+  }
+}
 
 /**
  * Отдача блоба с этого устройства: `/seed/<sha256>?exp&sig`.
@@ -403,6 +488,16 @@ function saveCover(trackId, cover) {
 }
 
 async function handleUpload(req, res, url) {
+  /*
+   * Телефон (H4) отправляет файл через `FormData`, то есть multipart: в React
+   * Native это единственный способ отдать файл с диска, не читая его в память.
+   * Веб отправляет тело-файл. Принимаем оба вида и дальше работаем с одним
+   * потоком байтов — так у загрузки остаётся ровно одна реализация.
+   */
+  const multipart = boundaryOf(req.headers['content-type']);
+  const part = multipart ? firstPartStream(req, req.headers['content-type']) : null;
+  const body = part ? part.stream : req;
+
   const declared = Number(req.headers['content-length'] || 0);
   if (declared && declared > MAX_UPLOAD) {
     return fail(res, 413, 'too_large', 'Файл больше 500 МБ.');
@@ -423,7 +518,7 @@ async function handleUpload(req, res, url) {
   };
 
   try {
-    for await (const chunk of req) {
+    for await (const chunk of body) {
       received += chunk.length;
 
       if (rejection) {
@@ -561,6 +656,12 @@ async function handleUpload(req, res, url) {
   }
 
   inc('vision_upload_success_total');
+  audit('track.upload', {
+    targetId: id,
+    requestId: req.visionRequestId,
+    ipHash: auditIpHash(clientIp(req)),
+    details: { title, artist, bytes: received, mime: detected.mime, checksum: checksum?.slice(0, 16) },
+  });
   // файл на этом узле = блоб + живой сид: трекер сразу знает, у кого он есть
   declareBlob({ hash: checksum, bytes: received, mime: detected.mime });
   registerSeed({ hash: checksum, deviceId: DEVICE_ID, kind: 'origin', baseUrl: PUBLIC_URL || selfBaseUrl(req) });
@@ -664,11 +765,81 @@ async function handleApi(req, res, url) {
     });
   }
 
+  /**
+   * oEmbed (E4). Публичный эндпоинт по спецификации 1.0, фиксированный путь —
+   * так его указывают в `<link rel="alternate" type="application/json+oembed">`.
+   * Принимаем только наши ссылки: чужой `url` не должен превращаться в
+   * описание произвольного сайта (иначе мы — открытый прокси).
+   */
+  if ((pathname === '/api/oembed' || pathname === '/api/v1/oembed') && method === 'GET') {
+    const format = String(url.searchParams.get('format') || 'json').toLowerCase();
+    if (format !== 'json' && format !== 'xml') {
+      return fail(res, 400, 'invalid_format', 'Поддерживаются format=json и format=xml.');
+    }
+    const parsed = parseShareUrl(url.searchParams.get('url'));
+    if (!parsed) {
+      return fail(res, 400, 'invalid_url', 'Ожидалась ссылка Vision Audio вида /s/<токен>.');
+    }
+    const resolved = resolveShareToken(parsed.token);
+    if (resolved.error || !shareIsUsable(resolved.share)) {
+      return fail(res, 404, 'not_found', 'Ссылка недоступна.');
+    }
+    const view = guestView(resolved.share, { selfBase: externalBase(PUBLIC_URL, req) });
+    if (!view) return fail(res, 404, 'not_found', 'Ссылка недоступна.');
+    const payload = oembedPayload(view, {
+      token: parsed.token,
+      selfBase: externalBase(PUBLIC_URL, req),
+      maxwidth: url.searchParams.get('maxwidth'),
+      maxheight: url.searchParams.get('maxheight'),
+    });
+    inc('vision_embed_open_total', 1, { kind: view.kind });
+    log('info', 'oembed', { share: resolved.share.id, kind: view.kind });
+    if (format === 'xml') {
+      res.writeHead(200, {
+        'Content-Type': 'text/xml; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
+      return res.end(oembedXml(payload));
+    }
+    return json(res, 200, payload, {
+      'Cache-Control': 'no-store',
+      // oEmbed-клиенты (CMS, Notion) запрашивают описание кросс-доменно
+      'Access-Control-Allow-Origin': '*',
+    });
+  }
+
   if ((pathname === '/api/openapi.json' || pathname === '/api/v1/openapi.json') && method === 'GET') {
     return json(res, 200, OPENAPI, { 'Cache-Control': 'public, max-age=300' });
   }
 
   if (pathname === '/api/auth/login' && method === 'POST') return handleLogin(req, res);
+
+  /**
+   * Приём отчётов о падениях (H5). **Без токена** осознанно: приложение падает и
+   * до входа, и после истечения токена — отчёт с этих падений самый нужный.
+   * Защита не авторизация, а лимиты: 16 КБ тела и 60 отчётов в час на установку.
+   * Тело читается с жёстким потолком, чтобы «отчёт» не стал способом забить диск.
+   */
+  if (pathname === '/api/crashes' && method === 'POST') {
+    let body;
+    try {
+      body = await readJson(req, 16 * 1024);
+    } catch (error) {
+      // 413 на большое тело, 400 на битый JSON: это разные поломки у клиента
+      return error?.message === 'body_too_large'
+        ? fail(res, 413, 'too_large', 'Отчёт больше 16 КБ.')
+        : fail(res, 400, 'invalid_json', 'Ожидался JSON.');
+    }
+    const result = recordCrash(body, { ipHash: auditIpHash(clientIp(req)) });
+    if (!result.accepted) {
+      // 429, но не ошибка клиента: цикл падений не должен выглядеть как поломка сети
+      return json(res, 429, { accepted: false, reason: result.reason }, { 'Cache-Control': 'no-store' });
+    }
+    return json(res, 200, { accepted: true, duplicate: result.duplicate, count: result.count }, {
+      'Cache-Control': 'no-store',
+    });
+  }
 
   if (!authorized(req)) {
     // <audio>/<img> не умеют присылать заголовок Authorization — для них
@@ -682,6 +853,142 @@ async function handleApi(req, res, url) {
 
   if (pathname === '/api/me' && method === 'GET') {
     return json(res, 200, { ok: true, role: 'owner', version: VERSION });
+  }
+
+  /**
+   * Журнал действий (G10). Только владелец: это карта его библиотеки и гостей.
+   * Фильтры — простые query-параметры, лента отдаётся новыми сверху.
+   */
+  if (pathname === '/api/audit' && method === 'GET') {
+    const result = listAudit({
+      limit: url.searchParams.get('limit'),
+      offset: url.searchParams.get('offset'),
+      action: url.searchParams.get('action'),
+      actor: url.searchParams.get('actor'),
+      shareId: url.searchParams.get('shareId'),
+      since: url.searchParams.get('since'),
+      until: url.searchParams.get('until'),
+    });
+    // подписи действий — часть контракта: панель не должна дублировать словарь
+    return json(res, 200, {
+      ...result,
+      labels: Object.fromEntries(Object.entries(AUDIT_ACTIONS).map(([key, value]) => [key, value.label])),
+      actors: AUDIT_ACTOR_LABELS,
+      retentionDays: AUDIT_RETENTION_DAYS,
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/audit/actions' && method === 'GET') {
+    return json(res, 200, {
+      actions: Object.entries(AUDIT_ACTIONS).map(([code, value]) => ({
+        code, label: value.label, actor: value.actor, target: value.target,
+      })),
+      actors: AUDIT_ACTOR_LABELS,
+      retentionDays: AUDIT_RETENTION_DAYS,
+    }, { 'Cache-Control': 'private, max-age=300' });
+  }
+
+  if (pathname === '/api/audit/summary' && method === 'GET') {
+    return json(res, 200, auditSummary({ days: Number(url.searchParams.get('days') || 1) }), {
+      'Cache-Control': 'no-store',
+    });
+  }
+
+  if (pathname === '/api/audit' && method === 'DELETE') {
+    const removed = pruneAudit({ keepDays: Number(url.searchParams.get('keepDays') || AUDIT_RETENTION_DAYS) });
+    audit('audit.prune', { details: removed, requestId: req.visionRequestId });
+    return json(res, 200, removed);
+  }
+
+  /**
+   * Отчёты о падениях (H5): читает только владелец — в стеке бывают внутренние
+   * имена и куски данных, которые видит автор библиотеки.
+   */
+  if (pathname === '/api/crashes' && method === 'GET') {
+    return json(res, 200, listCrashes({
+      limit: url.searchParams.get('limit'),
+      offset: url.searchParams.get('offset'),
+      app: url.searchParams.get('app'),
+      version: url.searchParams.get('version'),
+    }), { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/crashes' && method === 'DELETE') {
+    const removed = pruneCrashes({ keepDays: Number(url.searchParams.get('keepDays') || 0) || undefined });
+    audit('crashes.prune', { details: removed, requestId: req.visionRequestId });
+    return json(res, 200, removed);
+  }
+
+  if (pathname === '/api/crashes' && method !== 'GET' && method !== 'POST') {
+    return fail(res, 405, 'method_not_allowed', 'GET — лента, POST — отчёт, DELETE — чистка.');
+  }
+
+  if (pathname === '/api/crashes/summary' && method === 'GET') {
+    return json(res, 200, crashSummary({ days: Number(url.searchParams.get('days') || 7) }), {
+      'Cache-Control': 'no-store',
+    });
+  }
+
+  /**
+   * Резервные копии (D5). Не «скачать архив кнопкой», а «знать, что он есть и
+   * что из него можно восстановиться»: поэтому статус, проверка восстановления
+   * и создание — отдельные ручки, а не одна на всё.
+   */
+  if (pathname === '/api/backups' && method === 'GET') {
+    return json(res, 200, { ...backupStatus(), schedule: backupScheduleState() }, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/backups' && method !== 'GET' && method !== 'POST') {
+    return fail(res, 405, 'method_not_allowed', 'GET — статус, POST — создать копию.');
+  }
+
+  if (pathname === '/api/backups' && method === 'POST') {
+    const result = await createBackup();
+    audit('backup.create', {
+      details: { name: result.name, bytes: result.bytes, tracks: result.verification.counts.tracks, ok: result.ok },
+      requestId: req.visionRequestId,
+    });
+    // 200, а не 201: копия — операция, а не сущность с адресом. Красная проверка
+    // не ошибка запроса: архив создан, и об этом надо сказать данными (`ok: false`).
+    return json(res, 200, result, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/backups/verify' && method === 'POST') {
+    const body = await readJson(req).catch(() => ({}));
+    const requested = String(body.name || '');
+    const status = backupStatus();
+    const name = requested || status.last?.name;
+    if (!name) return fail(res, 409, 'no_backups', 'Резервных копий ещё нет.');
+    // имя принимаем только своё: `../` в параметре — это чтение чужого файла
+    if (!/^vision-[0-9_-]+$/.test(name)) {
+      return fail(res, 400, 'invalid_name', 'Ожидалось имя вида vision-2026-11-11_1200.');
+    }
+    const result = await verifyArchive(`${status.dir}/${name}.tar.gz`);
+    audit('backup.verify', {
+      details: { name, ok: result.ok, problems: result.problems },
+      requestId: req.visionRequestId,
+    });
+    return json(res, 200, result, { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/backups/verify' && method !== 'POST') {
+    return fail(res, 405, 'method_not_allowed', 'Только POST.');
+  }
+
+  /**
+   * Дашборд владельца (D1): что и когда слушали — своё и по гостевым ссылкам.
+   * Только владелец: это карта его библиотеки, а не публичная статистика.
+   */
+  if (pathname === '/api/dashboard' && method !== 'GET' && method !== 'HEAD') {
+    return fail(res, 405, 'method_not_allowed', 'Только GET.');
+  }
+
+  if (pathname === '/api/dashboard' && method === 'GET') {
+    const data = dashboard({
+      days: url.searchParams.get('days'),
+      tz: url.searchParams.has('tz') ? Number(url.searchParams.get('tz')) : null,
+    });
+    return json(res, 200, data, { 'Cache-Control': 'no-store' });
   }
 
   if (pathname === '/api/stats' && method === 'GET') {
@@ -968,6 +1275,216 @@ async function handleApi(req, res, url) {
     return fail(res, 404, 'not_found', 'Неизвестное действие с блобом.');
   }
 
+
+  /* ---- приватные ссылки (Фаза 6): владелец создаёт, гость только читает ---- */
+
+  if (pathname === '/api/shares') {
+    if (method === 'GET') {
+      const list = shareList({
+        targetKind: url.searchParams.get('targetKind') || undefined,
+        targetId: url.searchParams.get('targetId') || undefined,
+        includeRevoked: url.searchParams.get('includeRevoked') === '1',
+      });
+      const base = externalBase(PUBLIC_URL, req);
+      // токен не хранится, поэтому показать «готовый URL» можно только при создании
+      return json(res, 200, list.map((share) => ({
+        ...share,
+        baseUrl: base,
+        comments: countShareComments(share.id),
+      })));
+    }
+
+    if (method === 'POST') {
+      const body = await readJson(req).catch(() => ({}));
+      const targetKind = String(body.targetKind || body.kind || (body.playlistId ? 'playlist' : 'track'));
+      const targetId = String(body.targetId || body.trackId || body.playlistId || '');
+      if (!/^[a-f0-9]{32}$/.test(targetId)) {
+        return fail(res, 400, 'invalid_target', 'Нужен targetKind (track|playlist) и targetId.');
+      }
+
+      let created;
+      try {
+        created = createShare({
+          targetKind,
+          targetId,
+          title: str(body.title, 120),
+          ttl: body.ttl ?? url.searchParams.get('ttl') ?? undefined,
+          maxPlays: body.maxPlays ?? null,
+        });
+      } catch (error) {
+        if (error instanceof ShareError) return fail(res, error.status, error.code, error.message);
+        throw error;
+      }
+
+      inc('vision_share_created_total', 1, { kind: targetKind });
+      audit('share.create', {
+        targetKind: 'share',
+        targetId: created.share.id,
+        shareId: created.share.id,
+        requestId: req.visionRequestId,
+        details: {
+          kind: targetKind,
+          title: created.share.title || null,
+          expiresAt: created.share.expiresAt,
+          maxPlays: created.share.maxPlays,
+        },
+      });
+      const base = externalBase(PUBLIC_URL, req);
+      return json(res, 201, {
+        ...publicShare(created.share),
+        token: created.token,
+        url: shareUrl(base, created.token),
+        path: `/s/${created.token}`,
+        active: true,
+        stats: { hits: {}, visitors: 0, lastHitAt: null },
+      });
+    }
+
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
+
+  const shareMatch = /^\/api\/shares\/([a-f0-9]{32})$/.exec(pathname);
+  if (shareMatch) {
+    const shareId = shareMatch[1];
+    const share = getShare(shareId);
+    if (!share) return fail(res, 404, 'not_found', 'Ссылка не найдена.');
+
+    if (method === 'GET') {
+      return json(res, 200, {
+        ...shareList({ includeRevoked: true }).find((item) => item.id === shareId),
+        baseUrl: externalBase(PUBLIC_URL, req),
+      });
+    }
+
+    if (method === 'PATCH') {
+      const body = await readJson(req).catch(() => ({}));
+      const patch = {};
+      if ('title' in body) patch.title = str(body.title, 120);
+      if ('ttl' in body) {
+        // `ttl: null` — явное «бессрочно»; отсутствие поля — не трогаем срок
+        const ttlMs = body.ttl === null ? null : parseTtl(body.ttl);
+        patch.expiresAt = ttlMs === null ? null : new Date(Date.now() + ttlMs).toISOString();
+      }
+      if ('maxPlays' in body) {
+        // ноль и null снимают лимит: иначе 0 означал бы «закрыта сразу»
+        const limit = Number(body.maxPlays);
+        patch.maxPlays = body.maxPlays === null || !Number.isFinite(limit) || limit <= 0
+          ? null
+          : Math.min(10_000, Math.trunc(limit));
+      }
+      const updated = updateShareFields(shareId, patch);
+      return json(res, 200, { ...publicShare(updated), active: isActive(updated) });
+    }
+
+    if (method === 'DELETE') {
+      const hard = url.searchParams.get('purge') === '1';
+      if (hard) {
+        dropShareById(shareId);
+      } else {
+        revokeShareById(shareId);
+      }
+      inc('vision_share_revoked_total');
+      audit(hard ? 'share.delete' : 'share.revoke', {
+        targetKind: 'share',
+        targetId: shareId,
+        shareId,
+        requestId: req.visionRequestId,
+        details: { kind: share.targetKind, title: share.title || null, hard },
+      });
+      res.writeHead(204);
+      return res.end();
+    }
+  }
+
+  /* ---- комментарии к ссылке: владелец читает всё и может удалить любое ---- */
+  const shareComments = /^\/api\/shares\/([a-f0-9]{32})\/comments$/.exec(pathname);
+  if (shareComments) {
+    const share = getShare(shareComments[1]);
+    if (!share) return fail(res, 404, 'not_found', 'Ссылка не найдена.');
+
+    if (method === 'GET') {
+      const trackId = url.searchParams.get('trackId') || null;
+      return json(res, 200, {
+        comments: listShareComments({ shareId: share.id, trackId }).map((comment) => ({
+          ...publicComment(comment),
+          deletedAt: comment.deletedAt,
+        })),
+        total: countShareComments(share.id),
+      });
+    }
+
+    if (method === 'POST') {
+      const body = await readJson(req).catch(() => ({}));
+      const trackId = String(body.trackId || '');
+      const track = getTrack(trackId);
+      if (!track) return fail(res, 404, 'track_not_found', 'Трек не найден.');
+      try {
+        const created = addComment(
+          share,
+          { trackId, at: body.at, author: body.author || 'Владелец', body: body.body },
+          { ip: clientIp(req), duration: track.duration }
+        );
+        inc('vision_share_comment_total', 1);
+        audit('comment.add', {
+          actor: 'owner',
+          targetKind: 'comment',
+          targetId: created.id,
+          shareId: share.id,
+          requestId: req.visionRequestId,
+          details: { at: created.at, trackId },
+        });
+        return json(res, 201, created);
+      } catch (error) {
+        if (error instanceof CommentError) return fail(res, error.status, error.code, error.message);
+        throw error;
+      }
+    }
+
+    if (method === 'DELETE') {
+      const commentId = url.searchParams.get('commentId') || '';
+      try {
+        const removed = removeComment(commentId, { owner: true });
+        audit('comment.delete', {
+          actor: 'owner',
+          targetKind: 'comment',
+          targetId: commentId,
+          shareId: share.id,
+          requestId: req.visionRequestId,
+        });
+        return json(res, 200, removed);
+      } catch (error) {
+        if (error instanceof CommentError) return fail(res, error.status, error.code, error.message);
+        throw error;
+      }
+    }
+
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
+
+  const shareRotate = /^\/api\/shares\/([a-f0-9]{32})\/rotate$/.exec(pathname);
+  if (shareRotate && method === 'POST') {
+    try {
+      const rotated = rotateShare(shareRotate[1]);
+      inc('vision_share_rotated_total');
+      audit('share.rotate', {
+        targetKind: 'share',
+        targetId: shareRotate[1],
+        shareId: shareRotate[1],
+        requestId: req.visionRequestId,
+        details: { kind: rotated.share.targetKind },
+      });
+      return json(res, 200, {
+        ...publicShare(rotated.share),
+        token: rotated.token,
+        url: shareUrl(externalBase(PUBLIC_URL, req), rotated.token),
+        path: `/s/${rotated.token}`,
+      });
+    } catch (error) {
+      if (error instanceof ShareError) return fail(res, error.status, error.code, error.message);
+      throw error;
+    }
+  }
+
   /* ---- треки ---- */
   if (pathname === '/api/tracks') {
     if (method === 'GET') {
@@ -1035,7 +1552,13 @@ async function handleApi(req, res, url) {
       if ('liked' in body) patch.liked = Boolean(body.liked);
       if (!Object.keys(patch).length) return fail(res, 400, 'nothing_to_update', 'Нет полей для обновления.');
 
-      return json(res, 200, withSources(updateTrackFields(id, patch), { selfBase: selfBaseUrl(req) }));
+      const updated = updateTrackFields(id, patch);
+      audit('track.update', {
+        targetId: id,
+        requestId: req.visionRequestId,
+        details: { title: updated?.title ?? track.title, fields: Object.keys(patch) },
+      });
+      return json(res, 200, withSources(updated, { selfBase: selfBaseUrl(req) }));
     }
 
     if (!action && method === 'DELETE') {
@@ -1047,7 +1570,13 @@ async function handleApi(req, res, url) {
       }
       deleteVariants(track.id);
       void removeVariants(track.id);
+      revokeForTarget('track', track.id);
       inc('vision_track_deleted_total');
+      audit('track.delete', {
+        targetId: track.id,
+        requestId: req.visionRequestId,
+        details: { title: track.title, artist: track.artist, bytes: meta?.size ?? null },
+      });
       res.writeHead(204);
       return res.end();
     }
@@ -1123,6 +1652,13 @@ async function handleApi(req, res, url) {
       const duration = Math.max(0, Number(body.duration) || track.duration || 0);
       const completed = Boolean(body.completed) || (duration > 0 && position / duration > 0.9);
       recordListen(id, { position, duration, completed });
+      /*
+       * Дашборд (D1) питается событиями, а не состоянием: `listens` знает только
+       * «где я сейчас», поэтому один и тот же трек, поставленный на повтор, не
+       * должен накручивать график. Дедупликацию окна делает `logPlayback`.
+       */
+      logPlayback({ trackId: id, kind: 'play', position, duration, ip: clientIp(req) });
+      if (completed) logPlayback({ trackId: id, kind: 'complete', position, duration, ip: clientIp(req) });
       res.writeHead(204);
       return res.end();
     }
@@ -1146,6 +1682,127 @@ async function handleApi(req, res, url) {
     }
   }
 
+  /* ---- «Для вас»: подборки по истории (J3) ---- */
+  if (pathname === '/api/personal') {
+    if (method !== 'GET') return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+
+    const library = listPersonalTracks();
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || SECTION_LIMIT, 1), 50);
+    const now = Date.now();
+    // `seed` фиксирует перемешивание: подборка не должна меняться при каждом
+    // обновлении страницы, но пусть меняется раз в день.
+    const seed = Number(url.searchParams.get('seed')) || daySeed(now);
+
+    const sections = buildSections(library, { now, seed, limit }).map((section) => ({
+      ...section,
+      tracks: section.tracks.map((track) => toPublicTrack(track, req)),
+    }));
+
+    return json(res, 200, {
+      greeting: greeting(now),
+      generatedAt: new Date(now).toISOString(),
+      seed,
+      // Подборки — подсказка, а не обязательство: клиент сам решает, что показать.
+      sections,
+      libraryTracks: library.length,
+      hint: sections.length ? null : emptyHint(library.length > 0),
+    });
+  }
+
+  /* ---- умные плейлисты (C7) ---- */
+  if (pathname === '/api/smart-playlists') {
+    if (method === 'GET') {
+      return json(res, 200, listSmartPlaylists().map((item) => withSmartCount(item)));
+    }
+    if (method === 'POST') {
+      const body = await readJson(req).catch(() => null);
+      if (!body) return fail(res, 400, 'invalid_json', 'Ожидался JSON.');
+      const name = str(body.name, 120);
+      if (!name) return fail(res, 400, 'invalid_name', 'Нужно название плейлиста.');
+      let rules;
+      try {
+        rules = normalizeRules(body.rules);
+      } catch (error) {
+        if (error instanceof RuleError) return fail(res, 400, error.code, error.message);
+        throw error;
+      }
+      const id = uid();
+      const createdAt = new Date().toISOString();
+      insertSmartPlaylist({ id, name, description: str(body.description, 500), rules, createdAt });
+      audit('playlist.create', {
+        targetId: id,
+        requestId: req.visionRequestId,
+        details: { title: name, smart: true, rules: describeRules(rules) },
+      });
+      return json(res, 201, withSmartCount(getSmartPlaylist(id)));
+    }
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
+
+  const smartMatch = /^\/api\/smart-playlists\/([a-f0-9]{32})(\/tracks)?$/.exec(pathname);
+  if (smartMatch) {
+    const [, smartId, tracksSub] = smartMatch;
+    const playlist = getSmartPlaylist(smartId);
+    if (!playlist) return fail(res, 404, 'not_found', 'Плейлист не найден.');
+
+    // Битые правила в базе (руками поправили JSON) — это 422, а не 500:
+    // человеку нужен внятный текст, а не «внутренняя ошибка».
+    let query;
+    try {
+      query = buildSmartQuery(normalizeRules(playlist.rules ?? {}));
+    } catch (error) {
+      if (error instanceof RuleError) {
+        return fail(res, 422, 'invalid_rules', `Правила плейлиста не разбираются: ${error.message}`);
+      }
+      throw error;
+    }
+
+    if (tracksSub && method === 'GET') {
+      const tracks = listSmartTracks(query);
+      return json(res, 200, withSources(tracks, { selfBase: selfBaseUrl(req) }), {
+        'X-Total-Count': String(countSmartTracks(query)),
+      });
+    }
+
+    if (!tracksSub && method === 'GET') {
+      return json(res, 200, withSmartCount(playlist));
+    }
+
+    if (!tracksSub && method === 'PATCH') {
+      const body = await readJson(req).catch(() => ({}));
+      const name = 'name' in body ? str(body.name, 120) : playlist.name;
+      if (!name) return fail(res, 400, 'invalid_name', 'Нужно название плейлиста.');
+      let rules = playlist.rules;
+      if ('rules' in body) {
+        try {
+          rules = normalizeRules(body.rules);
+        } catch (error) {
+          if (error instanceof RuleError) return fail(res, 400, error.code, error.message);
+          throw error;
+        }
+      }
+      const description = 'description' in body ? str(body.description, 500) : playlist.description;
+      updateSmartPlaylist(smartId, { name, description, rules });
+      audit('playlist.update', {
+        targetId: smartId,
+        requestId: req.visionRequestId,
+        details: { title: name, smart: true, rules: describeRules(rules) },
+      });
+      return json(res, 200, withSmartCount(getSmartPlaylist(smartId)));
+    }
+
+    if (!tracksSub && method === 'DELETE') {
+      deleteSmartPlaylist(smartId);
+      audit('playlist.delete', {
+        targetId: smartId,
+        requestId: req.visionRequestId,
+        details: { title: playlist.name, smart: true },
+      });
+      res.writeHead(204);
+      return res.end();
+    }
+  }
+
   /* ---- плейлисты ---- */
   if (pathname === '/api/playlists') {
     if (method === 'GET') return json(res, 200, listPlaylists());
@@ -1161,6 +1818,7 @@ async function handleApi(req, res, url) {
       const id = uid();
       db.prepare('INSERT INTO playlists (id, name, description, created_at) VALUES (?, ?, ?, ?)')
         .run(id, name, str(body.description, 500), new Date().toISOString());
+      audit('playlist.create', { targetId: id, requestId: req.visionRequestId, details: { title: name } });
       return json(res, 201, getPlaylist(id));
     }
     return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
@@ -1180,11 +1838,22 @@ async function handleApi(req, res, url) {
       if (!name) return fail(res, 400, 'invalid_name', 'Нужно название плейлиста.');
       const description = 'description' in body ? str(body.description, 500) : playlist.description;
       db.prepare('UPDATE playlists SET name = ?, description = ? WHERE id = ?').run(name, description, playlistId);
+      audit('playlist.update', {
+        targetId: playlistId,
+        requestId: req.visionRequestId,
+        details: { title: name, fields: Object.keys(body) },
+      });
       return json(res, 200, getPlaylist(playlistId));
     }
 
     if (!sub && method === 'DELETE') {
       db.prepare('DELETE FROM playlists WHERE id = ?').run(playlistId);
+      revokeForTarget('playlist', playlistId);
+      audit('playlist.delete', {
+        targetId: playlistId,
+        requestId: req.visionRequestId,
+        details: { title: playlist.name },
+      });
       res.writeHead(204);
       return res.end();
     }
@@ -1217,7 +1886,405 @@ async function handleApi(req, res, url) {
   return fail(res, 404, 'not_found', 'Маршрут не найден.');
 }
 
+
+/* --------------------------- гостевые ссылки /s/* -------------------------- */
+
+/**
+ * Комментарий из обычной HTML-формы (страница работает без JS): читаем тело
+ * `application/x-www-form-urlencoded`, сохраняем и возвращаемся на страницу с
+ * якорем к треку. Ошибку показываем текстом, без потери введённого.
+ */
+async function handleGuestCommentForm(req, res, { share, token }) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 32 * 1024) {
+      res.writeHead(413);
+      return res.end();
+    }
+    chunks.push(chunk);
+  }
+  const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+
+  if (form.get('_method') === 'delete') {
+    const target = String(form.get('commentId') || '');
+    try {
+      removeComment(target, { ip: clientIp(req) });
+    } catch {
+      /* чужой или уже удалён — молча возвращаемся: без подсказок «есть/нет» */
+    }
+    res.writeHead(303, { Location: `/s/${token}#comments`, 'Cache-Control': 'no-store' });
+    return res.end();
+  }
+
+  const trackId = String(form.get('trackId') || '');
+  const back = `/s/${token}#${trackId ? `track-${trackId}` : 'comments'}`;
+
+  try {
+    const created = addComment(
+      share,
+      {
+        trackId,
+        at: form.get('at'),
+        author: form.get('author'),
+        body: form.get('body'),
+      },
+      { ip: clientIp(req), duration: getTrack(trackId)?.duration ?? null }
+    );
+    inc('vision_share_comment_total', 1);
+    log('info', 'share comment added (form)', { share: share.id, track: created.trackId });
+    audit('comment.add', {
+      actor: 'guest',
+      targetKind: 'comment',
+      targetId: created.id,
+      shareId: share.id,
+      ipHash: auditIpHash(clientIp(req)),
+      requestId: req.visionRequestId,
+      details: { at: created.at, trackId: created.trackId, author: created.author },
+    });
+  } catch (error) {
+    const text = error instanceof CommentError ? error.message : 'Не удалось добавить комментарий.';
+    res.writeHead(error instanceof CommentError ? error.status : 400, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Robots-Tag': 'noindex',
+    });
+    return res.end(renderShareGone('comment_failed', text));
+  }
+
+  res.writeHead(303, { Location: back, 'Cache-Control': 'no-store' });
+  return res.end();
+}
+
+/**
+ * Гостевой маршрут знает ровно четыре вещи: страницу, поток, скачивание и
+ * обложку. Токен в пути — единственный ключ доступа; сессия владельца не нужна,
+ * но и не мешает (владелец тоже может открыть ссылку).
+ */
+async function serveShare(req, res, url) {
+  const match = /^\/s\/([A-Za-z0-9_-]{20,128})(?:\/(?:(stream|download|cover)\/([a-f0-9]{32})|(comments)(?:\/([a-f0-9]{32}))?))?$/.exec(url.pathname);
+  if (!match) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(renderShareGone('not_found'));
+  }
+
+  // группы 2–3 — поток/скачивание/обложка, 4–5 — лента комментариев
+  const [, token, fileAction, fileTrackId, commentsAction, hiddenCommentId] = match;
+  const action = fileAction || commentsAction;
+  const trackId = fileTrackId;
+  const commentId = hiddenCommentId;
+  // токен в пути: не отдаём его никуда дальше (Referer, кэши, логи)
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  const resolved = resolveShareToken(token);
+  const selfBase = externalBase(PUBLIC_URL, req);
+
+  if (resolved.error) {
+    // для ленты комментариев отвечаем JSON: её читает код, а не человек
+    if (action === 'comments') {
+      return fail(res, resolved.status, resolved.error, {
+        revoked: 'Ссылка отозвана.',
+        rotated: 'Ссылка перевыпущена.',
+        expired: 'Срок действия ссылки истёк.',
+        exhausted: 'Лимит открытий исчерпан.',
+        not_found: 'Ссылка не найдена.',
+      }[resolved.error] || 'Ссылка недоступна.');
+    }
+    res.writeHead(resolved.status, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Robots-Tag': 'noindex',
+    });
+    return res.end(renderShareGone(resolved.error));
+  }
+
+  const share = resolved.share;
+
+  /* ---- комментарии к секунде (E3): гость читает и пишет, удаляет только своё ---- */
+  if (action === 'comments') {
+    const track = url.searchParams.get('trackId');
+    const guestError = (error) => {
+      const status = error instanceof CommentError ? error.status : 400;
+      const code = error instanceof CommentError ? error.code : 'invalid';
+      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: { code, message: error?.message || 'Не удалось.' } }));
+      return undefined;
+    };
+
+    if (req.method === 'GET') {
+      try {
+        return json(res, 200, {
+          comments: listComments(share, { trackId: track || null }),
+          me: null,
+        });
+      } catch (error) {
+        return guestError(error);
+      }
+    }
+
+    if (req.method === 'POST' && !commentId) {
+      if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+        // прогрессивная форма без JS: страница перезагрузится с новым комментарием
+        return handleGuestCommentForm(req, res, { share, token });
+      }
+      const body = await readJson(req).catch(() => ({}));
+      try {
+        const created = addComment(
+          share,
+          { trackId: body.trackId, at: body.at, author: body.author, body: body.body },
+          { ip: clientIp(req), duration: getTrack(String(body.trackId || ''))?.duration ?? null }
+        );
+        inc('vision_share_comment_total', 1);
+        log('info', 'share comment added', { share: share.id, track: created.trackId });
+        audit('comment.add', {
+          actor: 'guest',
+          targetKind: 'comment',
+          targetId: created.id,
+          shareId: share.id,
+          ipHash: auditIpHash(clientIp(req)),
+          requestId: req.visionRequestId,
+          details: { at: created.at, trackId: created.trackId, author: created.author },
+        });
+        return json(res, 201, created);
+      } catch (error) {
+        return guestError(error);
+      }
+    }
+
+    if (req.method === 'DELETE' && commentId) {
+      try {
+        const ip = clientIp(req);
+        log('info', 'share comment delete', {
+          share: share.id, comment: commentId, ip, hash: authorHash(ip),
+          headerIp: req.headers['x-forwarded-for'] || null,
+          sock: req.socket.remoteAddress || null,
+        });
+        const removed = removeComment(commentId, { ip });
+        audit('comment.delete', {
+          actor: 'guest',
+          targetKind: 'comment',
+          targetId: commentId,
+          shareId: share.id,
+          ipHash: auditIpHash(ip),
+          requestId: req.visionRequestId,
+        });
+        return json(res, 200, removed);
+      } catch (error) {
+        return guestError(error);
+      }
+    }
+
+    return fail(res, 405, 'method_not_allowed', 'Метод не поддерживается.');
+  }
+
+  if (action === 'stream' || action === 'download') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { Allow: 'GET, HEAD' });
+      return res.end();
+    }
+    logShareHit(share, action, clientIp(req));
+    /*
+     * Для дашборда (D1) гость по ссылке — тоже прослушивание, но с источником
+     * `share`: «20 по ссылкам» и «3 моих» — разные ответы на «что слушают».
+     * `download` событием прослушивания не считается: скачали ≠ слушают.
+     */
+    if (action === 'stream') {
+      logPlayback({
+        trackId,
+        kind: 'play',
+        source: 'share',
+        shareId: share.id,
+        ip: clientIp(req),
+      });
+    }
+    audit(`share.${action}`, {
+      shareId: share.id,
+      targetKind: 'share',
+      targetId: trackId,
+      ipHash: auditIpHash(clientIp(req)),
+      requestId: req.visionRequestId,
+      details: { trackId, kind: share.targetKind },
+    });
+    return action === 'stream'
+      ? serveGuestStream(req, res, share, trackId, { selfBase })
+      : serveGuestDownload(req, res, share, trackId, { selfBase });
+  }
+
+  if (action === 'cover') {
+    return serveGuestCover(req, res, share, trackId);
+  }
+
+  const view = guestView(share, { selfBase });
+  if (!view) {
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(renderShareGone('not_found'));
+  }
+
+  logShareHit(share, 'open', clientIp(req));
+  inc('vision_share_open_total', 1, { kind: share.targetKind });
+  audit('share.open', {
+    shareId: share.id,
+    targetKind: 'share',
+    targetId: share.targetId,
+    ipHash: auditIpHash(clientIp(req)),
+    requestId: req.visionRequestId,
+    details: { kind: share.targetKind, title: view.kind === 'track' ? view.track?.title : view.playlist?.name },
+  });
+
+  const html = renderSharePage(view, { token, selfBase });
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+    'Cache-Control': 'no-store',
+    'X-Robots-Tag': 'noindex, nofollow',
+    // Страница самодостаточна: ни бандла, ни JS, ни запросов к API.
+    // media-src разрешает редирект на живой сид (другой узел роя) — локальный
+    // файл отдаётся тем же origin, но распределённое хранилище живёт на своих адресах.
+    // media-src разрешает редирект на живой сид (другой узел роя); script-src —
+    // только наш короткий inline-скрипт с перемоткой по таймкоду; form-action 'self'
+    // нужен форме комментария, которая умеет работать без JavaScript.
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'self'; frame-ancestors *",
+  });
+  res.end(html);
+}
+
+/* ------------------------------ встраивание /embed/* ----------------------- */
+
+/**
+ * `/embed/:token` — та же гостевая ссылка, но в виде, пригодном для `<iframe>`.
+ *
+ * Отличия от `/s/:token` только в оболочке: `frame-ancestors *` (иначе виджет
+ * не встроить), компактная вёрстка, `plays` не растёт (иначе вставка в блог
+ * сжигала бы лимит открытий), а `stream`/`cover` идут обычными гостевыми
+ * маршрутами — статистика ссылки остаётся честной.
+ */
+async function serveEmbed(req, res, url) {
+  const theme = embedTheme(url.searchParams.get('theme'));
+
+  if (url.pathname === '/embed/widget.css') {
+    if (!existsSync(EMBED_CSS)) return fail(res, 404, 'not_found', 'Файл не найден.');
+    const css = readFileSync(EMBED_CSS);
+    res.writeHead(200, {
+      'Content-Type': 'text/css; charset=utf-8',
+      'Content-Length': css.length,
+      'Cache-Control': 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(css);
+  }
+
+  const match = /^\/embed\/([A-Za-z0-9_-]{20,128})\/?$/.exec(url.pathname);
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  // Встраивание — смысл этого маршрута; X-Frame-Options намеренно не ставим.
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'none'; style-src 'unsafe-inline' 'self'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'none'; frame-ancestors *"
+  );
+
+  const gone = (status, reason) => {
+    const html = renderEmbedGone(reason, theme);
+    res.writeHead(status, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(html),
+    });
+    return res.end(html);
+  };
+
+  if (!match) return gone(404, 'not_found');
+
+  const token = match[1];
+  const resolved = resolveShareToken(token);
+  if (resolved.error || !shareIsUsable(resolved.share)) {
+    return gone(resolved.error === 'not_found' || !resolved.error ? 404 : resolved.status || 410, resolved.error || 'not_found');
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { Allow: 'GET, HEAD' });
+    return res.end();
+  }
+
+  const selfBase = externalBase(PUBLIC_URL, req);
+  const view = guestView(resolved.share, { selfBase });
+  if (!view) return gone(404, 'not_found');
+
+  inc('vision_embed_open_total', 1, { kind: view.kind });
+  const html = renderEmbedWidget(view, { token, selfBase, theme });
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+  });
+  return res.end(req.method === 'HEAD' ? undefined : html);
+}
+
 /* --------------------------------- static --------------------------------- */
+
+
+/**
+ * Панель администрирования (`/admin`): та же сборка, что в APK и Windows-окне.
+ *
+ * Отдаём её с сервера, потому что этот адрес:
+ *  - открывают с телефона в Wi-Fi («что с сервером?»);
+ *  - указывают как `redirect_url` мини-аппа Telegram (он обязан быть HTTPS);
+ *  - и просто не требуют установки, когда нужно проверить диск или ссылки.
+ *
+ * Если панель не собрана, честно говорим об этом, а не отдаём 404 из веб-приложения.
+ */
+function serveConsole(req, res, url) {
+  const index = path.join(CONSOLE_DIST, 'index.html');
+  if (!existsSync(index)) {
+    const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Панель не собрана</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07070a;color:#f4f4f8;
+font-family:system-ui,sans-serif;padding:24px}div{max-width:460px;line-height:1.6}p{color:#9a9aab}
+code{background:#17171f;padding:2px 6px;border-radius:6px}</style></head><body><div>
+<strong>Панель администрирования не собрана</strong>
+<p>Соберите её командой <code>npm run build:console</code> (или <code>npm --prefix apps/console run build</code>)
+и перезапустите сервер. Панель — отдельное приложение для Windows и Android; в браузере она
+доступна по этому же адресу.</p>
+<p>API и библиотека при этом работают: <a style="color:#ff5a1f" href="/">открыть Vision Audio</a>.</p>
+</div></body></html>`;
+    res.writeHead(503, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Length': Buffer.byteLength(html),
+    });
+    return res.end(html);
+  }
+
+  // Всё, что не файл, — это SPA-роут панели. Но под /admin/assets/ файлов быть
+  // обязано: иначе опечатка в имени отдавала бы HTML со статусом 200 и ошибка
+  // «панель не грузится» выглядела бы как «всё хорошо».
+  const isAsset = url.pathname.startsWith('/admin/assets/');
+  const relative = url.pathname.replace(/^\/admin\/?/, '');
+  const safe = path.normalize(relative).replace(/^(\.\.[/\\])+/, '');
+  const file = safe && !safe.endsWith('/') ? path.join(CONSOLE_DIST, safe) : index;
+
+  if (safe && existsSync(file) && statSync(file).isFile()) {
+    const ext = path.extname(file).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Content-Length': statSync(file).size,
+      // у панели хешированных имён нет, поэтому кэш короткий и с проверкой
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'private, max-age=300',
+    });
+    return createReadStream(file).pipe(res);
+  }
+
+  if (isAsset) {
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ error: { code: 'not_found', message: 'Нет такого файла панели.' } }));
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    // панель ходит в API того же origin — внешние запросы ей не нужны
+    'Content-Security-Policy': SECURITY_TXT,
+    'X-Robots-Tag': 'noindex',
+  });
+  return createReadStream(index).pipe(res);
+}
 
 function serveStatic(req, res, url) {
   let pathname;
@@ -1268,6 +2335,9 @@ function serveStatic(req, res, url) {
 const server = createServer(async (req, res) => {
   const started = process.hrtime.bigint();
   const requestId = randomUUID().slice(0, 8);
+  // аудит пишет тот же id, что клиент видит в X-Request-Id: строку журнала
+  // можно сопоставить с ответом и логом
+  req.visionRequestId = requestId;
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   res.setHeader('X-Request-Id', requestId);
 
@@ -1316,7 +2386,7 @@ const server = createServer(async (req, res) => {
     log('info', 'http', {
       id: requestId,
       method: req.method,
-      path: url.pathname,
+      path: logPath(url.pathname),
       status,
       ms: Math.round(durationMs),
     });
@@ -1327,10 +2397,19 @@ const server = createServer(async (req, res) => {
     if (url.pathname.startsWith('/seed/')) {
       return handleSeed(req, res, url, url.pathname);
     }
+    if (url.pathname.startsWith('/s/')) {
+      return await serveShare(req, res, url);
+    }
+    if (url.pathname.startsWith('/embed/')) {
+      return await serveEmbed(req, res, url);
+    }
     if (url.pathname.startsWith('/api/')) {
       const internal = versionedPath(url.pathname);
       const target = internal === url.pathname ? url : new URL(`${internal}${url.search}`, 'http://internal');
       return await handleApi(req, res, target);
+    }
+    if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
+      return serveConsole(req, res, url);
     }
     return serveStatic(req, res, url);
   } catch (error) {
@@ -1343,6 +2422,19 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
+  // отметка в журнале: «когда поднимался сервер» — первое, что спрашивают при разборе
+  audit('server.start', {
+    details: { version: VERSION, platform: process.platform, node: process.version },
+  });
+  try {
+    const pruned = pruneAudit();
+    if (pruned.removed) log('info', 'audit pruned', pruned);
+  } catch {
+    /* ретеншен не должен мешать старту */
+  }
+  // Автобэкап по таймеру: на Windows и Android/Termux cron нет, а «копия молча
+  // перестала делаться» — худший из отказов. BACKUP_EVERY_HOURS=0 выключает.
+  const backups = startBackupSchedule();
   log('info', 'server started', {
     host: HOST,
     port: PORT,
@@ -1351,6 +2443,7 @@ server.listen(PORT, HOST, () => {
     storage: STORAGE_MODE,
     seeding: SEED_ENABLED,
     device: DEVICE_ID,
+    backupHours: backups.running ? backups.hours : 0,
   });
 
   // Трекер знает про этот узел, только пока идёт heartbeat: раз в минуту.

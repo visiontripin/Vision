@@ -50,6 +50,141 @@ export type Playlist = {
   duration: number;
 };
 
+/**
+ * Правило умного плейлиста (C7). Состав такого плейлиста не хранится: он
+ * пересчитывается из правил при каждом открытии.
+ */
+export type SmartRule = {
+  field:
+    | 'genre' | 'artist' | 'album' | 'title' | 'liked'
+    | 'year' | 'plays' | 'duration' | 'addedDays' | 'notPlayedDays';
+  op: 'is' | 'contains' | 'gte' | 'lte' | 'eq' | 'empty' | 'any';
+  value?: string | number | boolean;
+};
+
+export type SmartRules = {
+  /** `all` — все правила (И), `any` — любое (ИЛИ). По умолчанию `all`. */
+  match?: 'all' | 'any';
+  rules: SmartRule[];
+  sort?: 'recent' | 'oldest' | 'title' | 'artist' | 'plays' | 'duration' | 'random' | `field:${string}`;
+  /** Лимит — часть правила: «Топ-40» перестаёт быть топ-40 без него. */
+  limit?: number;
+};
+
+export type SmartPlaylist = {
+  id: string;
+  name: string;
+  description: string | null;
+  rules: SmartRules | null;
+  smart: true;
+  /** Сколько треков подходит под правила **сейчас**. */
+  trackCount: number;
+  /** Подписи правил по-русски — чтобы не дублировать словарь в каждом клиенте. */
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * Подборка «Для вас» (J3). Это подсказка, а не обязательство: в ней 0–5 секций,
+ * каждая — со своей причиной, чтобы человек понимал, почему трек здесь.
+ */
+export type PersonalSection = {
+  key: 'continue' | 'top-genre' | 'forgotten' | 'fresh' | 'liked-mix';
+  title: string;
+  reason: string;
+  tracks: Track[];
+};
+
+export type PersonalFeed = {
+  greeting: string;
+  generatedAt: string;
+  /** Фиксирует перемешивание: одна и та же подборка до конца дня. */
+  seed: number;
+  sections: PersonalSection[];
+  libraryTracks: number;
+  /** Заполнено, когда подборок нет: что сделать, чтобы они появились. */
+  hint: string | null;
+};
+
+/**
+ * Резервная копия (D5). Важна не ссылка на архив, а ответ на вопрос «из этого
+ * можно восстановиться?» — поэтому рядом с именем всегда есть результат проверки.
+ */
+export type BackupArchive = {
+  name: string;
+  bytes: number;
+  createdAt: string;
+};
+
+export type BackupStatus = {
+  dir: string;
+  count: number;
+  totalBytes: number;
+  last: BackupArchive | null;
+  ageDays: number | null;
+  keep: number;
+  level: 'ok' | 'warn';
+  hint: string | null;
+  backups: BackupArchive[];
+  schedule: { hours: number; running: boolean; lastRun: { at: string; ok: boolean } | null };
+};
+
+export type BackupResult = {
+  ok: boolean;
+  name: string;
+  archive: string;
+  bytes: number;
+  createdAt: string;
+  verification: {
+    ok: boolean;
+    problems: string[];
+    counts: Record<string, number | null>;
+    checkedFiles: number;
+    missingFiles: string[];
+  };
+  pruned: string[];
+};
+
+/** День графика дашборда (D1): нули тоже приходят, чтобы не было «дыр». */
+export type DashboardDay = {
+  day: string;
+  plays: number;
+  completed: number;
+  shared: number;
+};
+
+export type DashboardTopTrack = {
+  id: string;
+  title: string | null;
+  artist: string | null;
+  /** Трек удалён из библиотеки, но история прослушиваний сохранена. */
+  deleted: boolean;
+  plays: number;
+  completed: number;
+};
+
+export type Dashboard = {
+  since: string;
+  until: string;
+  days: number;
+  /** Смещение сервера в минутах: «день» здесь — день человека. */
+  tz: number;
+  totals: {
+    plays: number;
+    completed: number;
+    tracks: number;
+    listeners: number;
+    sharedPlays: number;
+  };
+  sources: { owner: number; share: number };
+  byDay: DashboardDay[];
+  topTracks: DashboardTopTrack[];
+  /** Отпечатки адресов, а не сами адреса: «слушают из одного места или из десяти». */
+  listeners: { id: string; plays: number; tracks: number; firstSeen: string; lastSeen: string }[];
+  hint: string | null;
+};
+
 export type Stats = {
   tracks: number;
   plays: number;
@@ -194,6 +329,71 @@ export type HistoryEntry = {
   listenedAt: string;
 };
 
+/**
+ * Приватная ссылка на трек или плейлист (Фаза 6, E1).
+ *
+ * Токен показывается **один раз** при создании: в базе лежит только его sha256.
+ * Поэтому `token`/`url` есть в ответе `createShare`, но не в `share(id)` и не в
+ * списке — восстановить ссылку можно только перевыпуском (`rotateShare`).
+ */
+export type Share = {
+  id: string;
+  targetKind: 'track' | 'playlist';
+  targetId: string;
+  title: string | null;
+  expiresAt: string | null;
+  maxPlays: number | null;
+  plays: number;
+  revokedAt: string | null;
+  lastSeenAt: string | null;
+  createdAt: string;
+  active?: boolean;
+  stats?: {
+    hits: Record<string, number>;
+    visitors: number;
+    lastHitAt: string | null;
+  };
+  baseUrl?: string;
+  /** сколько комментариев оставлено по ссылке (видит только владелец) */
+  comments?: number;
+};
+
+/** Комментарий к секунде трека внутри конкретной приватной ссылки (E3). */
+export type ShareComment = {
+  id: string;
+  trackId: string;
+  /** секунда, к которой привязан комментарий (0..длительность) */
+  at: number;
+  author: string;
+  body: string;
+  createdAt: string;
+  deletedAt?: string | null;
+};
+
+export type ShareCommentInput = {
+  trackId: string;
+  at: number;
+  author?: string;
+  body: string;
+};
+
+export type ShareWithToken = Share & {
+  /** одноразово: сохраните, второй раз сервер его не покажет */
+  token: string;
+  /** абсолютный URL, готовый к отправке в мессенджер */
+  url: string;
+  path: string;
+};
+
+export type ShareInput = {
+  targetKind: 'track' | 'playlist';
+  targetId: string;
+  title?: string | null;
+  /** «30m», «12h», «7d», «forever» или null — бессрочно */
+  ttl?: string | number | null;
+  maxPlays?: number | null;
+};
+
 export type TrackQuery = {
   q?: string;
   genre?: string;
@@ -240,9 +440,13 @@ export function createClient(options: ClientOptions = {}) {
 
   if (!baseUrl && isBrowser) baseUrl = ''; // same-origin: web / preview / Tauri
 
-  async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  /**
+   * `authless` — запрос, которому токен не нужен и который не должен ломаться,
+   * если токена нет: отчёт о падении уходит и до входа (H5).
+   */
+  async function request<T>(path: string, init: RequestInit = {}, { authless = false } = {}): Promise<T> {
     const headers = new Headers(init.headers || {});
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    if (token && !authless) headers.set('Authorization', `Bearer ${token}`);
     if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
       headers.set('Content-Type', 'application/json');
     }
@@ -353,6 +557,58 @@ export function createClient(options: ClientOptions = {}) {
     },
     deleteExternal(id: string) {
       return request<void>(`/api/external/${id}`, { method: 'DELETE' });
+    },
+
+    /* ---------------- приватные ссылки (Фаза 6, E1) ---------------- */
+
+    createShare(input: ShareInput) {
+      return request<ShareWithToken>('/api/shares', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    shares(params: { targetKind?: string; targetId?: string; includeRevoked?: boolean } = {}) {
+      const q = qs({
+        targetKind: params.targetKind,
+        targetId: params.targetId,
+        includeRevoked: params.includeRevoked ? 1 : undefined,
+      });
+      return request<Share[]>(`/api/shares${q}`);
+    },
+    share(id: string) {
+      return request<Share>(`/api/shares/${id}`);
+    },
+    updateShare(id: string, patch: { title?: string | null; ttl?: string | number | null; maxPlays?: number | null }) {
+      return request<Share>(`/api/shares/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    },
+    /** Отзыв (по умолчанию) или полное удаление записи о ссылке. */
+    deleteShare(id: string, purge = false) {
+      return request<void>(`/api/shares/${id}${purge ? '?purge=1' : ''}`, { method: 'DELETE' });
+    },
+    /** Новая ссылка вместо скомпрометированной: старая перестаёт работать сразу. */
+    rotateShare(id: string) {
+      return request<ShareWithToken>(`/api/shares/${id}/rotate`, { method: 'POST', body: '{}' });
+    },
+
+    /* ---------------- комментарии к секунде (Фаза 6, E3) ---------------- */
+
+    /** Владелец видит все комментарии своих ссылок, включая удалённые. */
+    shareComments(id: string, trackId?: string) {
+      const q = trackId ? qs({ trackId }) : '';
+      return request<{ comments: ShareComment[]; total: number }>(`/api/shares/${id}/comments${q}`);
+    },
+    /** Владелец тоже может отметить секунду: комментарий появится в гостевой ленте. */
+    addShareComment(id: string, input: ShareCommentInput) {
+      return request<ShareComment>(`/api/shares/${id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    deleteShareComment(id: string, commentId: string) {
+      return request<{ id: string; deleted: boolean }>(
+        `/api/shares/${id}/comments${qs({ commentId })}`,
+        { method: 'DELETE' }
+      );
     },
 
     history(limit = 12) {
@@ -527,8 +783,85 @@ export function createClient(options: ClientOptions = {}) {
       return request<void>(`/api/playlists/${playlistId}/tracks/${trackId}`, { method: 'DELETE' });
     },
 
+    /** Подборки по истории прослушиваний (J3). */
+    personal() {
+      return request<PersonalFeed>('/api/personal');
+    },
+
+    /* умные плейлисты (C7) */
+    smartPlaylists() {
+      return request<SmartPlaylist[]>('/api/smart-playlists');
+    },
+    smartPlaylist(id: string) {
+      return request<SmartPlaylist>(`/api/smart-playlists/${id}`);
+    },
+    createSmartPlaylist(input: { name: string; description?: string; rules: SmartRules }) {
+      return request<SmartPlaylist>('/api/smart-playlists', { method: 'POST', body: JSON.stringify(input) });
+    },
+    updateSmartPlaylist(id: string, patch: { name?: string; description?: string; rules?: SmartRules }) {
+      return request<SmartPlaylist>(`/api/smart-playlists/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    },
+    deleteSmartPlaylist(id: string) {
+      return request<void>(`/api/smart-playlists/${id}`, { method: 'DELETE' });
+    },
+    smartPlaylistTracks(id: string) {
+      return request<Track[]>(`/api/smart-playlists/${id}/tracks`);
+    },
+
     stats() {
       return request<Stats>('/api/stats');
+    },
+
+    /**
+     * Отчёт о падении (H5). Без токена осознанно: падение до входа — тоже нужное,
+     * а просроченный токен не должен мешать отчёту дойти.
+     */
+    reportCrash(report: CrashReport) {
+      return request<{ accepted: boolean; duplicate: boolean; count: number }>(
+        '/api/crashes',
+        { method: 'POST', body: JSON.stringify(report) },
+        { authless: true }
+      );
+    },
+
+    /** Отчёты о падениях для панели (H5). */
+    listCrashes(params: { limit?: number; offset?: number; app?: string; version?: string } = {}) {
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== '') query.set(key, String(value));
+      }
+      const suffix = query.toString() ? `?${query}` : '';
+      return request<CrashPage>(`/api/crashes${suffix}`);
+    },
+
+    crashSummary(days = 7) {
+      return request<CrashSummary>(`/api/crashes/summary?days=${days}`);
+    },
+
+    pruneCrashes(keepDays?: number) {
+      const suffix = keepDays === undefined ? '' : `?keepDays=${keepDays}`;
+      return request<{ removed: number; before: string }>(`/api/crashes${suffix}`, { method: 'DELETE' });
+    },
+
+    /** Резервные копии: статус и создание (D5). */
+    backups() {
+      return request<BackupStatus>('/api/backups');
+    },
+
+    createBackup() {
+      return request<BackupResult>('/api/backups', { method: 'POST' });
+    },
+
+    verifyBackup(name?: string) {
+      return request<BackupResult['verification'] & { archive: string; checkedAt: string }>(
+        '/api/backups/verify',
+        { method: 'POST', body: JSON.stringify({ name }) }
+      );
+    },
+
+    /** Дашборд владельца (D1): прослушивания по дням, топ, источники. */
+    dashboard(days = 30) {
+      return request<Dashboard>(`/api/dashboard?days=${encodeURIComponent(String(days))}`);
     },
   };
 }
@@ -555,6 +888,30 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+/**
+ * Код для вставки приватной ссылки (E4). Токен живёт только в том ответе, где
+ * его выдали, поэтому embed-код строится из уже известного `url`: из адреса
+ * вырезается `/s/<токен>` и превращается в `/embed/<токен>`.
+ *
+ * Возвращает `null`, если адрес не наш — тогда честнее показать «нет кода»,
+ * чем вставить в блог чужую ссылку.
+ */
+export function embedCode(url: string, kind: 'track' | 'playlist' = 'track'): string | null {
+  const match = /^(.+?)\/(?:s|embed)\/([A-Za-z0-9_-]{20,128})\/?$/.exec(String(url || '').trim());
+  if (!match) return null;
+  const [, base, token] = match;
+  const height = kind === 'playlist' ? 320 : 180;
+  return `<iframe src="${base}/embed/${token}" width="480" height="${height}" style="border:0;max-width:100%" title="Vision Audio" loading="lazy" allow="autoplay"></iframe>`;
+}
+
+/** oEmbed-адрес для того же токена — его понимают CMS без ручного кода. */
+export function oembedUrl(url: string): string | null {
+  const match = /^(.+?)\/(?:s|embed)\/([A-Za-z0-9_-]{20,128})\/?$/.exec(String(url || '').trim());
+  if (!match) return null;
+  const [, base, token] = match;
+  return `${base}/api/oembed?url=${encodeURIComponent(`${base}/s/${token}`)}`;
+}
+
 /** Детерминированная «псевдо-волна» по строке — для треков без peaks. */
 export function pseudoPeaks(seed: string, count = 120): number[] {
   let h = 2166136261;
@@ -571,4 +928,157 @@ export function pseudoPeaks(seed: string, count = 120): number[] {
     out.push(Math.max(0.08, Math.min(1, ((h >>> 0) % 1000) / 1000 * 0.6 + wave)));
   }
   return out;
+}
+
+/* --------------------------- crash-репортинг (H5) ------------------------- */
+
+export type CrashReport = {
+  app?: 'mobile' | 'web' | 'desktop' | 'console';
+  version?: string;
+  platform?: string;
+  release?: string;
+  name?: string;
+  message?: string;
+  stack?: string;
+  context?: Record<string, unknown> | string;
+  deviceId?: string;
+};
+
+export type CrashItem = {
+  id: number;
+  app: string;
+  version: string | null;
+  platform: string | null;
+  release: string | null;
+  name: string | null;
+  message: string | null;
+  stack: string | null;
+  context: Record<string, unknown> | string | null;
+  deviceId: string | null;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  fingerprint: string;
+};
+
+export type CrashPage = { total: number; limit: number; offset: number; items: CrashItem[] };
+
+export type CrashSummary = {
+  since: string;
+  days: number;
+  groups: number;
+  events: number;
+  devices: number;
+  byApp: { app: string; groups: number; events: number }[];
+  byVersion: { version: string; groups: number; events: number }[];
+  hint: string | null;
+};
+
+export type CrashReporterOptions = {
+  app: CrashReport['app'];
+  version?: string;
+  platform?: string;
+  release?: string;
+  deviceId?: string;
+  /** Что сейчас открыто: попадает в `context`, помогает повторить сценарий. */
+  context?: () => Record<string, unknown>;
+  /** Сколько отчётов держим в памяти до отправки (по умолчанию 5). */
+  queueLimit?: number;
+};
+
+/**
+ * Отправка отчётов о падениях (H5).
+ *
+ * Требования, которые важнее «чтобы был Sentry»:
+ *  - **ничего не должно сломать**: любая ошибка внутри репортера гасится, иначе
+ *    обработчик падений сам станет источником падений;
+ *  - **не в цикле**: одинаковые падения в очереди схлопываются по подписи, а
+ *    лимит частоты стоит на сервере (60 в час на установку);
+ *  - **без токена**: падение до входа — самый нужный отчёт, поэтому запрос идёт
+ *    без авторизации (сервер это разрешает осознанно, см. `docs/API.md`);
+ *  - **офлайн — не теряем**: если сети нет, отчёт остаётся в очереди и уходит
+ *    со следующей ошибкой или при явном `flush()`.
+ */
+export function createCrashReporter(getBaseUrl: () => string, options: CrashReporterOptions) {
+  const queue: CrashReport[] = [];
+  const limit = Math.max(1, options.queueLimit ?? 5);
+  let sending = false;
+
+  const fingerprint = (report: CrashReport) =>
+    `${report.name ?? ''}|${report.message ?? ''}|${String(report.stack ?? '').split('\n')[1] ?? ''}`;
+
+  const enqueue = (report: CrashReport) => {
+    const key = fingerprint(report);
+    if (queue.some((item) => fingerprint(item) === key)) return; // тот же баг уже в очереди
+    queue.push({ ...report, app: report.app ?? options.app });
+    while (queue.length > limit) queue.shift();
+  };
+
+  const flush = async (): Promise<number> => {
+    if (sending || !queue.length) return 0;
+    sending = true;
+    let sent = 0;
+    try {
+      while (queue.length) {
+        const report = queue[0];
+        try {
+          const base = getBaseUrl();
+          if (!base) break;
+          const response = await fetch(`${base}/api/crashes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(report),
+          });
+          // 429 — это «слишком часто», повторять бессмысленно; 4xx — отчёт плохой
+          if (response.ok || (response.status >= 400 && response.status < 500)) {
+            queue.shift();
+            sent += 1;
+          } else {
+            break; // 5xx: сервер болен, оставляем на потом
+          }
+        } catch {
+          break; // сети нет — очередь переживёт
+        }
+      }
+    } finally {
+      sending = false;
+    }
+    return sent;
+  };
+
+  const describe = (error: unknown): CrashReport => {
+    const value = error as { name?: string; message?: string; stack?: string } | null;
+    let context: Record<string, unknown> = {};
+    try {
+      context = options.context?.() ?? {};
+    } catch {
+      context = {};
+    }
+    return {
+      app: options.app,
+      version: options.version,
+      platform: options.platform,
+      release: options.release,
+      deviceId: options.deviceId,
+      name: value?.name ?? 'Error',
+      message: value?.message ?? String(error ?? 'Неизвестная ошибка'),
+      stack: value?.stack,
+      context,
+    };
+  };
+
+  return {
+    /** Запомнить ошибку и попробовать отправить (не ждём результата). */
+    capture(error: unknown) {
+      try {
+        enqueue(describe(error));
+        void flush();
+      } catch {
+        /* репортер не имеет права падать */
+      }
+    },
+    /** Явная отправка: например, при возврате приложения на передний план. */
+    flush,
+    queued: () => queue.length,
+  };
 }

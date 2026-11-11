@@ -8,10 +8,18 @@ import {
   ExternalPage,
   LibraryPage,
   LikedPage,
+  CrashesPage,
+  DashboardPage,
+  PersonalPage,
   PlaylistPage,
+  SmartPlaylistPage,
   PlaylistsPage,
+  SharesPage,
   StatsPage,
 } from './pages';
+import { ShareTargetPage } from './components/ShareTargetPage';
+import { UpdateBanner } from './components/UpdateBanner';
+import { offlineBannerText } from './library-cache';
 import { isTrackCached } from './offline';
 import { syncReplicas } from './seeds';
 import { AuthProvider, useAuth } from './state/auth';
@@ -77,7 +85,7 @@ function useRoute() {
 
 function Shell() {
   const route = useRoute();
-  const { error, reload, tracks } = useLibrary();
+  const { error, offline, reload, tracks } = useLibrary();
   const replicasSynced = useRef(false);
 
   /* один раз за сессию: восстановить в трекере записи об офлайн-копиях */
@@ -87,10 +95,13 @@ function Shell() {
     void syncReplicas(tracks, isTrackCached);
   }, [tracks]);
   const player = usePlayer();
+  const { playlists } = useLibrary();
   const [search, setSearch] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
   const [drawerHint, setDrawerHint] = useState(false);
+  /** какую ссылку уже открыли: защита от повторного seek при перерендере */
+  const openedLink = useRef<string | null>(null);
 
   useEffect(() => {
     if (player.current) setDrawerHint(false);
@@ -124,13 +135,42 @@ function Shell() {
   };
 
   const playlistMatch = /^\/playlists\/([a-f0-9]{32})$/.exec(route);
+  // C7: умный плейлист — отдельный адрес, чтобы на него можно было дать ссылку
+  const smartMatch = /^\/smart\/([a-f0-9]{32})$/.exec(route);
+  // F5: ссылка `#/track/<id>/90` приходит из чата — открываем трек, а не главную
+  const trackLinkMatch = /^\/track\/([a-f0-9]{32})(?:\/(\d+))?$/.exec(route);
+
+  /**
+   * F5: переход по ссылке на трек. Включаем воспроизведение ровно один раз на
+   * «ссылку», иначе каждое обновление состояния возвращало бы позицию в начало.
+   */
+  useEffect(() => {
+    if (!trackLinkMatch) return;
+    const [, id, seconds] = trackLinkMatch;
+    const track = tracks.find((item) => item.id === id);
+    if (!track) return;
+    const key = `${id}:${seconds ?? ''}`;
+    if (openedLink.current === key) return;
+    openedLink.current = key;
+    const list = tracks.length ? tracks : undefined;
+    if (seconds) player.playAt(track, list, Number(seconds));
+    else player.play(track, list);
+  }, [trackLinkMatch, tracks, player]);
 
   const content = (() => {
     if (playlistMatch) return <PlaylistPage key={playlistMatch[1]} id={playlistMatch[1]} search={search} />;
+    if (smartMatch) return <SmartPlaylistPage key={smartMatch[1]} id={smartMatch[1]} search={search} />;
+    if (route === '/for-you') return <PersonalPage />;
     if (route === '/liked') return <LikedPage />;
     if (route === '/playlists') return <PlaylistsPage />;
+    if (route === '/dashboard') return <DashboardPage />;
+    if (route === '/crashes') return <CrashesPage />;
     if (route === '/stats') return <StatsPage />;
+    if (route === '/shares') {
+      return <SharesPage tracksById={new Map(tracks.map((track) => [track.id, track]))} playlists={playlists} />;
+    }
     if (route === '/external') return <ExternalPage />;
+    if (route === '/share') return <ShareTargetPage />;
     return <LibraryPage search={search} onUpload={openUpload} />;
   })();
 
@@ -179,14 +219,23 @@ function Shell() {
           <a href="#/liked" className={route === '/liked' ? 'is-active' : ''}>Лайки</a>
           <a href="#/playlists" className={route.startsWith('/playlists') ? 'is-active' : ''}>Плейлисты</a>
           <a href="#/stats" className={route === '/stats' ? 'is-active' : ''}>Статистика</a>
+          <a href="#/crashes" className={route === '/crashes' ? 'is-active' : ''}>Падения</a>
           <a href="#/external" className={route === '/external' ? 'is-active' : ''}>SoundCloud</a>
+          <a href="#/shares" className={route === '/shares' ? 'is-active' : ''}>Ссылки</a>
         </nav>
 
         {error && (
-          <div className="banner" role="alert">
-            <span>{error}</span>
+          <div className={`banner${offline ? ' banner--offline' : ''}`} role={offline ? 'status' : 'alert'}>
+            <span>
+              {offline
+                ? offlineBannerText(offline.savedAt, Date.now(), {
+                    saved: offline.saved,
+                    total: offline.total,
+                  })
+                : error}
+            </span>
             <button type="button" className="btn btn--small" onClick={() => void reload()}>
-              Повторить
+              {offline ? 'Проверить связь' : 'Повторить'}
             </button>
           </div>
         )}
@@ -203,6 +252,7 @@ function Shell() {
         <div className={`content${player.current ? ' content--player' : ''}`}>{content}</div>
       </main>
 
+      <UpdateBanner />
       <PlayerBar />
       <QueueDrawer />
 

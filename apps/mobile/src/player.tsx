@@ -16,7 +16,7 @@ import { shuffleIndices, stepPosition, type Repeat } from './lib/queue';
  * AVPlayer, и ExoPlayer; opus в ogg на iOS ненадёжен.
  */
 
-type PlayerValue = {
+export type PlayerValue = {
   queue: Track[];
   current: Track | null;
   playing: boolean;

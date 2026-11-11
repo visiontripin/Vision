@@ -191,21 +191,30 @@ before(async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
+  // Ждём именно строку о старте, а не «любой stderr»: сервер законно пишет в
+  // stderr предупреждения (SQLite experimental, seed replica failed) — падать
+  // из-за них значит получать редкие красные прогоны на ровном месте.
+  // Если процесс умрёт, это видно по `exit`.
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('server did not start')), 15000);
+    const timeout = setTimeout(() => reject(new Error('server did not start')), 20000);
+    const finish = (error) => {
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    };
     child.stdout.on('data', (chunk) => {
-      if (chunk.toString().includes('server started') || chunk.toString().includes('Vision Audio API')) {
-        clearTimeout(timeout);
-        resolve();
+      if (chunk.toString().includes('"msg":"server started"') || chunk.toString().includes('server started')) {
+        finish();
       }
     });
     child.stderr.on('data', (chunk) => {
       const text = chunk.toString();
-      if (/Error|error/i.test(text) && !text.includes('ExperimentalWarning')) {
-        clearTimeout(timeout);
-        reject(new Error(text));
+      // падение именно при старте: стек или фатальная ошибка Node
+      if (/^(Error|TypeError|ReferenceError|SyntaxError):/m.test(text) || /NODE_OPTIONS|Cannot find module/.test(text)) {
+        finish(new Error(text));
       }
     });
+    child.once('exit', (code) => finish(new Error(`server exited with code ${code} before start`)));
   });
 });
 

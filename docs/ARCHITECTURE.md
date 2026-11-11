@@ -93,11 +93,80 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - Роутинг: hash-роутер (без зависимостей): `#/`, `#/liked`, `#/playlists/:id`, `#/stats`.
 - Стили: CSS-переменные-токены, тёмная тема, orange-акцент; компоненты лежат в `src/components`.
 - Клиентские пики: `AudioContext.decodeAudioData` → RMS по блокам → 200 значений.
+- Комментарии к секундам рисуются в модалке ссылки (`components/ShareModal.tsx`):
+  лента выбранной ссылки, добавление от имени владельца, удаление. Гостевая версия —
+  SSR в `shares.js`, без бандла.
+- Полный экран плеера — `src/components/NowPlaying.tsx` (слой `z-index: 65`, состояние только
+  из `usePlayer`). Волна рисуется на `<canvas>` (`Waveform` в `ui.tsx`), перемотка —
+  `pointerdown/move` + `setPointerCapture`, подсказка времени — параметр `timeAt`.
+
+## 8.1 Панель администрирования (`apps/console`)
+
+- Отдельное приложение: Vite + React, оболочка Tauri 2 → окно Windows (`.msi`/`.exe`)
+  и APK Android (`docs/adr/0009-server-console.md`).
+- Тот же бандл сервер отдаёт по `/admin` (`serveConsole` в `server.js`): отдельная
+  статика, `noindex`, SPA-фолбэк, `503` с инструкцией, если не собрана.
+- Права Tauri — `core:default` и собственная команда `platform()`; ни `shell`, ни `fs`.
+- Чистая логика (`src/lib.ts`: `diagnose`, `diskState`, `humanBytes`, `expiry`, `ago`)
+  под тестами; интерфейс только показывает её результат.
+
+## 8.2 Встраивание (E4): `/embed/:token` и `/api/oembed`
+
+- `services/api/src/embed.js` — чистые функции (`parseShareUrl`, `embedSize`, `embedMeta`,
+  `renderEmbedWidget`, `oembedPayload`, `oembedXml`) и CSS рядом (`embed.css` → `/embed/widget.css`).
+- Виджет не ходит в API: `<audio src="/s/:token/stream/:id">` использует гостевые маршруты,
+  поэтому статистика ссылки остаётся единой. Открытие виджета **не** инкрементирует `plays`
+  (вставка в блог не должна сжигать лимит), прослушивание пишется в `share_hits`.
+- `frame-ancestors *` без `X-Frame-Options` — иначе встраивание невозможно; всё остальное
+  закрыто (`default-src 'none'`, `Referrer-Policy: no-referrer`, `noindex`).
+- oEmbed — публичный эндпоинт без авторизации, принимает только свои адреса (`invalid_url`),
+  отдаёт `no-store` и `Access-Control-Allow-Origin: *`; `PUBLIC_URL` определяет абсолютные
+  адреса в `html`/`thumbnail_url` (за прокси без него они собираются из заголовков запроса).
+- Клиент собирает код встраивания из уже выданной ссылки (`embedCode`/`oembedUrl`
+  в `@vision/shared`), потому что токен показывается один раз.
+
+## 8.3 Журнал действий (G10)
+
+- `services/api/src/audit.js`: словарь действий (`AUDIT_ACTIONS`), `audit()` (запись),
+  `listAudit()` (лента с фильтрами), `auditSummary()`, `pruneAudit()`, `auditIpHash()`.
+  Таблица `audit_log` — миграция `010`.
+- `audit()` вызывается из обработчиков (`server.js`) в точке успеха действия, а не из
+  middleware: журнал описывает то, что произошло, а не то, что запросили. Исключение —
+  гость на `/s/*`, где событие и есть запрос (`share.open/stream/download`).
+- Запись никогда не роняет запрос: ошибка БД уходит в лог как `audit write failed`.
+  Схлопывание (`share.open` за 10 минут от того же `ip_hash`) — `UPDATE details.repeat`,
+  поэтому журнал не превращается в список обновлений страницы.
+- `request_id` = `X-Request-Id` ответа: строка журнала сопоставима с логом и с ответом,
+  который видел клиент. Читается только владельцем (`/api/audit/*`).
+
+## 8.4 Вход по ссылке и share target (F1/F5)
+
+- Разбор входящих адресов — чистые модули: `apps/web/src/deep-link.ts`
+  (`parseDeepLink`, `parseShareTarget`, `canNativeShare`) и
+  `apps/mobile/src/lib/deeplink.ts` (`parseIncoming`, `parseSharedIntent`).
+  Никакого React внутри: ссылки приходят из чужих приложений, и «пустой экран»
+  отлаживать дороже всего.
+- Схема `visionaudio://` и веб-хэш `#/track/<id>` разбираются одной функцией:
+  схема приводится к http-адресу через подставную базу (`new URL` с нестандартной
+  схемой делает первый сегмент хостом и теряет путь — это был реальный дефект).
+- Веб: маршрут `#/track/<id>(/<секунды>)` включает трек один раз на ссылку
+  (`openedLink` в `App.tsx`), иначе любой перерендер возвращал бы позицию в начало.
+- Share target: `manifest.webmanifest` → `/share` (GET). Страница
+  `ShareTargetPage.tsx` показывает, что пришло, и загружает только по нажатию —
+  автоматическая загрузка по чужой ссылке была бы способом залить что угодно.
+- Android: `intentFilters` (`VIEW` + `visionaudio`, `SEND` + `audio/*`/`text/plain`),
+  `DeepLinkHandler` обрабатывает и холодный старт, и ссылку в открытом приложении.
+- Сервер новых эндпоинтов не получил: `/share` отдаётся обычным SPA-фолбэком
+  (проверяется `services/api/test/spa.test.js`).
 
 ## 9. Нативные приложения
 
 - **Mobile**: Expo + `expo-av` (или `react-native-track-player` для фона), `expo-file-system`
   для офлайн-кэша, `expo-notifications` для медиа-контролов. Общий клиент — `@vision/shared`.
+- **Mobile, полный плеер**: `src/screens/NowPlaying.tsx` (модалка на весь экран) + волна
+  `src/components/Waveform.tsx` на `PanResponder` (без сторонних слайдеров). Геометрия
+  волны — чистая `src/lib/wave.ts` под `node --test`: усреднение пиков, раскладка столбцов,
+  «проигран ли столбец», автоскролл, формат времени.
 - **Desktop**: Tauri 2, `frontendDist` указывает на `apps/web/dist`; плагины: `global-shortcut`,
   `tray-icon`, `updater`. Capabilities — минимальные (окно, события, hotkeys, updater).
   Трей и «свернуть в трей» — в `src-tauri/src/main.rs`, связь с плеером — `apps/web/src/desktop.ts`
@@ -109,6 +178,9 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 - Логи — JSON-строки в stdout, без имён файлов пользователя и токенов.
 - Бэкап: `sqlite3 .backup` + `rsync data/media` (скрипт `scripts/backup.sh`), проверка восстановления — месяц.
 - Деплой: один процесс API + статика web; опционально Caddy/Nginx с TLS.
+- Приватные ссылки (`/s/<token>`) — отдельный публичный контур: гостевой запрос не
+  проходит через `authorized()`, но не может выйти за пределы одной цели
+  (`docs/adr/0007-private-links.md`).
 
 ## 11. ADR (заведены)
 
@@ -119,3 +191,5 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 | 0003 | Сырое тело запроса для загрузки вместо multipart: меньше кода, потоковая запись |
 | 0004 | React Native + Tauri вместо «веб-обёрток»: один TypeScript-стек, нативные интеграции |
 | 0005 | Пики волны считает клиент: нет ffmpeg на сервере, waveform появляется сразу |
+| 0006 | Локальный режим (IndexedDB) для статического хостинга: сайт без сервера |
+| 0007 | Приватные ссылки: случайный токен в пути + `sha256` в БД, SSR-страница с OG |

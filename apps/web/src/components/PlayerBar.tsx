@@ -1,15 +1,36 @@
+import { useEffect, useState } from 'react';
 import { formatDuration, formatBytes } from '@vision/shared';
 import { api } from '../api';
 import { useLibrary } from '../state/library';
 import { usePlayer } from '../state/player';
 import { Cover, Icon, useToast, Waveform } from '../ui';
+import { NowPlaying } from './NowPlaying';
 
 export function PlayerBar() {
   const player = usePlayer();
   const { patchTrack } = useLibrary();
   const { push } = useToast();
+  const [expanded, setExpanded] = useState(false);
 
   const current = player.current;
+
+  /* Клавиша `F` и клик по панели открывают полный экран — как в настольных плеерах. */
+  useEffect(() => {
+    if (!current) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key.toLowerCase() === 'f') setExpanded((value) => !value);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [current]);
+
+  useEffect(() => {
+    if (!current) setExpanded(false);
+  }, [current]);
+
   if (!current) return null;
 
   const progress = player.duration > 0 ? Math.min(1, player.position / player.duration) : 0;
@@ -37,14 +58,26 @@ export function PlayerBar() {
         aria-label="Позиция воспроизведения"
         onChange={(event) => player.seek(Number(event.target.value))}
       />
-      <div className="player__now">
-        <Cover track={current} size={52} />
+      <div className="player__nowWrap">
+        <button
+          type="button"
+          className="player__now"
+          onClick={() => setExpanded(true)}
+          aria-label={`Открыть плеер: ${current.title}`}
+          title="Открыть плеер (F)"
+        >
+          <Cover track={current} size={52} />
         <div className="player__meta">
           <span className="player__title" title={current.title}>
             {current.title}
           </span>
           <span className="player__artist">{current.artist}</span>
         </div>
+          <span className="player__expand" aria-hidden="true">
+            <Icon name="chevronDown" size={14} className="player__expandIcon" />
+          </span>
+        </button>
+
         <button
           type="button"
           className={`iconbtn player__like${current.liked ? ' is-active' : ''}`}
@@ -132,6 +165,17 @@ export function PlayerBar() {
         <button
           type="button"
           className="iconbtn"
+          aria-label="Развернуть плеер"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(true)}
+        >
+          <span className="player__expandIcon">
+            <Icon name="chevronDown" size={19} />
+          </span>
+        </button>
+        <button
+          type="button"
+          className="iconbtn"
           aria-label="Очередь воспроизведения"
           aria-expanded={player.queueOpen}
           onClick={() => player.setQueueOpen(!player.queueOpen)}
@@ -139,6 +183,8 @@ export function PlayerBar() {
           <Icon name="queue" size={19} />
         </button>
       </div>
+
+      <NowPlaying open={expanded} onClose={() => setExpanded(false)} />
     </div>
   );
 }
