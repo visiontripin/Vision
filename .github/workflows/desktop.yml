@@ -65,6 +65,17 @@ jobs:
             echo "::notice::WebKitGTK и GTK уже есть в образе — установка не нужна"
             exit 0
           fi
+          # Раннеры GitHub живут в Azure: публичные зеркала archive.ubuntu.com
+          # из них отвечают медленно или не отвечают вовсе. Внутреннее зеркало
+          # Azure доступно всегда, поэтому переключаем источники на него.
+          if [ -w /etc/apt/sources.list ]; then
+            sudo sed -i -E 's|https?://(archive|security)\.ubuntu\.com|http://azure.archive.ubuntu.com|g' \
+              /etc/apt/sources.list || true
+          fi
+          for f in /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] || continue
+            sudo sed -i -E 's|https?://(archive|security)\.ubuntu\.com|http://azure.archive.ubuntu.com|g' "$f" || true
+          done
           APT_OPTS=(-o Acquire::http::Timeout=20 -o Acquire::Retries=2
                     -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=90)
           timeout 180 sudo apt-get "${APT_OPTS[@]}" update \
