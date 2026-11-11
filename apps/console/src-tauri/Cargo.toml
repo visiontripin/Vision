@@ -1,6 +1,6 @@
 [package]
 name = "vision-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "Vision Server — запуск сервера и админка"
 authors = ["Vision"]
 edition = "2021"

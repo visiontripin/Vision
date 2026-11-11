@@ -1020,6 +1020,10 @@ select:focus {
 
 /* ================================= меню ================================= */
 
+/* Меню действий с треком.
+   Рисуется порталом в body и позиционируется от кнопки (см. TrackList.tsx),
+   поэтому лежит fixed и выше панели плеера. Внутри списка оно не живёт
+   намеренно: `.tracklist` обрезает всё, что выходит за его границы. */
 .menu {
   position: absolute;
   right: 0;
@@ -1053,6 +1057,24 @@ select:focus {
   text-transform: uppercase;
   color: var(--muted-2);
   font-weight: 700;
+}
+
+.menu--floating {
+  position: fixed;
+  /* выше панели плеера (50) и очереди (60): меню относится к тому, что нажали */
+  z-index: 66;
+  top: auto;
+  right: auto;
+  max-height: min(360px, calc(100vh - 24px));
+  overflow-y: auto;
+  /* на телефоне карточка повёрнута в портрет: палец не должен попадать мимо */
+  max-width: calc(100vw - 16px);
+}
+
+@media (max-width: 760px) {
+  .menu--floating {
+    width: min(280px, calc(100vw - 16px));
+  }
 }
 
 .menu__scroll {

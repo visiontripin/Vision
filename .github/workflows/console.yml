@@ -161,6 +161,15 @@ jobs:
             tail -n 25 init.log | while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           fi
+      # Release-APK без signingConfig остаётся неподписанным, и Android отказывается
+      # его ставить («пакет недействителен»). Подключаем тот же ключ, что у мобильного.
+      - name: Подпись APK
+        shell: bash
+        env:
+          VISION_KEYSTORE_PASSWORD: vision-audio
+          VISION_KEY_ALIAS: vision
+          VISION_KEY_PASSWORD: vision-audio
+        run: node scripts/android-sign-console.mjs
       - name: Сборка APK
         shell: bash
         run: |
@@ -174,13 +183,65 @@ jobs:
             printf '%s\n' "$hits" | while IFS= read -r line; do echo "::error::${line}"; done
             exit 1
           fi
-      - name: Артефакты
-        run: find apps/console/src-tauri/gen/android -name "*.apk" -exec ls -lh {} \;
+      # Та же проверка, что у мобильного APK: без неё неподписанная сборка
+      # уезжает в релиз «зелёной» и падает уже на телефоне.
+      - name: Проверка APK
+        shell: bash
+        run: |
+          set -uo pipefail
+          APK=$(find apps/console/src-tauri/gen/android -name "*.apk" -path "*release*" | head -1)
+          [ -n "$APK" ] || APK=$(find apps/console/src-tauri/gen/android -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::APK не найден"
+            exit 1
+          fi
+          echo "::warning title=apk::$(basename "$APK"), $(du -h "$APK" | cut -f1)"
+          BT=$(ls -d "${ANDROID_HOME:?}"/build-tools/* | sort -V | tail -1)
+          if ! "$BT/apksigner" verify --verbose --print-certs "$APK" > /tmp/verify.txt 2>&1; then
+            tail -n 20 /tmp/verify.txt
+            echo "::error title=apk::apksigner verify не прошёл — пакет не установится"
+            exit 1
+          fi
+          while IFS= read -r l; do echo "::warning title=apk-подпись::$l"; done \
+            < <(grep -E "^(Verifies|Verified using)" /tmp/verify.txt || true)
+          if "$BT/aapt2" dump badging "$APK" > /tmp/badging.txt 2>&1; then
+            while IFS= read -r l; do echo "::warning title=apk-badging::$l"; done \
+              < <(grep -E "^(package|sdkVersion|targetSdkVersion)" /tmp/badging.txt || true)
+          fi
+          # «Unsigned» в release-сборке — это и есть та самая ошибка установки
+          if grep -qiE "does not verify|no signature|unsigned" /tmp/verify.txt; then
+            echo "::error title=apk::APK не подписан"
+            exit 1
+          fi
+
+      - name: Имя APK и SHA-256
+        shell: bash
+        id: apk
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./apps/console/src-tauri/tauri.conf.json').version")
+          APK=$(find apps/console/src-tauri/gen/android -name "*.apk" -path "*release*" | head -1)
+          [ -n "$APK" ] || APK=$(find apps/console/src-tauri/gen/android -name "*.apk" | head -1)
+          NAME="VisionServer-${VERSION}-android.apk"
+          cp "$APK" "$NAME"
+          sha256sum "$NAME" | tee "$NAME.sha256"
+          cp "$NAME" VisionServer-latest.apk
+          ls -lh "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Vision Server ${VERSION} — Android APK"
+            echo ""
+            echo "- файл: \`${NAME}\` (подписан, ставится на телефон)"
+            echo "- постоянная ссылка: \`VisionServer-latest.apk\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: vision-server-android
           if-no-files-found: error
-          path: apps/console/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          path: |
+            VisionServer-*.apk
+            VisionServer-*.apk.sha256
       - name: Release APK (только по тегу console-v*)
         if: startsWith(github.ref, 'refs/tags/console-v')
         env:
@@ -190,4 +251,6 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
             --title "Vision Server ${tag#console-}" \
             --notes "Приложение запуска и админки Vision Audio для Windows и Android."
-          find apps/console/src-tauri/gen/android -name "*.apk" -exec gh release upload "$tag" {} --clobber \;
+          NAME='${{ steps.apk.outputs.name }}'
+          gh release upload "$tag" "$NAME" "$NAME.sha256" VisionServer-latest.apk --clobber
+          echo "::notice::опубликован $NAME и VisionServer-latest.apk"

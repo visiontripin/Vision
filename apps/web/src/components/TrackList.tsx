@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Track } from '@vision/shared';
 import { formatDuration } from '@vision/shared';
 import { api, IS_LOCAL_MODE } from '../api';
@@ -145,6 +146,9 @@ function TrackRow({
   const [shareOpen, setShareOpen] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Где рисовать меню: координаты считаем от кнопки, а не от строки трека.
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   useOffline(); // подписка: перерисоваться, когда копия появится или исчезнет
   // копия адресуется содержимым: тот же файл под другим id — та же копия
   const cached = isTrackCached(track);
@@ -156,19 +160,68 @@ function TrackRow({
 
   const isCurrent = current?.id === track.id;
 
+  /*
+   * Меню рисуется порталом в `body`. Раньше оно было обычным абсолютным блоком
+   * внутри строки трека — и не появлялось по двум причинам:
+   *   1) `.tracklist` имеет `overflow: hidden`, поэтому всё, что ниже строки,
+   *      обрезалось: на телефоне у единственного трека меню уходило за границу
+   *      списка и оставалась только полоска;
+   *   2) `z-index: 40` ниже панели плеера (50) — у треков внизу меню оказалось
+   *      бы под панелью.
+   * Позиция считается от кнопки: раскрываем вниз, а если места нет — вверх,
+   * чтобы меню всегда было целиком на экране (важно на телефоне).
+   */
+  const MENU_WIDTH = 280;
+  const MENU_MAX_HEIGHT = 360;
+
+  const positionMenu = () => {
+    const button = menuButtonRef.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const height = Math.min(MENU_MAX_HEIGHT, window.innerHeight - 24);
+    const below = rect.bottom + 8;
+    const top = below + height > window.innerHeight - 8
+      ? Math.max(8, rect.top - height - 8) // не хватает места снизу — раскрываем вверх
+      : below;
+    const left = Math.min(
+      Math.max(8, rect.right - MENU_WIDTH),
+      window.innerWidth - MENU_WIDTH - 8
+    );
+    setMenuPos({ top, left });
+  };
+
+  const toggleMenu = () => {
+    setMenuOpen((wasOpen) => {
+      if (!wasOpen) positionMenu();
+      return !wasOpen;
+    });
+  };
+
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen) {
+      setMenuPos(null);
+      return;
+    }
     const onPointer = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+      const target = event.target as Node;
+      // кнопка обрабатывает клик сама (иначе меню закрывалось бы и сразу открывалось)
+      if (menuButtonRef.current?.contains(target)) return;
+      if (!menuRef.current?.contains(target)) setMenuOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMenuOpen(false);
     };
+    // при скролле/повороте экрана меню закреплено за кнопкой — пересчитываем
+    const onMove = () => positionMenu();
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, { passive: true });
     return () => {
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove);
     };
   }, [menuOpen]);
 
@@ -345,23 +398,29 @@ function TrackRow({
         <Icon name="heart" size={17} />
       </button>
 
-      <div className="track__menuWrap" ref={menuRef}>
+      <div className="track__menuWrap">
         <button
           type="button"
+          ref={menuButtonRef}
           className="iconbtn"
           aria-label="Действия с треком"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={(event) => {
             event.stopPropagation();
-            setMenuOpen((v) => !v);
+            toggleMenu();
           }}
         >
           <Icon name="more" size={18} />
         </button>
 
-        {menuOpen && (
-          <div className="menu" role="menu">
+        {menuOpen && menuPos && createPortal(
+          <div
+            className="menu menu--floating"
+            role="menu"
+            ref={menuRef}
+            style={{ top: menuPos.top, left: menuPos.left }}
+          >
             <div className="menu__label">В плейлист</div>
             <div className="menu__scroll">
               {playlists.length === 0 && <div className="menu__empty">Плейлистов пока нет</div>}
@@ -499,7 +558,8 @@ function TrackRow({
               <Icon name="trash" size={15} />
               <span>{onRemove ? 'Убрать из плейлиста' : 'Удалить трек'}</span>
             </button>
-          </div>
+          </div>,
+          document.body
         )}
       </div>
 
