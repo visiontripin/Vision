@@ -8,6 +8,7 @@ import {
   ExternalPage,
   LibraryPage,
   LikedPage,
+  CrashesPage,
   DashboardPage,
   PersonalPage,
   PlaylistPage,
@@ -163,6 +164,7 @@ function Shell() {
     if (route === '/liked') return <LikedPage />;
     if (route === '/playlists') return <PlaylistsPage />;
     if (route === '/dashboard') return <DashboardPage />;
+    if (route === '/crashes') return <CrashesPage />;
     if (route === '/stats') return <StatsPage />;
     if (route === '/shares') {
       return <SharesPage tracksById={new Map(tracks.map((track) => [track.id, track]))} playlists={playlists} />;
@@ -217,6 +219,7 @@ function Shell() {
           <a href="#/liked" className={route === '/liked' ? 'is-active' : ''}>Лайки</a>
           <a href="#/playlists" className={route.startsWith('/playlists') ? 'is-active' : ''}>Плейлисты</a>
           <a href="#/stats" className={route === '/stats' ? 'is-active' : ''}>Статистика</a>
+          <a href="#/crashes" className={route === '/crashes' ? 'is-active' : ''}>Падения</a>
           <a href="#/external" className={route === '/external' ? 'is-active' : ''}>SoundCloud</a>
           <a href="#/shares" className={route === '/shares' ? 'is-active' : ''}>Ссылки</a>
         </nav>

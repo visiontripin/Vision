@@ -27,6 +27,7 @@ export const OPENAPI = {
     { name: 'personal' },
     { name: 'dashboard' },
     { name: 'backups' },
+    { name: 'crashes' },
     { name: 'external', description: 'Внешние ссылки: только метаданные, звук у источника' },
     { name: 'seeds', description: 'Трекер реплик: где лежит файл и кто его раздаёт' },
     { name: 'shares', description: 'Приватные ссылки на трек/плейлист: TTL, отзыв, статистика' },
@@ -46,6 +47,40 @@ export const OPENAPI = {
       },
     },
     schemas: {
+      CrashReport: {
+        type: 'object',
+        description: 'То, что присылает упавший клиент. Всё, кроме `name`/`message`, необязательно.',
+        properties: {
+          app: { type: 'string', enum: ['mobile', 'web', 'desktop', 'console'], default: 'mobile' },
+          version: { type: 'string', description: 'Версия сборки, до 40 символов' },
+          platform: { type: 'string', description: 'android / ios / web / windows' },
+          release: { type: 'string', description: 'Версия ОС или строка сборки' },
+          name: { type: 'string', description: 'Тип ошибки, до 120 символов' },
+          message: { type: 'string', description: 'Сообщение, обрезается до 500 символов' },
+          stack: { type: 'string', description: 'Стек, обрезается до 6000 символов' },
+          context: { type: 'object', description: 'Где были: экран, режим. До 2000 символов JSON' },
+          deviceId: { type: 'string', description: 'Идентификатор установки (не адрес), до 80 символов' },
+        },
+      },
+      CrashItem: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          fingerprint: { type: 'string', description: '`name:message:первый кадр` — по нему схлопываются повторы' },
+          app: { type: 'string' },
+          version: { type: ['string', 'null'] },
+          platform: { type: ['string', 'null'] },
+          release: { type: ['string', 'null'] },
+          name: { type: ['string', 'null'] },
+          message: { type: ['string', 'null'] },
+          stack: { type: ['string', 'null'] },
+          context: { type: ['object', 'string', 'null'] },
+          deviceId: { type: ['string', 'null'] },
+          count: { type: 'integer', description: 'Сколько раз повторилось' },
+          firstAt: { type: 'string', format: 'date-time' },
+          lastAt: { type: 'string', format: 'date-time' },
+        },
+      },
       Share: {
         type: 'object',
         required: ['id', 'targetKind', 'targetId', 'plays', 'createdAt'],
@@ -1328,6 +1363,138 @@ export const OPENAPI = {
         tags: ['history'],
         summary: 'Очистить историю',
         responses: { 204: { description: 'OK' } },
+      },
+    },
+    '/crashes': {
+      post: {
+        tags: ['crashes'],
+        summary: 'Отчёт о падении приложения (H5)',
+        description:
+          'Без токена осознанно: приложение падает и до входа, и после истечения сессии. ' +
+          'Защита — размер тела (16 КБ) и лимит по установке (60 разных падений в час). ' +
+          'Повтор с тем же fingerprint не создаёт запись, а увеличивает `count`.',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CrashReport' },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Принят (возможно, как повтор)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    accepted: { type: 'boolean' },
+                    duplicate: { type: 'boolean', description: 'Такое падение уже было' },
+                    count: { type: 'integer', description: 'Сколько раз повторилось' },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: 'Не JSON — `invalid_json`' },
+          413: { description: 'Больше 16 КБ — `too_large`' },
+          429: {
+            description: 'Слишком много разных падений с одной установки за час',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    accepted: { type: 'boolean' },
+                    reason: { type: 'string', enum: ['rate_limited'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      get: {
+        tags: ['crashes'],
+        summary: 'Лента отчётов о падениях',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 } },
+          { name: 'app', in: 'query', schema: { type: 'string', enum: ['mobile', 'web', 'desktop', 'console'] } },
+          { name: 'version', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    total: { type: 'integer' },
+                    limit: { type: 'integer' },
+                    offset: { type: 'integer' },
+                    items: { type: 'array', items: { $ref: '#/components/schemas/CrashItem' } },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Только владелец' },
+          405: { description: 'Метод не поддерживается' },
+        },
+      },
+      delete: {
+        tags: ['crashes'],
+        summary: 'Чистка старых отчётов',
+        description: 'Пишет действие `crashes.prune` в журнал. По умолчанию хранит 90 дней.',
+        parameters: [{ name: 'keepDays', in: 'query', schema: { type: 'integer', minimum: 0, default: 90 } }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { removed: { type: 'integer' }, before: { type: 'string' } },
+                },
+              },
+            },
+          },
+          401: { description: 'Только владелец' },
+        },
+      },
+    },
+    '/crashes/summary': {
+      get: {
+        tags: ['crashes'],
+        summary: 'Сводка: группы, события, установки, версии',
+        parameters: [{ name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 7 } }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    since: { type: 'string' },
+                    days: { type: 'integer' },
+                    groups: { type: 'integer' },
+                    events: { type: 'integer' },
+                    devices: { type: 'integer' },
+                    byApp: { type: 'array', items: { type: 'object' } },
+                    byVersion: { type: 'array', items: { type: 'object' } },
+                    hint: { type: ['string', 'null'] },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: 'Только владелец' },
+        },
       },
     },
     '/backups': {

@@ -53,6 +53,7 @@ import {
   backupScheduleState, backupStatus, createBackup, startBackupSchedule, verifyArchive,
 } from './backup.js';
 import { boundaryOf, firstPartStream } from './multipart.js';
+import { crashSummary, listCrashes, pruneCrashes, recordCrash } from './crashes.js';
 import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
@@ -814,6 +815,32 @@ async function handleApi(req, res, url) {
 
   if (pathname === '/api/auth/login' && method === 'POST') return handleLogin(req, res);
 
+  /**
+   * Приём отчётов о падениях (H5). **Без токена** осознанно: приложение падает и
+   * до входа, и после истечения токена — отчёт с этих падений самый нужный.
+   * Защита не авторизация, а лимиты: 16 КБ тела и 60 отчётов в час на установку.
+   * Тело читается с жёстким потолком, чтобы «отчёт» не стал способом забить диск.
+   */
+  if (pathname === '/api/crashes' && method === 'POST') {
+    let body;
+    try {
+      body = await readJson(req, 16 * 1024);
+    } catch (error) {
+      // 413 на большое тело, 400 на битый JSON: это разные поломки у клиента
+      return error?.message === 'body_too_large'
+        ? fail(res, 413, 'too_large', 'Отчёт больше 16 КБ.')
+        : fail(res, 400, 'invalid_json', 'Ожидался JSON.');
+    }
+    const result = recordCrash(body, { ipHash: auditIpHash(clientIp(req)) });
+    if (!result.accepted) {
+      // 429, но не ошибка клиента: цикл падений не должен выглядеть как поломка сети
+      return json(res, 429, { accepted: false, reason: result.reason }, { 'Cache-Control': 'no-store' });
+    }
+    return json(res, 200, { accepted: true, duplicate: result.duplicate, count: result.count }, {
+      'Cache-Control': 'no-store',
+    });
+  }
+
   if (!authorized(req)) {
     // <audio>/<img> не умеют присылать заголовок Authorization — для них
     // достаточно короткоживущей HMAC-подписи в query.
@@ -871,6 +898,35 @@ async function handleApi(req, res, url) {
     const removed = pruneAudit({ keepDays: Number(url.searchParams.get('keepDays') || AUDIT_RETENTION_DAYS) });
     audit('audit.prune', { details: removed, requestId: req.visionRequestId });
     return json(res, 200, removed);
+  }
+
+  /**
+   * Отчёты о падениях (H5): читает только владелец — в стеке бывают внутренние
+   * имена и куски данных, которые видит автор библиотеки.
+   */
+  if (pathname === '/api/crashes' && method === 'GET') {
+    return json(res, 200, listCrashes({
+      limit: url.searchParams.get('limit'),
+      offset: url.searchParams.get('offset'),
+      app: url.searchParams.get('app'),
+      version: url.searchParams.get('version'),
+    }), { 'Cache-Control': 'no-store' });
+  }
+
+  if (pathname === '/api/crashes' && method === 'DELETE') {
+    const removed = pruneCrashes({ keepDays: Number(url.searchParams.get('keepDays') || 0) || undefined });
+    audit('crashes.prune', { details: removed, requestId: req.visionRequestId });
+    return json(res, 200, removed);
+  }
+
+  if (pathname === '/api/crashes' && method !== 'GET' && method !== 'POST') {
+    return fail(res, 405, 'method_not_allowed', 'GET — лента, POST — отчёт, DELETE — чистка.');
+  }
+
+  if (pathname === '/api/crashes/summary' && method === 'GET') {
+    return json(res, 200, crashSummary({ days: Number(url.searchParams.get('days') || 7) }), {
+      'Cache-Control': 'no-store',
+    });
   }
 
   /**

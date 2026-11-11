@@ -58,6 +58,40 @@ export type AuditEntry = {
 };
 
 /**
+ * Отчёты о падений (H5). Панель показывает их группами: двести одинаковых
+ * `TypeError` — это один баг, а не двести.
+ */
+export type CrashItem = {
+  id: number;
+  app: string;
+  version: string | null;
+  platform: string | null;
+  release: string | null;
+  name: string | null;
+  message: string | null;
+  stack: string | null;
+  context: Record<string, unknown> | string | null;
+  deviceId: string | null;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  fingerprint: string;
+};
+
+export type CrashPage = { total: number; limit: number; offset: number; items: CrashItem[] };
+
+export type CrashSummary = {
+  since: string;
+  days: number;
+  groups: number;
+  events: number;
+  devices: number;
+  byApp: { app: string; groups: number; events: number }[];
+  byVersion: { version: string; groups: number; events: number }[];
+  hint: string | null;
+};
+
+/**
  * Резервные копии (D5). Панель показывает не «файл есть», а «проверка прошла»:
  * красный результат проверки — самое важное, что она может сообщить.
  */
@@ -334,6 +368,13 @@ export class ConsoleClient {
     if (params.actor) search.set('actor', params.actor);
     if (params.shareId) search.set('shareId', params.shareId);
     return this.request<AuditPage>(`/api/audit?${search}`);
+  }
+
+  crashes(days = 7) {
+    return Promise.all([
+      this.request<CrashPage>('/api/crashes?limit=50'),
+      this.request<CrashSummary>(`/api/crashes/summary?days=${days}`),
+    ]).then(([page, summary]) => ({ page, summary }));
   }
 
   backups() {

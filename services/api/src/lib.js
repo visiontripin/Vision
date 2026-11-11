@@ -110,12 +110,17 @@ export function fail(res, status, code, message) {
 }
 
 const MAX_BODY = 1024 * 1024;
-export async function readJson(req) {
+/**
+ * Тело JSON с потолком. Потолок параметром — не роскошь: у публичного приёма
+ * отчётов о падениях (H5) он 16 КБ, а не общий `MAX_BODY`, иначе «отчёт»
+ * становится способом забить диск без авторизации.
+ */
+export async function readJson(req, limit = MAX_BODY) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY) throw new Error('body_too_large');
+    if (size > limit) throw new Error('body_too_large');
     chunks.push(chunk);
   }
   if (!size) return {};

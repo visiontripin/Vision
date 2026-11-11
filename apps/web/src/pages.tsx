@@ -4,6 +4,8 @@ import {
   formatDuration,
   type ExternalTrack,
   type HistoryEntry,
+  type CrashItem,
+  type CrashSummary,
   type Dashboard,
   type PersonalFeed,
   type Playlist,
@@ -1758,6 +1760,154 @@ export function ExternalPage() {
           })}
         </div>
       )}
+    </section>
+  );
+}
+
+/**
+ * Падения (Фаза 3, H5).
+ *
+ * Задача экрана — не «показать красивые графики», а ответить на два вопроса:
+ * что именно падает и на какой версии. Поэтому сверху — сводка по группам и
+ * установкам, ниже — лента с раскрывающимся стеком. Одинаковые падения приходят
+ * уже схлопнутыми, счётчик `×N` показывает, сколько раз повторилось.
+ */
+export function CrashesPage() {
+  const [items, setItems] = useState<CrashItem[] | null>(null);
+  const [summary, setSummary] = useState<CrashSummary | null>(null);
+  const [open, setOpen] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { push } = useToast();
+
+  const load = () => {
+    let alive = true;
+    setBusy(true);
+    Promise.all([api.listCrashes({ limit: 50 }), api.crashSummary(7)])
+      .then(([page, sum]) => {
+        if (!alive) return;
+        setItems(page.items);
+        setSummary(sum);
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        if (alive) setError(e instanceof Error ? e.message : 'Не удалось прочитать отчёты');
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  };
+
+  useEffect(load, []);
+
+  const prune = async () => {
+    setBusy(true);
+    try {
+      const result = await api.pruneCrashes();
+      push(`Удалено отчётов: ${result.removed}`);
+      load();
+    } catch (e) {
+      push(e instanceof Error ? e.message : 'Чистка не удалась', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (error) return <p className="muted">Отчёты о падениях недоступны: {error}</p>;
+  if (!items || !summary) return <p className="muted">Читаю отчёты о падениях…</p>;
+
+  return (
+    <section className="stack">
+      <div className="row row--between">
+        <h2 className="page-title">Падения</h2>
+        <div className="row">
+          <button type="button" className="btn btn--ghost btn--small" disabled={busy} onClick={load}>
+            Обновить
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            disabled={busy || items.length === 0}
+            onClick={() => void prune()}
+            title="Удаляет отчёты старше 90 дней"
+          >
+            Чистка
+          </button>
+        </div>
+      </div>
+
+      <div className="cards">
+        <div className="card">
+          <span className="muted">Событий за 7 дней</span>
+          <strong className="card__value">{summary.events}</strong>
+        </div>
+        <div className="card">
+          <span className="muted">Разных падений</span>
+          <strong className="card__value">{summary.groups}</strong>
+        </div>
+        <div className="card">
+          <span className="muted">Установок</span>
+          <strong className="card__value">{summary.devices}</strong>
+        </div>
+      </div>
+
+      {summary.hint && <p className="hint">{summary.hint}</p>}
+
+      {summary.events > 0 && (
+        <p className="hint">
+          По приложениям: {summary.byApp.map((row) => `${row.app} — ${row.events}`).join(', ')}. По версиям:{' '}
+          {summary.byVersion.map((row) => `${row.version ?? 'без версии'} (${row.events})`).join(', ')}.
+        </p>
+      )}
+
+      {items.length === 0 ? (
+        <p className="muted">
+          Отчётов нет — это хорошая новость. Если приложение всё же падало, проверьте, что сборка
+          содержит репортер: мобильное и веб-приложения отправляют отчёты по умолчанию.
+        </p>
+      ) : (
+        <div className="stack stack--tight">
+          {items.map((item) => (
+            <article key={item.id} className="card">
+              <div className="row row--between">
+                <strong>
+                  {item.name ?? 'Ошибка'}: {item.message ?? 'без описания'}
+                </strong>
+                <span className="badge">{item.count}×</span>
+              </div>
+              <span className="muted">
+                {item.app} {item.version ?? ''} · {item.platform ?? '—'} · первый раз {ago(item.firstAt)},{' '}
+                последний {ago(item.lastAt)}
+              </span>
+              <div className="row">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--small"
+                  onClick={() => setOpen(open === item.id ? null : item.id)}
+                >
+                  {open === item.id ? 'Скрыть стек' : 'Показать стек'}
+                </button>
+              </div>
+              {open === item.id && (
+                <pre className="crash-stack">
+                  {item.stack ?? 'стека нет'}
+                  {item.context ? `\n\nконтекст: ${JSON.stringify(item.context, null, 2)}` : ''}
+                  {item.deviceId ? `\nустановка: ${item.deviceId}` : ''}
+                </pre>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+
+      <p className="hint">
+        Приём открыт без токена осознанно: приложение падает и до входа, и после истечения сессии.
+        Защита — размер отчёта (16 КБ) и лимит по установке (60 разных падений в час). Адресов нет,
+        идентификатор установки совпадает с тем, что у трекера реплик.
+      </p>
     </section>
   );
 }

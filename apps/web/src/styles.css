@@ -3724,3 +3724,19 @@ select:focus {
     grid-column: 1 / -1;
   }
 }
+
+/* Стек падения: моноширинный, с переносом — иначе одна длинная строка
+   растаскивает всю страницу по горизонтали. */
+.crash-stack {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg, #12100f) 70%, #000 30%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}

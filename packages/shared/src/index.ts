@@ -440,9 +440,13 @@ export function createClient(options: ClientOptions = {}) {
 
   if (!baseUrl && isBrowser) baseUrl = ''; // same-origin: web / preview / Tauri
 
-  async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  /**
+   * `authless` — запрос, которому токен не нужен и который не должен ломаться,
+   * если токена нет: отчёт о падении уходит и до входа (H5).
+   */
+  async function request<T>(path: string, init: RequestInit = {}, { authless = false } = {}): Promise<T> {
     const headers = new Headers(init.headers || {});
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    if (token && !authless) headers.set('Authorization', `Bearer ${token}`);
     if (init.body && !headers.has('Content-Type') && typeof init.body === 'string') {
       headers.set('Content-Type', 'application/json');
     }
@@ -808,6 +812,37 @@ export function createClient(options: ClientOptions = {}) {
       return request<Stats>('/api/stats');
     },
 
+    /**
+     * Отчёт о падении (H5). Без токена осознанно: падение до входа — тоже нужное,
+     * а просроченный токен не должен мешать отчёту дойти.
+     */
+    reportCrash(report: CrashReport) {
+      return request<{ accepted: boolean; duplicate: boolean; count: number }>(
+        '/api/crashes',
+        { method: 'POST', body: JSON.stringify(report) },
+        { authless: true }
+      );
+    },
+
+    /** Отчёты о падениях для панели (H5). */
+    listCrashes(params: { limit?: number; offset?: number; app?: string; version?: string } = {}) {
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== '') query.set(key, String(value));
+      }
+      const suffix = query.toString() ? `?${query}` : '';
+      return request<CrashPage>(`/api/crashes${suffix}`);
+    },
+
+    crashSummary(days = 7) {
+      return request<CrashSummary>(`/api/crashes/summary?days=${days}`);
+    },
+
+    pruneCrashes(keepDays?: number) {
+      const suffix = keepDays === undefined ? '' : `?keepDays=${keepDays}`;
+      return request<{ removed: number; before: string }>(`/api/crashes${suffix}`, { method: 'DELETE' });
+    },
+
     /** Резервные копии: статус и создание (D5). */
     backups() {
       return request<BackupStatus>('/api/backups');
@@ -893,4 +928,157 @@ export function pseudoPeaks(seed: string, count = 120): number[] {
     out.push(Math.max(0.08, Math.min(1, ((h >>> 0) % 1000) / 1000 * 0.6 + wave)));
   }
   return out;
+}
+
+/* --------------------------- crash-репортинг (H5) ------------------------- */
+
+export type CrashReport = {
+  app?: 'mobile' | 'web' | 'desktop' | 'console';
+  version?: string;
+  platform?: string;
+  release?: string;
+  name?: string;
+  message?: string;
+  stack?: string;
+  context?: Record<string, unknown> | string;
+  deviceId?: string;
+};
+
+export type CrashItem = {
+  id: number;
+  app: string;
+  version: string | null;
+  platform: string | null;
+  release: string | null;
+  name: string | null;
+  message: string | null;
+  stack: string | null;
+  context: Record<string, unknown> | string | null;
+  deviceId: string | null;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  fingerprint: string;
+};
+
+export type CrashPage = { total: number; limit: number; offset: number; items: CrashItem[] };
+
+export type CrashSummary = {
+  since: string;
+  days: number;
+  groups: number;
+  events: number;
+  devices: number;
+  byApp: { app: string; groups: number; events: number }[];
+  byVersion: { version: string; groups: number; events: number }[];
+  hint: string | null;
+};
+
+export type CrashReporterOptions = {
+  app: CrashReport['app'];
+  version?: string;
+  platform?: string;
+  release?: string;
+  deviceId?: string;
+  /** Что сейчас открыто: попадает в `context`, помогает повторить сценарий. */
+  context?: () => Record<string, unknown>;
+  /** Сколько отчётов держим в памяти до отправки (по умолчанию 5). */
+  queueLimit?: number;
+};
+
+/**
+ * Отправка отчётов о падениях (H5).
+ *
+ * Требования, которые важнее «чтобы был Sentry»:
+ *  - **ничего не должно сломать**: любая ошибка внутри репортера гасится, иначе
+ *    обработчик падений сам станет источником падений;
+ *  - **не в цикле**: одинаковые падения в очереди схлопываются по подписи, а
+ *    лимит частоты стоит на сервере (60 в час на установку);
+ *  - **без токена**: падение до входа — самый нужный отчёт, поэтому запрос идёт
+ *    без авторизации (сервер это разрешает осознанно, см. `docs/API.md`);
+ *  - **офлайн — не теряем**: если сети нет, отчёт остаётся в очереди и уходит
+ *    со следующей ошибкой или при явном `flush()`.
+ */
+export function createCrashReporter(getBaseUrl: () => string, options: CrashReporterOptions) {
+  const queue: CrashReport[] = [];
+  const limit = Math.max(1, options.queueLimit ?? 5);
+  let sending = false;
+
+  const fingerprint = (report: CrashReport) =>
+    `${report.name ?? ''}|${report.message ?? ''}|${String(report.stack ?? '').split('\n')[1] ?? ''}`;
+
+  const enqueue = (report: CrashReport) => {
+    const key = fingerprint(report);
+    if (queue.some((item) => fingerprint(item) === key)) return; // тот же баг уже в очереди
+    queue.push({ ...report, app: report.app ?? options.app });
+    while (queue.length > limit) queue.shift();
+  };
+
+  const flush = async (): Promise<number> => {
+    if (sending || !queue.length) return 0;
+    sending = true;
+    let sent = 0;
+    try {
+      while (queue.length) {
+        const report = queue[0];
+        try {
+          const base = getBaseUrl();
+          if (!base) break;
+          const response = await fetch(`${base}/api/crashes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(report),
+          });
+          // 429 — это «слишком часто», повторять бессмысленно; 4xx — отчёт плохой
+          if (response.ok || (response.status >= 400 && response.status < 500)) {
+            queue.shift();
+            sent += 1;
+          } else {
+            break; // 5xx: сервер болен, оставляем на потом
+          }
+        } catch {
+          break; // сети нет — очередь переживёт
+        }
+      }
+    } finally {
+      sending = false;
+    }
+    return sent;
+  };
+
+  const describe = (error: unknown): CrashReport => {
+    const value = error as { name?: string; message?: string; stack?: string } | null;
+    let context: Record<string, unknown> = {};
+    try {
+      context = options.context?.() ?? {};
+    } catch {
+      context = {};
+    }
+    return {
+      app: options.app,
+      version: options.version,
+      platform: options.platform,
+      release: options.release,
+      deviceId: options.deviceId,
+      name: value?.name ?? 'Error',
+      message: value?.message ?? String(error ?? 'Неизвестная ошибка'),
+      stack: value?.stack,
+      context,
+    };
+  };
+
+  return {
+    /** Запомнить ошибку и попробовать отправить (не ждём результата). */
+    capture(error: unknown) {
+      try {
+        enqueue(describe(error));
+        void flush();
+      } catch {
+        /* репортер не имеет права падать */
+      }
+    },
+    /** Явная отправка: например, при возврате приложения на передний план. */
+    flush,
+    queued: () => queue.length,
+  };
 }

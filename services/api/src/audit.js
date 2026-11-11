@@ -53,6 +53,7 @@ export const AUDIT_ACTIONS = {
   'audit.prune': { label: 'журнал очищен', actor: 'owner', target: 'system' },
   'backup.create': { label: 'создана резервная копия', actor: 'owner', target: 'system' },
   'backup.verify': { label: 'проверено восстановление', actor: 'owner', target: 'system' },
+  'crashes.prune': { label: 'отчёты о падениях очищены', actor: 'owner', target: 'system' },
 };
 
 export const AUDIT_ACTOR_LABELS = {

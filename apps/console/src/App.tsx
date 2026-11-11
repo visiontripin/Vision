@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ConsoleClient, ConsoleError, baseHint, loadSession, normalizeBase, saveSession,
-  type AuditPage, type BackupResult, type BackupStatus, type Dashboard, type Health,
+  type AuditPage, type BackupResult, type BackupStatus, type CrashItem, type CrashPage, type CrashSummary, type Dashboard, type Health,
 } from './api';
 import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady, playsChart } from './lib';
 
@@ -17,7 +17,7 @@ import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isR
  * Поэтому экран один: «где сервер» → «пароль» → «как дела», без привязки к платформе.
  */
 
-type Tab = 'overview' | 'plays' | 'shares' | 'library' | 'backups' | 'audit';
+type Tab = 'overview' | 'plays' | 'shares' | 'library' | 'crashes' | 'backups' | 'audit';
 
 /** Фильтры журнала: «всё» и три группы, которые чаще всего нужны при разборе. */
 const AUDIT_FILTERS: { value: string; label: string }[] = [
@@ -38,6 +38,8 @@ export function App() {
   const [tracker, setTracker] = useState<Awaited<ReturnType<ConsoleClient['tracker']>> | null>(null);
   const [shares, setShares] = useState<Awaited<ReturnType<ConsoleClient['shares']>>>([]);
   const [tab, setTab] = useState<Tab>('overview');
+  const [crashes, setCrashes] = useState<{ page: CrashPage; summary: CrashSummary } | null>(null);
+  const [openCrash, setOpenCrash] = useState<CrashItem | null>(null);
   const [backups, setBackups] = useState<BackupStatus | null>(null);
   const [backupRun, setBackupRun] = useState<BackupResult | null>(null);
   const [backupCheck, setBackupCheck] = useState<
@@ -143,6 +145,24 @@ export function App() {
   }, [connected]);
 
   /** Журнал грузится отдельно: он нужен только на своей вкладке и бывает длинным. */
+  /** Падения: грузим при входе на вкладку — это не то, что нужно каждую минуту. */
+  const loadCrashes = useCallback(async () => {
+    setBusy('crashes');
+    try {
+      setCrashes(await client.crashes(7));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось прочитать отчёты о падениях');
+      setCrashes(null);
+    } finally {
+      setBusy(null);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (connected && tab === 'crashes' && crashes === null) void loadCrashes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, tab]);
+
   /** Копии: статус при входе на вкладку, создание и проверка — по кнопке. */
   const loadBackups = useCallback(async () => {
     setBusy('backups');
@@ -400,6 +420,7 @@ export function App() {
                   ['plays', 'Прослушивания'],
                   ['shares', `Ссылки${shares.length ? ` (${shares.length})` : ''}`],
                   ['library', 'Библиотека'],
+                  ['crashes', `Падения${crashes?.summary.events ? ` (${crashes.summary.events})` : ''}`],
                   ['backups', 'Копии'],
                   ['audit', 'Журнал'],
                 ] as [Tab, string][]
@@ -605,6 +626,79 @@ export function App() {
                   {tracker
                     ? `файлов ${tracker.blobs}, без источника ${tracker.noSource}, устройств ${tracker.devices}`
                     : 'трекер реплик недоступен'}
+                </p>
+              </div>
+            )}
+
+            {tab === 'crashes' && (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div className="row row--between">
+                  <span className="muted">
+                    {crashes
+                      ? `${crashes.summary.events} падений в ${crashes.summary.groups} группах · установок ${crashes.summary.devices}`
+                      : 'Читаю отчёты…'}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--ghost"
+                    disabled={busy === 'crashes'}
+                    onClick={() => void loadCrashes()}
+                  >
+                    {busy === 'crashes' ? 'Читаю…' : 'Обновить'}
+                  </button>
+                </div>
+
+                {crashes?.summary.hint && <p className="muted">{crashes.summary.hint}</p>}
+
+                {crashes && crashes.summary.events > 0 && (
+                  <p className="hint">
+                    За 7 дней: {crashes.summary.byApp.map((row) => `${row.app} — ${row.events}`).join(', ')}.
+                    Версии: {crashes.summary.byVersion.slice(0, 3).map((row) => `${row.version} (${row.events})`).join(', ')}.
+                    Одинаковые падения схлопываются в одну группу — счётчик справа показывает, сколько раз повторилось.
+                  </p>
+                )}
+
+                {(crashes?.page.items ?? []).map((item) => (
+                  <div key={item.id} className="link-row">
+                    <div className="row row--between">
+                      <span className="link-row__title">
+                        {item.name ?? 'Ошибка'}: {item.message ?? 'без описания'}
+                      </span>
+                      <span className="badge">{item.count}×</span>
+                    </div>
+                    <span className="muted">
+                      {item.app} {item.version ?? ''} · {item.platform ?? '—'} · последний раз {ago(item.lastAt)}
+                    </span>
+                    <div className="row">
+                      <button
+                        type="button"
+                        className="btn btn--small btn--ghost"
+                        onClick={() => setOpenCrash(openCrash?.id === item.id ? null : item)}
+                      >
+                        {openCrash?.id === item.id ? 'Скрыть стек' : 'Показать стек'}
+                      </button>
+                    </div>
+                    {openCrash?.id === item.id && (
+                      <pre className="code" style={{ whiteSpace: 'pre-wrap', fontSize: 11, margin: 0 }}>
+                        {item.stack ?? 'стека нет'}
+                        {item.context ? `\n\nконтекст: ${JSON.stringify(item.context)}` : ''}
+                        {item.deviceId ? `\nустановка: ${item.deviceId}` : ''}
+                      </pre>
+                    )}
+                  </div>
+                ))}
+
+                {crashes && crashes.page.items.length === 0 && (
+                  <p className="muted">
+                    Отчётов нет. Если приложение падало — проверьте, что сборка содержит репортер
+                    (мобильное приложение отправляет отчёты по умолчанию).
+                  </p>
+                )}
+
+                <p className="hint">
+                  Приём открыт без токена: приложение падает и до входа, и после истечения сессии.
+                  Защита — лимиты: 16 КБ на отчёт и 60 отчётов в час на установку. Адресов нет,
+                  идентификатор установки — тот же, что у трекера реплик.
                 </p>
               </div>
             )}

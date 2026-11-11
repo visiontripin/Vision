@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api, initApi } from './src/api';
+import { api, apiBase, initApi } from './src/api';
+import { installCrashReporter } from './src/crash';
 import { KEYS, loadBase, saveBase } from './src/config';
 import { DownloadsProvider } from './src/downloads';
 import { PlayerProvider, usePlayer } from './src/player';
@@ -11,6 +12,12 @@ import { useLibrary } from './src/useLibrary';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { colors } from './src/theme';
+
+/**
+ * Версия приложения для отчётов о падениях: одна строка, чтобы в панели было
+ * видно, какая сборка падает.
+ */
+const APP_VERSION = '0.6.0';
 
 /**
  * Vision Audio — мобильный клиент (Android + iOS).
@@ -22,6 +29,15 @@ import { colors } from './src/theme';
 export default function App() {
   const [phase, setPhase] = useState<'boot' | 'anon' | 'ready'>('boot');
   const [base, setBase] = useState('');
+
+  /*
+   * Отчёты о падениях ставятся до всего остального: падение при запуске (до
+   * входа, до загрузки библиотеки) — самое обидное, потому что человек видит
+   * только закрывшееся приложение. Ошибки внутри самого репортера гасятся.
+   */
+  useEffect(() => {
+    installCrashReporter({ getBaseUrl: apiBase, version: APP_VERSION });
+  }, []);
 
   useEffect(() => {
     (async () => {
