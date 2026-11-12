@@ -171,6 +171,13 @@ cd apps/mobile && npm install && npx expo start   # Expo Go на телефон�
 https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk
 ```
 
+**Сервер внутри приложения:** с версии 0.9.0 приложение поднимает HTTP-сервер на
+самом телефоне (Node 24 в APK) и умеет проверять API без компьютера — экран
+«Настройки → Сервер на телефоне». Общая библиотека при этом работает через реестр
+в любой сети. Устройство, скрипты сборки и ограничения — `docs/EMBEDDED.md`;
+отдельный **тестовый APK** `VisionTester` (свой `applicationId`, ставится рядом)
+собирается тем же workflow при включённом input `tester`.
+
 Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`.
 
 **Готовые приложения для Linux и Windows** (Tauri, тот же интерфейс плюс трей и медиа-клавиши) —

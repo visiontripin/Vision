@@ -1,0 +1,8 @@
+{
+  "node": "24.22.3",
+  "source": "RockinChaos/nodejs-mobile",
+  "asset": "nodejs-mobile-v24.22.3-android.zip",
+  "url": "https://github.com/RockinChaos/nodejs-mobile/releases/download/v24.22.3/nodejs-mobile-v24.22.3-android.zip",
+  "abi": ["arm64-v8a", "armeabi-v7a", "x86_64"],
+  "note": "Node 24, а не 22: node:sqlite нужен серверу, в 22 он всё ещё experimental, в 24 — release candidate. Пакет npm nodejs-mobile-react-native (Node 18) для этого не годится: в нём нет node:sqlite."
+}

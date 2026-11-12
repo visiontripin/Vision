@@ -1,7 +1,7 @@
 {
   "name": "vision-audio",
   "private": true,
-  "version": "0.28.0",
+  "version": "0.29.0",
   "type": "module",
   "description": "Vision Audio — личный аналог SoundCloud: web, Android, iOS, Windows, Linux",
   "workspaces": [
@@ -16,7 +16,7 @@
     "build:pages": "VITE_LOCAL_MODE=1 BASE_PATH=${BASE_PATH:-/Vision/} OUT_DIR=dist-pages npm run build --workspace apps/web",
     "start": "node services/api/src/start.js",
     "test": "node --test services/api/test/*.test.js",
-    "test:local": "tsx --test apps/web/src/local/client.test.ts apps/web/src/audio.test.ts apps/web/src/bulk/zip.test.ts apps/web/src/offline.test.ts apps/web/src/offline.cache.test.ts apps/mobile/src/lib/format.test.ts apps/mobile/src/lib/queue.test.ts apps/mobile/src/lib/media.test.ts apps/mobile/src/lib/downloads.test.ts apps/mobile/src/lib/sync.test.ts apps/mobile/src/lib/local.test.ts apps/mobile/src/lib/link.test.ts apps/mobile/src/lib/wave.test.ts apps/console/src/lib.test.ts apps/web/src/embed.test.ts apps/web/src/deep-link.test.ts apps/mobile/src/lib/deeplink.test.ts apps/mobile/src/lib/upload.test.ts apps/web/src/updates.test.ts apps/web/src/library-cache.test.ts apps/web/src/smart/smart-form.test.ts apps/web/src/crash-reporter.test.ts apps/web/src/now-playing.test.ts apps/web/src/track-menu.test.ts",
+    "test:local": "tsx --test apps/web/src/local/client.test.ts apps/web/src/audio.test.ts apps/web/src/bulk/zip.test.ts apps/web/src/offline.test.ts apps/web/src/offline.cache.test.ts apps/mobile/src/lib/format.test.ts apps/mobile/src/lib/queue.test.ts apps/mobile/src/lib/media.test.ts apps/mobile/src/lib/downloads.test.ts apps/mobile/src/lib/sync.test.ts apps/mobile/src/lib/local.test.ts apps/mobile/src/lib/link.test.ts apps/mobile/src/lib/wave.test.ts apps/console/src/lib.test.ts apps/web/src/embed.test.ts apps/web/src/deep-link.test.ts apps/mobile/src/lib/deeplink.test.ts apps/mobile/src/lib/upload.test.ts apps/web/src/updates.test.ts apps/web/src/library-cache.test.ts apps/web/src/smart/smart-form.test.ts apps/web/src/crash-reporter.test.ts apps/web/src/now-playing.test.ts apps/web/src/track-menu.test.ts apps/mobile/src/lib/embedded-server.test.ts apps/mobile/src/lib/tester.test.ts",
     "test:all": "npm test && npm run test:local && npm run test:scripts",
     "test:ffmpeg": "FFMPEG_PATH=${FFMPEG_PATH:?укажите путь к ffmpeg} npm test",
     "preview": "npm run build && npm start",
@@ -26,7 +26,8 @@
     "dev:console": "npm --prefix apps/console run dev",
     "build:console:windows": "cd apps/console && npm run build:windows",
     "build:console:android": "cd apps/console && npm run build:android",
-    "test:scripts": "node --test scripts/*.test.mjs"
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "test:embedded": "node --test apps/mobile/test/embedded-server.test.mjs"
   },
   "engines": {
     "node": ">=22.5"

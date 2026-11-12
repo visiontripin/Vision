@@ -13,6 +13,14 @@ on:
         description: 'Создать GitHub Release с APK'
         type: boolean
         default: true
+      embedded:
+        description: 'Встроить Node-рантайм (сервер на телефоне)'
+        type: boolean
+        default: true
+      tester:
+        description: 'Собрать отдельный тестовый APK (VisionTester)'
+        type: boolean
+        default: false
   push:
     tags:
       - 'android-v*'
@@ -76,6 +84,27 @@ jobs:
       - name: Подпись и версия
         run: node ../../scripts/android-prepare.mjs
 
+      # Node-рантайм ~90 МБ: кэш по версии из node-version.json, чтобы не качать
+      # его на каждой сборке. Ключ меняется только при смене версии Node.
+      - name: Кэш Node-рантайма
+        id: node-cache
+        if: inputs.embedded != false
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/nodejs/android/libnode
+          key: nodejs-mobile-${{ hashFiles('apps/mobile/nodejs/android/node-version.json') }}
+
+      - name: Node-рантайм для встроенного сервера
+        if: inputs.embedded != false
+        run: node ../../scripts/fetch-nodejs-mobile.mjs
+
+      - name: Встроить сервер в проект
+        run: node ../../scripts/android-embed-node.mjs
+
+      - name: Проверить встроенный сервер
+        if: inputs.embedded != false
+        run: node ../../scripts/android-embed-node.mjs --check
+
       - name: Окружение
         run: |
           java -version 2>&1 | head -2 | while IFS= read -r l; do echo "::warning title=java::$l"; done
@@ -117,6 +146,21 @@ jobs:
             while IFS= read -r l; do echo "::warning title=apk-badging::$l"; done < <(grep -E "^(package|sdkVersion|targetSdkVersion|native-code)" /tmp/badging.txt || true)
           else
             while IFS= read -r l; do echo "::warning title=apk-badging-ошибка::$l"; done < <(tail -n 5 /tmp/badging.txt)
+          fi
+
+          # Встроенный сервер: .so под каждый ABI и скрипт в assets. Без этого APK
+          # соберётся, но кнопка «Запустить сервер» скажет «нет рантайма» — лучше
+          # узнать это в CI, чем на телефоне.
+          if unzip -l "$APK" | grep -q "lib/arm64-v8a/libvisionnode.so"; then
+            for abi in arm64-v8a armeabi-v7a x86_64; do
+              unzip -l "$APK" | grep -q "lib/$abi/libnode.so" \
+                || { echo "::error title=apk::нет libnode.so для $abi"; exit 1; }
+            done
+            unzip -l "$APK" | grep -q "assets/nodejs-project/bootstrap.mjs" \
+              || { echo "::error title=apk::нет bootstrap.mjs в assets"; exit 1; }
+            echo "::warning title=apk::встроенный сервер в APK (libvisionnode.so + libnode.so ×3 + bootstrap.mjs)"
+          else
+            echo "::warning title=apk::сборка БЕЗ встроенного Node (сервер на телефоне недоступен)"
           fi
 
           if unzip -l "$APK" | grep -q "index.android.bundle"; then
@@ -202,3 +246,140 @@ jobs:
               --notes "$NOTES"
           fi
           gh release view "$TAG" --json url,assets --jq '"release: \(.url)", (.assets[] | "asset: \(.name) \(.size) байт → \(.url)")'
+
+  # Отдельный тестовый APK: другой applicationId, поэтому ставится рядом с
+  # обычным приложением, а не поверх него — удобно проверять новые сборки, не
+  # трогая свою библиотеку и вход.
+  #
+  # Внутри: тестер API (адрес + шесть проверок), состояние встроенного сервера и
+  # быстрый доступ к логам Node. Запускается из Actions → Run workflow с
+  # включённым «Собрать отдельный тестовый APK».
+  tester:
+    name: VisionTester APK
+    if: inputs.tester == true
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Кэш Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-tester-${{ runner.os }}-${{ hashFiles('apps/mobile/package-lock.json') }}
+
+      - name: Зависимости
+        run: npm ci --no-audit --no-fund
+
+      - name: Android SDK и лицензии
+        run: |
+          SDKM=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platform-tools" "platforms;android-36" "build-tools;36.0.0" > /dev/null 2>&1 || true
+
+      - name: Параметры тестовой сборки
+        run: node ../../scripts/android-tester-app.mjs
+
+      - name: Нативный проект (prebuild)
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Подпись и версия
+        run: node ../../scripts/android-prepare.mjs
+
+      - name: Кэш Node-рантайма
+        id: node-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/nodejs/android/libnode
+          key: nodejs-mobile-${{ hashFiles('apps/mobile/nodejs/android/node-version.json') }}
+
+      - name: Node-рантайм для встроенного сервера
+        run: node ../../scripts/fetch-nodejs-mobile.mjs
+
+      - name: Встроить сервер в проект
+        run: node ../../scripts/android-embed-node.mjs
+
+      - name: Сборка APK
+        run: |
+          set -o pipefail
+          cd android
+          if ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log; then
+            exit 0
+          fi
+          grep -nE "What went wrong|FAILURE:|Caused by:|error:|Execution failed" /tmp/gradle.log | tail -25 \
+            | while IFS= read -r line; do echo "::error title=gradle-причина::$line"; done
+          exit 1
+
+      - name: Проверка тестового APK
+        run: |
+          set -uo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/aapt2" dump badging "$APK" > /tmp/badging.txt 2>&1 || true
+          grep -E "^package:" /tmp/badging.txt | while IFS= read -r l; do echo "::warning title=tester::$l"; done
+          grep -q "app.vision.audio.tester" /tmp/badging.txt \
+            || { echo "::error title=tester::applicationId не app.vision.audio.tester — APK перезапишет основное приложение"; exit 1; }
+          unzip -l "$APK" | grep -q "lib/arm64-v8a/libvisionnode.so" \
+            || { echo "::error title=tester::нет встроенного Node"; exit 1; }
+          unzip -l "$APK" | grep -q "assets/nodejs-project/bootstrap.mjs" \
+            || { echo "::error title=tester::нет bootstrap.mjs"; exit 1; }
+          echo "::warning title=tester::тестовый APK содержит Node и bootstrap"
+
+      - name: Имя файла и SHA-256
+        id: apk
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./app.json').expo.version")
+          NAME="VisionTester-${VERSION}-android.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/$NAME"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum "$NAME" | tee "$NAME.sha256"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-tester-apk
+          path: |
+            VisionTester-*.apk
+            VisionTester-*.apk.sha256
+          retention-days: 30
+
+      - name: Публикация (тег tester-v*)
+        if: startsWith(github.ref, 'refs/tags/tester-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          NAME='${{ steps.apk.outputs.name }}'
+          TAG="tester-v${{ steps.apk.outputs.version }}"
+          NOTES="Тестовый APK Vision Audio $NAME.
+
+          Ставится рядом с обычным приложением (applicationId app.vision.audio.tester),
+          содержит встроенный Node и тестер API: адрес сервера, шесть проверок
+          (health, список, загрузка, скачивание, Range, удаление) и отчёт, которым
+          можно поделиться."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" "$NAME" "$NAME.sha256" --target "$GITHUB_SHA" \
+              --title "VisionTester ${{ steps.apk.outputs.version }}" --notes "$NOTES"
+          fi

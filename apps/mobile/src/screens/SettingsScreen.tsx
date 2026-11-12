@@ -18,6 +18,7 @@ export function SettingsScreen({
   onLogout,
   onOpenServer,
   onImport,
+  onOpenEmbedded,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -26,6 +27,8 @@ export function SettingsScreen({
   onOpenServer: () => void;
   /** добавить файлы с телефона */
   onImport: () => void;
+  /** экран «Сервер на телефоне»: состояние, запуск, тестер */
+  onOpenEmbedded: () => void;
 }) {
   const downloads = useDownloads();
   const local = useLocalLibrary();
@@ -130,6 +133,16 @@ export function SettingsScreen({
               <Pressable style={styles.secondary} onPress={() => void saveDevice()}>
                 <Text style={styles.secondaryText}>Сохранить имя</Text>
               </Pressable>
+
+              <Text style={styles.label}>Сервер на телефоне</Text>
+              <Pressable style={styles.secondary} onPress={onOpenEmbedded}>
+                <Text style={styles.secondaryText}>Сервер, диагностика и тестер</Text>
+              </Pressable>
+              <Text style={styles.hint}>
+                Приложение умеет поднимать сервер у себя на телефоне: полный API и проверка
+                запросов без компьютера. Общая библиотека при этом работает как раньше — через
+                реестр в любой сети.
+              </Text>
 
               <Text style={styles.label}>Источники музыки</Text>
               <Pressable style={styles.secondary} onPress={() => onImport()}>

@@ -11,6 +11,7 @@ import { SyncProvider } from './src/sync';
 import { PlayerProvider, usePlayer } from './src/player';
 import { DeepLinkHandler } from './src/components/DeepLinkHandler';
 import { useLibrary } from './src/useLibrary';
+import { isRuntimeAvailable, startEmbeddedServer } from './src/runtime';
 import { MainScreen } from './src/screens/MainScreen';
 import { ServerScreen } from './src/screens/ServerScreen';
 import { colors } from './src/theme';
@@ -19,7 +20,7 @@ import { colors } from './src/theme';
  * Версия приложения для отчётов о падениях: одна строка, чтобы в панели было
  * видно, какая сборка падает.
  */
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.9.0';
 
 /**
  * Vision Audio — мобильный плеер (Android + iOS).
@@ -54,6 +55,20 @@ export default function App() {
         void api.me().catch(() => undefined);
       }
     })().finally(() => setBooting(false));
+  }, []);
+
+  /**
+   * Сервер на телефоне поднимается сам, без кнопок: приложение не должно
+   * начинаться с настроек.
+   *
+   * Запуск не блокирует старт: если рантайма в сборке нет (обычный APK, iOS,
+   * Expo Go), функция сразу вернёт `unavailable`, и приложение продолжит работать
+   * как локальный плеер. Ошибку не показываем модалкой — она видна на экране
+   * «Сервер на телефоне», где ей и место.
+   */
+  useEffect(() => {
+    if (!isRuntimeAvailable()) return;
+    void startEmbeddedServer().catch(() => undefined);
   }, []);
 
   const onServerConnected = useCallback(async () => {
