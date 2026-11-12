@@ -1,0 +1,169 @@
+name: Встроенный сервер (проверка сборки)
+
+# Отдельный workflow именно для «A»: проверяет, что Node-рантайм собирается в APK.
+#
+# Почему не в основном android.yml: там сборка запускается по тегу/вручную, а этот
+# путь должен проверяться на каждом пуше в ветки — иначе поломка вживления Node
+# всплывёт только в релизе. Здесь нет публикации и подписи: только «собирается ли».
+#
+# Запуск: push в arena/** и main, либо вручную.
+
+on:
+  push:
+    branches: [main, 'arena/**']
+    paths:
+      - 'apps/mobile/nodejs/**'
+      - 'apps/mobile/test/**'
+      - 'apps/mobile/src/runtime.ts'
+      - 'apps/mobile/src/lib/embedded-server*'
+      - 'apps/mobile/src/lib/tester*'
+      - 'apps/mobile/src/screens/ServerStatusScreen.tsx'
+      - 'apps/mobile/src/screens/TesterScreen.tsx'
+      - 'scripts/android-embed-node.mjs'
+      - 'scripts/fetch-nodejs-mobile.mjs'
+      - 'scripts/android-tester-app.mjs'
+      - '.github/workflows/android-embedded.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-embedded-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPO_NO_TELEMETRY: '1'
+  CI: '1'
+  GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false'
+
+jobs:
+  # 1. Быстрые проверки: логика, скрипты, сам сервер процессом. Без Android SDK.
+  logic:
+    name: Логика и скрипты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Встроенный сервер (процесс + HTTP)
+        run: npm run test:embedded
+      - name: Логика сервера и тестера
+        run: npx tsx --test apps/mobile/src/lib/embedded-server.test.ts apps/mobile/src/lib/tester.test.ts
+      - name: Скрипты сборки
+        run: node --test scripts/android-embed-node.test.mjs scripts/android-tester-app.test.mjs
+
+  # 2. Настоящая сборка APK с Node. Дорогая (10–20 мин), поэтому отдельным job-ом
+  #    и с кэшем рантайма.
+  apk:
+    name: APK с Node
+    runs-on: ubuntu-latest
+    needs: logic
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Кэш Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-embedded-${{ runner.os }}-${{ hashFiles('apps/mobile/package-lock.json') }}
+
+      - name: Зависимости
+        run: npm ci --no-audit --no-fund
+
+      - name: Android SDK и лицензии
+        run: |
+          SDKM=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platform-tools" "platforms;android-36" "build-tools;36.0.0" > /dev/null 2>&1 || true
+
+      - name: Нативный проект (prebuild)
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Подпись и версия
+        run: node ../../scripts/android-prepare.mjs
+
+      # Ключ кэша — версия Node из манифеста: смена версии рантайма сбрасывает кэш.
+      - name: Кэш Node-рантайма
+        uses: actions/cache@v4
+        with:
+          path: apps/mobile/nodejs/android/libnode
+          key: nodejs-mobile-${{ hashFiles('apps/mobile/nodejs/android/node-version.json') }}
+
+      - name: Node-рантайм
+        run: node ../../scripts/fetch-nodejs-mobile.mjs
+
+      - name: Вживить сервер в проект
+        run: node ../../scripts/android-embed-node.mjs
+
+      - name: Проверить вживление
+        run: node ../../scripts/android-embed-node.mjs --check
+
+      - name: Сборка APK
+        run: |
+          set -o pipefail
+          cd android
+          if ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log; then
+            exit 0
+          fi
+          # Без аннотаций причину в логе job-а найти трудно: NDK/CMake падают многословно.
+          grep -nE "What went wrong|FAILURE:|Caused by:|error:|CMake Error|Execution failed|undefined reference" /tmp/gradle.log | tail -30 \
+            | while IFS= read -r line; do echo "::error title=gradle::$line"; done
+          tail -n 30 /tmp/gradle.log | while IFS= read -r line; do echo "::error title=gradle-хвост::$line"; done
+          exit 1
+
+      - name: Проверка содержимого APK
+        run: |
+          set -uo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          echo "::warning title=apk::размер $(du -h "$APK" | cut -f1)"
+          FAIL=0
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            if unzip -l "$APK" | grep -q "lib/$abi/libvisionnode.so"; then
+              echo "::warning title=apk::мост $abi ✓"
+            else
+              echo "::error title=apk::нет libvisionnode.so для $abi"; FAIL=1
+            fi
+            if unzip -l "$APK" | grep -q "lib/$abi/libnode.so"; then
+              echo "::warning title=apk::рантайм $abi ✓"
+            else
+              echo "::error title=apk::нет libnode.so для $abi"; FAIL=1
+            fi
+          done
+          unzip -l "$APK" | grep -q "assets/nodejs-project/bootstrap.mjs" \
+            || { echo "::error title=apk::нет bootstrap.mjs"; FAIL=1; }
+          # Сервис и разрешение: без них Android убьёт сервер в фоне.
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK" > /tmp/manifest.txt 2>&1 || true
+          grep -q "VisionNodeService" /tmp/manifest.txt \
+            || { echo "::error title=apk::в манифесте нет VisionNodeService"; FAIL=1; }
+          grep -q "foregroundServiceType" /tmp/manifest.txt \
+            || { echo "::warning title=apk::нет foregroundServiceType у сервиса"; }
+          [ "$FAIL" = 0 ] || exit 1
+          echo "::warning title=apk::встроенный сервер внутри APK: мост + рантайм ×3 ABI + bootstrap"
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-embedded-apk
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
