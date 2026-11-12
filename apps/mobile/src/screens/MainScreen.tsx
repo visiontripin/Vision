@@ -131,9 +131,11 @@ export function MainScreen() {
 
       <View style={styles.statusRow}>
         <View style={[styles.dot, sync.online && sync.syncUrl ? styles.dotOn : styles.dotOff]} />
-        <Text numberOfLines={1} style={styles.status}>
-          {sync.statusText}
-        </Text>
+        <Pressable style={{ flex: 1 }} onPress={() => setSettingsOpen(true)}>
+          <Text numberOfLines={1} style={styles.status}>
+            {sync.statusText}
+          </Text>
+        </Pressable>
         <Text style={styles.bytes}>{formatBytes(local.bytes)}</Text>
       </View>
     </View>
@@ -346,7 +348,7 @@ const styles = StyleSheet.create({
   dot: { width: 7, height: 7, borderRadius: 4 },
   dotOn: { backgroundColor: colors.ok },
   dotOff: { backgroundColor: colors.dim },
-  status: { flex: 1, color: colors.muted, fontSize: 12 },
+  status: { color: colors.muted, fontSize: 12 },
   bytes: { color: colors.dim, fontSize: 11.5 },
   empty: { paddingHorizontal: 28, paddingTop: 36, alignItems: 'stretch' },
   emptyTitle: { color: colors.text, fontSize: 20, fontWeight: '800', textAlign: 'center' },

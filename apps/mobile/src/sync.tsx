@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 import { useLocalLibrary } from './local';
-import { KEYS as AUTH_KEYS } from './config';
+import { KEYS as AUTH_KEYS, loadBase } from './config';
 import {
   EMPTY_REGISTRY,
   activeDevices,
@@ -27,8 +27,10 @@ import {
  * 3. файл тянется по требованию — с того устройства, где он лежит, напрямую
  *    (`downloadUrl`), если оно доступно; иначе трек виден с пометкой «нет на связи».
  *
- * Пока `SYNC_URL` не настроен, приложение работает как локальный плеер и честно
- * пишет об этом в ленте. Свой реестр можно поднять по `docs/SYNC.md`.
+ * Адрес реестра — это адрес подключённого сервера Vision (тот же, что в
+ * «Домашний сервер»), поэтому отдельного поля «сервер синхронизации» обычно не
+ * нужно. Свой реестр поднимается по `docs/SYNC.md`. Пока адреса нет, приложение
+ * работает как локальный плеер и честно пишет об этом в ленте.
  */
 
 /** Какое устройство считается «на связи»: то же окно, что в ленте. */
@@ -145,7 +147,13 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         /* битый кэш — начинаем с чистого */
       }
 
-      if (storedUrl) setSyncUrlState(storedUrl);
+      /*
+       * Отдельного «сервера синхронизации» вводить не нужно: реестр — это тот же
+       * сервер Vision, к которому подключено приложение. Если пользователь задал
+       * адрес явно, он важнее.
+       */
+      const saved = storedUrl || (await loadBase().catch(() => '')) || DEFAULT_SYNC_URL;
+      if (saved) setSyncUrlState(saved);
     })();
   }, []);
 
