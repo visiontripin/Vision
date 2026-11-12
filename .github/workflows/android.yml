@@ -84,25 +84,37 @@ jobs:
       - name: Подпись и версия
         run: node ../../scripts/android-prepare.mjs
 
+      # Важно: при push тега `inputs` вообще нет (это null, а `null != false` в
+      # выражениях GitHub — ложь). Поэтому условие «не выключено явно» пишется как
+      # `event != workflow_dispatch || inputs.embedded`, иначе релизный APK молча
+      # собирался без Node.
       # Node-рантайм ~90 МБ: кэш по версии из node-version.json, чтобы не качать
       # его на каждой сборке. Ключ меняется только при смене версии Node.
       - name: Кэш Node-рантайма
         id: node-cache
-        if: inputs.embedded != false
+        if: github.event_name != 'workflow_dispatch' || inputs.embedded
         uses: actions/cache@v4
         with:
           path: apps/mobile/nodejs/android/libnode
           key: nodejs-mobile-${{ hashFiles('apps/mobile/nodejs/android/node-version.json') }}
 
       - name: Node-рантайм для встроенного сервера
-        if: inputs.embedded != false
+        if: github.event_name != 'workflow_dispatch' || inputs.embedded
         run: node ../../scripts/fetch-nodejs-mobile.mjs
 
       - name: Встроить сервер в проект
-        run: node ../../scripts/android-embed-node.mjs
+        if: github.event_name != 'workflow_dispatch' || inputs.embedded
+        run: |
+          node ../../scripts/android-embed-node.mjs
+          # Проверка настроек в одном месте: если Node не попал в APK, это должно
+          # быть видно строкой в логе, а не догадкой по размеру файла.
+          grep -E '^reactNativeArchitectures=' android/gradle.properties \
+            | while IFS= read -r line; do echo "::warning title=embedded::$line"; done
+          ls -1 apps/mobile/nodejs/android/libnode/bin 2>/dev/null | tr '\n' ' ' \
+            | while IFS= read -r line; do echo "::warning title=embedded::libnode ABI: $line"; done
 
       - name: Проверить встроенный сервер
-        if: inputs.embedded != false
+        if: github.event_name != 'workflow_dispatch' || inputs.embedded
         run: node ../../scripts/android-embed-node.mjs --check
 
       - name: Окружение
@@ -314,7 +326,15 @@ jobs:
         run: node ../../scripts/fetch-nodejs-mobile.mjs
 
       - name: Встроить сервер в проект
-        run: node ../../scripts/android-embed-node.mjs
+        if: github.event_name != 'workflow_dispatch' || inputs.embedded
+        run: |
+          node ../../scripts/android-embed-node.mjs
+          # Проверка настроек в одном месте: если Node не попал в APK, это должно
+          # быть видно строкой в логе, а не догадкой по размеру файла.
+          grep -E '^reactNativeArchitectures=' android/gradle.properties \
+            | while IFS= read -r line; do echo "::warning title=embedded::$line"; done
+          ls -1 apps/mobile/nodejs/android/libnode/bin 2>/dev/null | tr '\n' ' ' \
+            | while IFS= read -r line; do echo "::warning title=embedded::libnode ABI: $line"; done
 
       - name: Сборка APK
         run: |
