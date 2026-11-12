@@ -32,17 +32,50 @@ async function freePort() {
   return port;
 }
 
-async function waitFor(url, attempts = 40) {
-  for (let i = 0; i < attempts; i += 1) {
+async function waitFor(url, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = 'нет ответа';
+  while (Date.now() < deadline) {
     try {
       const response = await fetch(url);
       if (response.ok) return response;
-    } catch {
-      /* сервер ещё не слушает */
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error?.message ?? String(error);
     }
-    await sleep(100);
+    await sleep(50);
   }
-  throw new Error(`сервер не ответил: ${url}`);
+  throw new Error(`сервер не ответил за ${timeoutMs} мс: ${url} (${lastError})`);
+}
+
+/**
+ * Ждёт нужную фазу в `state.json`.
+ *
+ * Фиксированные `sleep` в таких тестах — источник «морганий» на медленном
+ * раннере: процесс успевает, а таймер нет. Ждём по состоянию, а не по времени.
+ */
+async function waitForState(dir, phase, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    try {
+      last = JSON.parse(readFileSync(path.join(dir, 'state.json'), 'utf8'));
+      if (last.phase === phase) return last;
+    } catch {
+      /* файла ещё нет */
+    }
+    await sleep(50);
+  }
+  throw new Error(`state.json не дошёл до ${phase}: ${JSON.stringify(last)}`);
+}
+
+/** Ждёт выхода процесса (или таймаута) и возвращает код/строку 'timeout'. */
+async function waitForExit(child, timeoutMs = 15000) {
+  if (child.exitCode !== null) return child.exitCode;
+  return Promise.race([
+    new Promise((resolve) => child.once('exit', (code) => resolve(code))),
+    sleep(timeoutMs).then(() => 'timeout'),
+  ]);
 }
 
 function start(dir, port, extra = []) {
@@ -71,11 +104,10 @@ test('встроенный сервер поднимается, отдаёт hea
     assert.equal(state.url, `http://127.0.0.1:${port}`);
   } finally {
     child.kill('SIGTERM');
-    await sleep(200);
+    await waitForExit(child);
     // после остановки состояние должно стать stopped — иначе приложение будет
     // считать сервер живым и показывать нерабочую ссылку
-    const state = JSON.parse(readFileSync(path.join(dir, 'state.json'), 'utf8'));
-    assert.equal(state.phase, 'stopped');
+    const state = await waitForState(dir, 'stopped');
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -118,7 +150,7 @@ test('загрузка файла, раздача с Range и удаление',
     assert.equal(existsSync(path.join(dir, 'library', 'demo.mp3')), false);
   } finally {
     child.kill('SIGTERM');
-    await sleep(200);
+    await waitForExit(child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -142,7 +174,7 @@ test('токен закрывает доступ, кроме health', async () =
     assert.equal((await fetch(`http://127.0.0.1:${port}/api/files?token=secret-token`)).status, 200);
   } finally {
     child.kill('SIGTERM');
-    await sleep(200);
+    await waitForExit(child);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -151,7 +183,7 @@ test('POST /api/shutdown останавливает сервер и пишет s
   const dir = mkdtempSync(path.join(tmpdir(), 'vision-emb-stop-'));
   const port = await freePort();
   const { child } = start(dir, port);
-  const exited = new Promise((resolve) => child.on('exit', resolve));
+
   try {
     await waitFor(`http://127.0.0.1:${port}/api/health`);
     const response = await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: 'POST' });
@@ -159,7 +191,7 @@ test('POST /api/shutdown останавливает сервер и пишет s
     assert.equal((await response.json()).stop, true);
 
     // процесс должен реально завершиться, иначе порт останется занятым
-    const code = await Promise.race([exited, sleep(3000).then(() => 'timeout')]);
+    const code = await waitForExit(child, 10000);
     assert.notEqual(code, 'timeout', 'сервер не завершился после /api/shutdown');
     assert.equal(JSON.parse(readFileSync(path.join(dir, 'state.json'), 'utf8')).phase, 'stopped');
   } finally {
@@ -180,8 +212,7 @@ test('занятый порт даёт понятную ошибку, а не м
   const second = start(dirB, port);
   try {
     await waitFor(`http://127.0.0.1:${port}/api/health`);
-    await sleep(700);
-    const state = JSON.parse(readFileSync(path.join(dirB, 'state.json'), 'utf8'));
+    const state = await waitForState(dirB, 'failed');
     assert.equal(state.phase, 'failed');
     assert.match(state.error, /EADDRINUSE|address already in use/i);
   } finally {
@@ -191,7 +222,7 @@ test('занятый порт даёт понятную ошибку, а не м
     } catch {
       /* второй процесс уже завершился сам */
     }
-    await sleep(200);
+    await Promise.all([waitForExit(first.child), waitForExit(second.child)]);
     rmSync(dirA, { recursive: true, force: true });
     rmSync(dirB, { recursive: true, force: true });
   }
