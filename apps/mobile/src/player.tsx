@@ -5,6 +5,7 @@ import { Audio, type AVPlaybackStatus } from 'expo-av';
 import type { Track } from '@vision/shared';
 import { api } from './api';
 import { useDownloads } from './downloads';
+import { useLocalLibrary } from './local';
 import { shuffleIndices, stepPosition, type Repeat } from './lib/queue';
 
 /**
@@ -41,6 +42,7 @@ const PlayerContext = createContext<PlayerValue | null>(null);
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const downloads = useDownloads();
+  const local = useLocalLibrary();
 
   const [queue, setQueue] = useState<Track[]>([]);
   const [order, setOrder] = useState<number[]>([]);
@@ -140,8 +142,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       await unload();
       if (cancelled) return;
 
-      const local = downloads.localUri(current.checksum ?? current.id);
-      let uri = local;
+      /*
+       * Порядок источников: файл на телефоне → офлайн-копия с сервера → поток с
+       * сервера. Первые два работают без сети, и для музыки «на телефоне» сеть
+       * не нужна вовсе.
+       */
+      let uri = local.uriOf(current.checksum ?? current.id) ?? downloads.localUri(current.checksum ?? current.id);
       if (!uri) {
         const media = await api.media([current.id]).catch(() => null);
         const item = media?.items?.[current.id];
@@ -149,7 +155,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       if (!uri) {
         setBuffering(false);
-        setError('Сервер не выдал ссылку на трек');
+        setError('Файл не найден на телефоне');
         return;
       }
 
@@ -179,12 +185,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id]);
 
-  /* ---- отчёт о прослушивании: питает «Продолжить слушать» в вебе ---- */
+  /* ---- отчёт о прослушивании ---- */
+  /*
+   * Служит двум вещам: серверу («Продолжить слушать» в вебе) и статистике на
+   * телефоне. Наружу уходит позиция, а в локальную статистику — **приращение**
+   * за интервал: считать всю длительность нельзя, иначе трек, включённый на
+   * секунду, попадёт в «прослушано» целиком.
+   */
   useEffect(() => {
     if (!current || !playing) return;
     const id = current.id;
+    let reported = positionRef.current;
     const report = () => {
       const seconds = positionRef.current;
+      const delta = Math.max(0, seconds - reported);
+      reported = seconds;
+      if (delta >= 1) local.logPlay(id, Math.round(delta));
       if (seconds < 3) return;
       api.listen(id, { position: seconds, duration: duration || current.duration || undefined }).catch(() => {});
     };

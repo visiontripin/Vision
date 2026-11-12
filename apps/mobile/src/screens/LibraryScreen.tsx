@@ -1,127 +1,161 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, SafeAreaView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, FlatList, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { formatDuration, type Playlist, type Track } from '@vision/shared';
-import { api } from '../api';
 import { useCovers } from '../useCovers';
-import { filterTracks, useLibrary } from '../useLibrary';
+import { filterTracks } from '../useLibrary';
 import { useDownloads } from '../downloads';
+import { useLocalLibrary } from '../local';
 import { usePlayer } from '../player';
-import { pickDownloadSource } from '../lib/media';
 import { formatBytes } from '../lib/format';
 import { colors, radius } from '../theme';
 import { TrackRow } from '../components/TrackRow';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { NowPlaying } from './NowPlaying';
 import { SettingsScreen } from './SettingsScreen';
-import { UploadScreen } from './UploadScreen';
+import { LibrarySourceSheet } from './LibrarySourceSheet';
+import { LinkImportScreen } from './LinkImportScreen';
 
 type Tab = 'tracks' | 'playlists';
 
 /**
- * Главный экран: библиотека, поиск, плейлисты, мини-плеер.
- * Данные тянем с домашнего сервера, скачанные треки играют из локальных файлов.
+ * Главный экран: музыка с этого телефона.
+ *
+ * Порядок в списке источников намеренно такой: сначала файлы устройства, потом
+ * офлайн-копии, и только затем — необязательный сервер. Приложение должно
+ * работать сразу после установки: «＋ Файлы» на пустом экране — это первый
+ * осмысленный шаг, а не ввод адреса сервера.
  */
-export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
-  const { tracks, playlists, loading, error, reload } = useLibrary();
+export function LibraryScreen({ onServerOpen, onLogout }: { onServerOpen: () => void; onLogout: () => void }) {
+  const local = useLocalLibrary();
   const downloads = useDownloads();
   const player = usePlayer();
 
   const [tab, setTab] = useState<Tab>('tracks');
   const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playlist, setPlaylist] = useState<{ info: Playlist; tracks: Track[] } | null>(null);
-  const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
 
+  /*
+   * Источник списка: файлы устройства. Офлайн-копии серверных треков сюда не
+   * подмешиваются — у них нет названия и исполнителя без сервера, и они уже
+   * играют из раздела «Сервер» в настройках.
+   */
+  const tracks = local.tracks;
   const visibleTracks = useMemo(() => (playlist ? playlist.tracks : filterTracks(tracks, query)), [tracks, query, playlist]);
   const covers = useCovers(visibleTracks.map((track) => track.id));
 
   const currentCover = player.current ? covers[player.current.id] : undefined;
 
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    await reload();
-    setRefreshing(false);
-  }, [reload]);
-
-  /* ---- скачивание ---- */
-  const downloadTrack = useCallback(
-    async (track: Track) => {
-      try {
-        const media = await api.media([track.id]);
-        const item = media.items[track.id];
-        const source = pickDownloadSource(item?.streams, track.mime, item?.stream);
-        if (!source) throw new Error('Сервер не выдал ссылку на файл');
-        await downloads.download(track, source.url, source.mime);
-      } catch (cause) {
-        Alert.alert('Не удалось скачать', cause instanceof Error ? cause.message : 'Попробуйте ещё раз');
-      }
-    },
-    [downloads]
-  );
-
-  const toggleDownload = useCallback(
-    (track: Track) => {
-      if (downloads.has(track.checksum ?? track.id)) {
-        Alert.alert('Удалить офлайн-копию?', `${track.title} — ${track.artist}`, [
-          { text: 'Отмена', style: 'cancel' },
-          { text: 'Удалить', style: 'destructive', onPress: () => void downloads.remove(track.checksum ?? track.id) },
-        ]);
-        return;
-      }
-      void downloadTrack(track);
-    },
-    [downloads, downloadTrack]
-  );
-
-  const downloadPlaylist = useCallback(async () => {
-    if (!playlist) return;
-    const list = playlist.tracks;
-    const media = await api.media(list.map((track) => track.id)).catch(() => null);
-    const items = list
-      .map((track) => {
-        const source = pickDownloadSource(media?.items[track.id]?.streams, track.mime, media?.items[track.id]?.stream);
-        return source ? { track, url: source.url, mime: source.mime } : null;
-      })
-      .filter((item): item is { track: Track; url: string; mime: string } => Boolean(item));
-
-    if (!items.length) {
-      Alert.alert('Нечего скачивать', 'Сервер не выдал ссылки на файлы.');
-      return;
-    }
-
-    setBatch({ done: 0, total: items.length });
+  /* ---- импорт файлов ---- */
+  const importFiles = useCallback(async () => {
+    setImporting(true);
     try {
-      await downloads.downloadMany(items, (done, total) => setBatch({ done, total }));
+      const result = await local.importFiles();
+      if (result.error) {
+        Alert.alert('Не удалось выбрать файлы', result.error);
+      } else if (result.total === 0) {
+        // Отмена выбора — не ошибка, ничего не говорим.
+      } else if (result.added === 0) {
+        Alert.alert('Новых файлов нет', 'Эти треки уже есть в библиотеке.');
+      } else {
+        Alert.alert('Готово', `Добавлено треков: ${result.added}.`);
+      }
     } finally {
-      setBatch(null);
+      setImporting(false);
     }
-  }, [playlist, downloads]);
+  }, [local]);
 
-  const openPlaylist = useCallback(async (info: Playlist) => {
-    try {
-      const playlistTracks = await api.playlistTracks(info.id);
-      setPlaylist({ info, tracks: playlistTracks });
-    } catch (cause) {
-      Alert.alert('Не удалось открыть плейлист', cause instanceof Error ? cause.message : '');
-    }
-  }, []);
+  const removeTrack = useCallback(
+    (track: Track) => {
+      Alert.alert('Убрать из библиотеки?', `${track.title} — ${track.artist}\n\nФайл на телефоне останется.`, [
+        { text: 'Отмена', style: 'cancel' },
+        { text: 'Убрать', style: 'destructive', onPress: () => void local.removeTrack(track.id) },
+      ]);
+    },
+    [local]
+  );
+
+  /**
+   * Действия с треком. Меню — системное (`Alert`), а не самодельный sheet:
+   * встроенное меню React Native на Android рисуется поверх всего, и его не
+   * срезает `overflow` списка — ровно та ошибка, что была в вебе.
+   */
+  const trackActions = useCallback(
+    (track: Track) => {
+      const inPlaylist = playlist !== null;
+      const buttons: { text: string; style?: 'cancel' | 'destructive' | 'default'; onPress?: () => void }[] = [
+        { text: 'Закрыть', style: 'cancel' },
+        {
+          text: 'Играть следующим',
+          onPress: () => {
+            player.playTrack(track, visibleTracks);
+            player.next();
+          },
+        },
+        {
+          text: 'В плейлист…',
+          onPress: () => {
+            const create = () => {
+              void local.createPlaylist(track.title).then((id) => local.addToPlaylist(id, track.id));
+            };
+            if (!local.playlists.length) {
+              create();
+              return;
+            }
+            Alert.alert('Добавить в плейлист', track.title, [
+              { text: 'Отмена', style: 'cancel' },
+              ...local.playlists.slice(0, 4).map((item) => ({
+                text: item.name,
+                onPress: () => void local.addToPlaylist(item.id, track.id),
+              })),
+              { text: '＋ Новый', onPress: create },
+            ]);
+          },
+        },
+        ...(inPlaylist
+          ? [
+              {
+                text: 'Убрать из плейлиста',
+                onPress: () => {
+                  if (!playlist) return;
+                  void local.removeFromPlaylist(playlist.info.id, track.id).then(() => {
+                    setPlaylist({ info: playlist.info, tracks: local.tracksOfPlaylist(playlist.info.id) });
+                  });
+                },
+              },
+            ]
+          : []),
+        { text: 'Убрать из библиотеки', style: 'destructive' as const, onPress: () => removeTrack(track) },
+      ];
+      Alert.alert(track.title, `${track.artist}${track.album ? ` · ${track.album}` : ''}`, buttons);
+    },
+    [local, player, playlist, removeTrack, visibleTracks]
+  );
+
+  const openPlaylist = useCallback(
+    (info: Playlist) => {
+      setPlaylist({ info, tracks: local.tracksOfPlaylist(info.id) });
+    },
+    [local]
+  );
 
   /* ---- рендер ---- */
   const header = (
     <View style={styles.header}>
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>{playlist ? playlist.info.name : 'Библиотека'}</Text>
+          <Text style={styles.headerTitle}>{playlist ? playlist.info.name : 'Моя музыка'}</Text>
           <Text style={styles.headerSub}>
             {playlist
               ? `${playlist.tracks.length} треков · ${formatDuration(playlist.info.duration || 0)}`
-              : `${tracks.length} треков · офлайн ${downloads.count} (${formatBytes(downloads.totalBytes)})`}
+              : `${tracks.length} треков · ${formatBytes(local.bytes)}${downloads.count ? ` · офлайн ${downloads.count}` : ''}`}
           </Text>
         </View>
 
@@ -131,8 +165,12 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
           </Pressable>
         ) : (
           <View style={styles.headerActions}>
-            <Pressable onPress={() => setUploadOpen(true)} style={styles.iconButton} accessibilityLabel="Загрузить с телефона">
-              <Text style={styles.iconText}>＋</Text>
+            <Pressable
+              onPress={() => void importFiles()}
+              style={[styles.iconButton, styles.iconButtonAccent]}
+              accessibilityLabel="Добавить файлы с телефона"
+            >
+              <Text style={[styles.iconText, styles.iconTextAccent]}>{importing ? '…' : '＋'}</Text>
             </Pressable>
             <Pressable onPress={() => setSettingsOpen(true)} style={styles.iconButton} accessibilityLabel="Настройки">
               <Text style={styles.iconText}>⚙</Text>
@@ -142,19 +180,12 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
       </View>
 
       {playlist ? (
-        <View style={styles.playlistActions}>
-          <Pressable
-            style={styles.primaryButton}
-            onPress={() => playlist.tracks.length && player.playTrack(playlist.tracks[0], playlist.tracks)}
-          >
-            <Text style={styles.primaryButtonText}>Играть</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryButton} onPress={() => void downloadPlaylist()} disabled={Boolean(batch)}>
-            <Text style={styles.secondaryButtonText}>
-              {batch ? `Скачиваю ${batch.done}/${batch.total}` : 'Скачать плейлист'}
-            </Text>
-          </Pressable>
-        </View>
+        <Pressable
+          style={styles.primaryButton}
+          onPress={() => playlist.tracks.length && player.playTrack(playlist.tracks[0], playlist.tracks)}
+        >
+          <Text style={styles.primaryButtonText}>Играть</Text>
+        </Pressable>
       ) : (
         <>
           <TextInput
@@ -176,13 +207,28 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
                 style={[styles.tab, tab === value && styles.tabActive]}
               >
                 <Text style={[styles.tabText, tab === value && styles.tabTextActive]}>
-                  {value === 'tracks' ? 'Треки' : `Плейлисты${playlists.length ? ` (${playlists.length})` : ''}`}
+                  {value === 'tracks' ? 'Треки' : `Плейлисты${local.playlists.length ? ` (${local.playlists.length})` : ''}`}
                 </Text>
               </Pressable>
             ))}
           </View>
         </>
       )}
+    </View>
+  );
+
+  const empty = (
+    <View style={styles.emptyWrap}>
+      <Text style={styles.emptyTitle}>Здесь будет ваша музыка</Text>
+      <Text style={styles.emptyText}>
+        Добавьте файлы с телефона — они сразу появятся в библиотеке и будут играть без интернета.
+      </Text>
+      <Pressable style={styles.primaryButton} onPress={() => void importFiles()}>
+        <Text style={styles.primaryButtonText}>{importing ? 'Открываю…' : '＋ Добавить файлы'}</Text>
+      </Pressable>
+      <Pressable style={styles.ghostButton} onPress={() => setSourceOpen(true)}>
+        <Text style={styles.ghostButtonText}>Другие способы добавить музыку</Text>
+      </Pressable>
     </View>
   );
 
@@ -196,59 +242,30 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
           keyExtractor={(item) => item.id}
           ListHeaderComponent={header}
           contentContainerStyle={{ paddingBottom: 120 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
-          renderItem={({ item }) => {
-            const progress = downloads.progress[item.id];
-            return (
-              <TrackRow
-                track={item}
-                cover={covers[item.id]}
-                active={player.current?.id === item.id}
-                playing={player.playing}
-                downloaded={downloads.has(item.checksum ?? item.id)}
-                progress={progress}
-                onPress={() => {
-                  if (item.available === false && !downloads.has(item.checksum ?? item.id)) {
-                    Alert.alert(
-                      'Нет источника',
-                      'Ни одно устройство сейчас не раздаёт этот файл. Включите Termux или ПК с копией и обновите библиотеку.'
-                    );
-                    return;
-                  }
-                  player.playTrack(item, visibleTracks);
-                }}
-                onLongPress={() =>
-                  Alert.alert(item.title, `${item.artist}${item.genre ? ` · ${item.genre}` : ''}`, [
-                    { text: 'Закрыть', style: 'cancel' },
-                    {
-                      text: downloads.has(item.checksum ?? item.id) ? 'Удалить копию' : 'Скачать офлайн',
-                      onPress: () => toggleDownload(item),
-                    },
-                  ])
-                }
-                onToggleDownload={() => toggleDownload(item)}
-              />
-            );
-          }}
+          renderItem={({ item }) => (
+            <TrackRow
+              track={item}
+              cover={covers[item.id]}
+              active={player.current?.id === item.id}
+              playing={player.playing}
+              downloaded
+              onPress={() => player.playTrack(item, visibleTracks)}
+              onLongPress={() => trackActions(item)}
+              onToggleDownload={() => trackActions(item)}
+            />
+          )}
           ListEmptyComponent={
-            loading ? (
-              <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
-            ) : (
-              <Text style={styles.empty}>
-                {error ?? 'Библиотека пуста — загрузите треки кнопкой «＋» или через веб-версию.'}
-              </Text>
-            )
+            local.ready ? empty : <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
           }
         />
       ) : (
         <FlatList
-          data={playlists}
+          data={local.playlists}
           keyExtractor={(item) => item.id}
           ListHeaderComponent={header}
           contentContainerStyle={{ paddingBottom: 120 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
           renderItem={({ item }) => (
-            <Pressable style={styles.playlistRow} onPress={() => void openPlaylist(item)}>
+            <Pressable style={styles.playlistRow} onPress={() => openPlaylist(item)}>
               <View style={styles.playlistIcon}>
                 <Text style={styles.playlistIconText}>≡</Text>
               </View>
@@ -265,7 +282,7 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
           )}
           ListEmptyComponent={
             <Text style={styles.empty}>
-              {loading ? 'Загружаем…' : 'Плейлистов пока нет — создайте их в веб-версии.'}
+              Плейлистов пока нет. Долгое нажатие на треке → «В плейлист…».
             </Text>
           }
         />
@@ -279,7 +296,7 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
         visible={nowPlayingOpen}
         cover={currentCover}
         onClose={() => setNowPlayingOpen(false)}
-        onDownload={() => player.current && toggleDownload(player.current)}
+        onDownload={() => undefined}
         queueLength={player.queue.length}
         onOpenQueue={() => {
           setNowPlayingOpen(false);
@@ -287,17 +304,41 @@ export function LibraryScreen({ onLogout }: { onLogout: () => void }) {
         }}
       />
 
-      <UploadScreen
-        visible={uploadOpen}
-        onClose={() => setUploadOpen(false)}
-        onUploaded={reload}
+      <LinkImportScreen
+        visible={linkOpen}
+        onClose={() => setLinkOpen(false)}
+        onAdd={async ({ url, title }) => {
+          const id = await local.addFromLink({ url, title });
+          if (!id) throw new Error('Не удалось добавить трек');
+        }}
+      />
+
+      <LibrarySourceSheet
+        visible={sourceOpen}
+        onClose={() => setSourceOpen(false)}
+        onPickFiles={() => {
+          setSourceOpen(false);
+          void importFiles();
+        }}
+        onPickLink={() => {
+          setSourceOpen(false);
+          setLinkOpen(true);
+        }}
+        onOpenServer={() => {
+          setSourceOpen(false);
+          onServerOpen();
+        }}
       />
 
       <SettingsScreen
         visible={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onLogout={onLogout}
-        onReload={reload}
+        onOpenServer={onServerOpen}
+        onImport={() => {
+          setSettingsOpen(false);
+          void importFiles();
+        }}
       />
     </SafeAreaView>
   );
@@ -318,7 +359,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconButtonAccent: { backgroundColor: colors.accent },
   iconText: { color: colors.muted, fontSize: 17 },
+  iconTextAccent: { color: colors.accentInk, fontSize: 20, fontWeight: '800' },
   search: {
     height: 44,
     borderRadius: radius.md,
@@ -334,27 +377,18 @@ const styles = StyleSheet.create({
   tabActive: { backgroundColor: colors.accent },
   tabText: { color: colors.muted, fontSize: 13, fontWeight: '600' },
   tabTextActive: { color: colors.accentInk },
-  playlistActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   primaryButton: {
-    flex: 1,
-    height: 44,
+    height: 46,
     borderRadius: radius.md,
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 14,
+    paddingHorizontal: 20,
   },
   primaryButtonText: { color: colors.accentInk, fontWeight: '800', fontSize: 14 },
-  secondaryButton: {
-    flex: 1,
-    height: 44,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.panel,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondaryButtonText: { color: colors.text, fontWeight: '600', fontSize: 13 },
+  ghostButton: { marginTop: 12, paddingVertical: 10, alignItems: 'center' },
+  ghostButtonText: { color: colors.muted, fontSize: 13, fontWeight: '600' },
   playlistRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12 },
   playlistIcon: {
     width: 46,
@@ -369,5 +403,8 @@ const styles = StyleSheet.create({
   playlistMeta: { color: colors.muted, fontSize: 12.5, marginTop: 2 },
   chevron: { color: colors.dim, fontSize: 20 },
   empty: { color: colors.muted, fontSize: 13.5, textAlign: 'center', marginTop: 40, paddingHorizontal: 32, lineHeight: 20 },
+  emptyWrap: { paddingHorizontal: 28, paddingTop: 24, alignItems: 'stretch' },
+  emptyTitle: { color: colors.text, fontSize: 20, fontWeight: '800', textAlign: 'center' },
+  emptyText: { color: colors.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 20, marginTop: 8 },
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 });
