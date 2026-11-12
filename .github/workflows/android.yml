@@ -164,7 +164,12 @@ jobs:
           # соберётся, но кнопка «Запустить сервер» скажет «нет рантайма» — лучше
           # узнать это в CI, чем на телефоне.
           if unzip -l "$APK" | grep -q "lib/arm64-v8a/libvisionnode.so"; then
-            for abi in arm64-v8a armeabi-v7a x86_64; do
+            # ABI берём из проекта: по умолчанию собирается только arm64-v8a
+            # (каждый ABI добавляет ~60 МБ libnode.so)
+            ABIS=$(grep -E '^reactNativeArchitectures=' android/gradle.properties | cut -d= -f2 | tr ',' ' ')
+            [ -n "$ABIS" ] || { echo "::error title=apk::в gradle.properties нет reactNativeArchitectures"; exit 1; }
+            echo "::warning title=apk::ABI в сборке: $ABIS"
+            for abi in $ABIS; do
               unzip -l "$APK" | grep -q "lib/$abi/libnode.so" \
                 || { echo "::error title=apk::нет libnode.so для $abi"; exit 1; }
             done

@@ -63,6 +63,19 @@ test('сборка с Node идёт в обоих workflow одинаково', 
   }
 });
 
+test('проверка APK не хардкодит три ABI', () => {
+  // Собирается один ABI по умолчанию — проверка должна брать список из проекта,
+  // иначе релиз падает на «нет libnode.so для armeabi-v7a».
+  for (const file of [android, embedded]) {
+    assert.equal(
+      /for abi in arm64-v8a armeabi-v7a x86_64/.test(file),
+      false,
+      'список ABI захардкожен в проверке APK',
+    );
+    assert.match(file, /ABIS=\$\(grep -E '\^reactNativeArchitectures=' android\/gradle\.properties/);
+  }
+});
+
 test('ABI по умолчанию — один, чтобы APK не раздувался', () => {
   const script = read('scripts/android-embed-node.mjs');
   assert.match(script, /process\.env\.VISION_ABIS \|\| 'arm64-v8a'/);
