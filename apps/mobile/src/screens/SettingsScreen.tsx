@@ -1,60 +1,38 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
-  Alert, FlatList, Modal, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View,
+  Alert, FlatList, Modal, Pressable, SafeAreaView, StyleSheet, Text, View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api, apiBase, setApiBase } from '../api';
-import { KEYS, normalizeBase, saveBase } from '../config';
+import { api } from '../api';
+import { KEYS } from '../config';
 import { useDownloads } from '../downloads';
+import { useLocalLibrary } from '../local';
 import { formatBytes } from '../lib/format';
 import { colors, radius } from '../theme';
 
-/** Настройки: адрес сервера, выход, офлайн-копии и место на устройстве. */
+/** Настройки: источники музыки, офлайн-копии и отключение от сервера. */
 export function SettingsScreen({
   visible,
   onClose,
   onLogout,
-  onReload,
+  onOpenServer,
+  onImport,
 }: {
   visible: boolean;
   onClose: () => void;
   onLogout: () => void;
-  onReload: () => Promise<void> | void;
+  /** необязательное подключение к домашнему серверу */
+  onOpenServer: () => void;
+  /** добавить файлы с телефона */
+  onImport: () => void;
 }) {
   const downloads = useDownloads();
-  const [base, setBase] = useState(apiBase());
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (visible) setBase(apiBase());
-  }, [visible]);
-
-  const save = async () => {
-    const normalized = normalizeBase(base);
-    if (!normalized) {
-      Alert.alert('Адрес пустой', 'Например: http://192.168.1.10:4000');
-      return;
-    }
-    setBusy(true);
-    try {
-      setApiBase(normalized);
-      await saveBase(normalized);
-      await api.me();
-      await onReload();
-      Alert.alert('Готово', `Сервер: ${normalized}`);
-      onClose();
-    } catch (cause) {
-      Alert.alert('Сервер не ответил', cause instanceof Error ? cause.message : 'Проверьте адрес и Wi-Fi');
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  const local = useLocalLibrary();
   const logout = () => {
-    Alert.alert('Выйти из аккаунта?', 'Офлайн-копии останутся на устройстве.', [
+    Alert.alert('Отключиться от сервера?', 'Музыка на телефоне останется на месте.', [
       { text: 'Отмена', style: 'cancel' },
       {
-        text: 'Выйти',
+        text: 'Отключиться',
         style: 'destructive',
         onPress: async () => {
           api.setToken(null);
@@ -89,26 +67,21 @@ export function SettingsScreen({
           contentContainerStyle={{ paddingBottom: 32 }}
           ListHeaderComponent={
             <View>
-              <Text style={styles.label}>Адрес сервера</Text>
-              <TextInput
-                style={styles.input}
-                value={base}
-                onChangeText={setBase}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                placeholder="http://192.168.1.10:4000"
-                placeholderTextColor={colors.dim}
-              />
-              <Text style={styles.hint}>Домашняя сеть или Tailscale. Порт по умолчанию 4000.</Text>
-
-              <Pressable style={[styles.primary, busy && { opacity: 0.5 }]} onPress={() => void save()} disabled={busy}>
-                <Text style={styles.primaryText}>{busy ? 'Проверяем…' : 'Сохранить и проверить'}</Text>
+              <Text style={styles.label}>Источники музыки</Text>
+              <Pressable style={styles.secondary} onPress={() => onImport()}>
+                <Text style={styles.secondaryText}>＋ Добавить файлы с телефона</Text>
               </Pressable>
+              <Pressable style={styles.secondary} onPress={onOpenServer}>
+                <Text style={styles.secondaryText}>Домашний сервер (необязательно)</Text>
+              </Pressable>
+              <Text style={styles.hint}>
+                Файлы с телефона играют всегда и без интернета. Сервер нужен, только если у вас
+                есть своя библиотека на компьютере.
+              </Text>
 
               <View style={styles.sectionRow}>
                 <Text style={styles.label}>
-                  Офлайн-копии · {downloads.count} · {formatBytes(downloads.totalBytes)}
+                  Офлайн-копии с сервера · {downloads.count} · {formatBytes(downloads.totalBytes)}
                 </Text>
                 {downloads.count > 0 && (
                   <Pressable onPress={clearDownloads}>
@@ -119,7 +92,8 @@ export function SettingsScreen({
 
               {downloads.count === 0 && (
                 <Text style={styles.hint}>
-                  Скачанные треки играют без сети. Кнопка ↓ есть в списке треков и в плеере.
+                  Файлы на телефоне уже играют без сети: {local.tracks.length} треков ·{' '}
+                  {formatBytes(local.bytes)}.
                 </Text>
               )}
             </View>
@@ -142,11 +116,11 @@ export function SettingsScreen({
           ListFooterComponent={
             <View style={styles.footer}>
               <Pressable style={styles.dangerButton} onPress={logout}>
-                <Text style={styles.dangerText}>Выйти из аккаунта</Text>
+                <Text style={styles.dangerText}>Выйти с сервера</Text>
               </Pressable>
               <Text style={styles.hint}>
-                Vision Audio · мобильный клиент. Сервер хранит библиотеку, телефон — только
-                скачанные копии.
+                Vision Audio · ваша музыка на этом телефоне. Библиотека и статистика
+                хранятся на устройстве и никуда не отправляются.
               </Text>
             </View>
           }
@@ -177,17 +151,19 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 20,
   },
-  input: {
+  hint: { color: colors.dim, fontSize: 12, lineHeight: 17, marginTop: 8, paddingHorizontal: 20 },
+  secondary: {
     marginHorizontal: 20,
-    height: 48,
+    marginTop: 8,
+    height: 46,
     borderRadius: radius.md,
-    paddingHorizontal: 14,
-    backgroundColor: colors.panel,
-    color: colors.text,
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: colors.panel,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  hint: { color: colors.dim, fontSize: 12, lineHeight: 17, marginTop: 8, paddingHorizontal: 20 },
+  secondaryText: { color: colors.text, fontWeight: '600', fontSize: 13.5 },
   primary: {
     marginHorizontal: 20,
     marginTop: 14,
