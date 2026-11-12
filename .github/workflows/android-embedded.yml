@@ -157,7 +157,9 @@ jobs:
           FAIL=0
           # ABI берём из собранного проекта, а не хардкодом: по умолчанию в APK
           # только arm64-v8a (каждый ABI добавляет ~60 МБ libnode.so).
-          ABIS=$(grep -E '^reactNativeArchitectures=' apps/mobile/android/gradle.properties | cut -d= -f2 | tr ',' ' ')
+          # рабочий каталог job-а — apps/mobile
+          ABIS=$(grep -E '^reactNativeArchitectures=' android/gradle.properties | cut -d= -f2 | tr ',' ' ')
+          [ -n "$ABIS" ] || { echo "::error title=apk::в gradle.properties нет reactNativeArchitectures"; exit 1; }
           echo "::warning title=apk::ABI: $ABIS"
           for abi in $ABIS; do
             if unzip -l "$APK" | grep -q "lib/$abi/libvisionnode.so"; then
