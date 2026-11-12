@@ -38,6 +38,10 @@ import {
 } from './comments.js';
 import { listShareComments, countShareComments } from './db.js';
 import { ImportError, resolveSoundCloudLink } from './external.js';
+import {
+  MAX_LIBRARY_BYTES, getLibraryFile, libraryStats, listDevices, removeLibraryTrack,
+  saveLibraryFile, snapshot as librarySnapshot, streamLibraryFile, touchDevice, upsertTracks,
+} from './library.js';
 import { RuleError, buildSmartQuery, describeRules, normalizeRules } from './smart.js';
 import { buildSections, emptyHint, greeting, SECTION_LIMIT, daySeed } from './personal.js';
 import {
@@ -849,6 +853,82 @@ async function handleApi(req, res, url) {
     const sig = url.searchParams.get('sig');
     const signed = Boolean(target && target.kinds.some((kind) => verifyMedia(target.id, kind, exp, sig)));
     if (!signed) return fail(res, 401, 'unauthorized', 'Требуется вход.');
+  }
+
+  /*
+   * ---- общая библиотека между устройствами ----
+   *
+   * Обмен идёт через сервер, а не напрямую между телефонами: в мобильной сети и
+   * за NAT входящее соединение к устройству не установить. Подробности —
+   * `services/api/src/library.js` и `docs/SYNC.md`.
+   */
+  if (pathname === '/api/library' && (method === 'POST' || method === 'GET')) {
+    if (method === 'GET') return json(res, 200, librarySnapshot());
+
+    const body = await readJson(req, 1024 * 1024).catch(() => null);
+    if (!body || typeof body !== 'object') return fail(res, 400, 'invalid_json', 'Ожидался JSON.');
+    const device = touchDevice({
+      id: body.device?.id,
+      name: body.device?.name,
+      baseUrl: body.device?.baseUrl ?? null,
+    });
+    if (!device) return fail(res, 400, 'invalid_device', 'Нужен идентификатор устройства.');
+    const result = upsertTracks(device, body.tracks);
+    return json(res, 200, {
+      ...librarySnapshot(),
+      accepted: result.accepted,
+      rejected: result.rejected,
+      files: libraryStats(),
+    });
+  }
+
+  const libraryFile = /^\/api\/library\/([^/]+)\/file$/.exec(pathname);
+  if (libraryFile) {
+    const id = decodeURIComponent(libraryFile[1]);
+
+    if (method === 'GET' || method === 'HEAD') {
+      const file = getLibraryFile(id);
+      if (!file) return fail(res, 404, 'no_file', 'Файл ещё не загружен в общую библиотеку.');
+      return streamLibraryFile(req, res, file);
+    }
+
+    if (method === 'PUT' || method === 'POST') {
+      /*
+       * Принимаем два вида тела, как и загрузка треков:
+       * - `application/octet-stream` / `audio/*` — сам файл;
+       * - `multipart/form-data` — так отправляет React Native (только он умеет
+       *   отдать файл с диска без чтения в память).
+       */
+      const contentType = String(req.headers['content-type'] || '');
+      const mime = contentType.startsWith('audio/') ? contentType.split(';')[0] : 'audio/mpeg';
+      // multipart: байты приходят из первой части, а не из `req` целиком
+      const part = contentType.startsWith('multipart/form-data') ? firstPartStream(req, contentType) : null;
+      const source = part ? part.stream : req;
+      const declared = Number(req.headers['content-length'] || 0);
+      if (declared > MAX_LIBRARY_BYTES) return fail(res, 413, 'too_large', 'Файл больше 500 МБ.');
+
+      try {
+        const saved = await saveLibraryFile(id, source, { mime });
+        // Файл появился — трек становится скачиваемым для всех устройств.
+        touchDevice({ id: String(req.headers['x-vision-device'] || 'unknown'), name: 'Устройство' });
+        return json(res, 200, { ok: true, id, bytes: saved.bytes, checksum: saved.checksum });
+      } catch (cause) {
+        if (cause?.code === 'too_large') return fail(res, 413, 'too_large', 'Файл больше 500 МБ.');
+        if (cause?.code === 'empty_file') return fail(res, 400, 'empty_file', 'Пустое тело запроса.');
+        log('warn', 'library upload failed', { id, error: cause?.message });
+        return fail(res, 400, 'upload_failed', 'Не удалось сохранить файл.');
+      }
+    }
+
+    if (method === 'DELETE') {
+      removeLibraryTrack(id);
+      res.writeHead(204);
+      return res.end();
+    }
+  }
+
+  if (pathname === '/api/library/devices' && method === 'GET') {
+    return json(res, 200, { devices: listDevices(), files: libraryStats() });
   }
 
   if (pathname === '/api/me' && method === 'GET') {

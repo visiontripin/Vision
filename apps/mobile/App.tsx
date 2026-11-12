@@ -7,10 +7,11 @@ import { KEYS, loadBase, saveBase } from './src/config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DownloadsProvider } from './src/downloads';
 import { LocalLibraryProvider } from './src/local';
+import { SyncProvider } from './src/sync';
 import { PlayerProvider, usePlayer } from './src/player';
 import { DeepLinkHandler } from './src/components/DeepLinkHandler';
 import { useLibrary } from './src/useLibrary';
-import { LibraryScreen } from './src/screens/LibraryScreen';
+import { MainScreen } from './src/screens/MainScreen';
 import { ServerScreen } from './src/screens/ServerScreen';
 import { colors } from './src/theme';
 
@@ -18,7 +19,7 @@ import { colors } from './src/theme';
  * Версия приложения для отчётов о падениях: одна строка, чтобы в панели было
  * видно, какая сборка падает.
  */
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.8.0';
 
 /**
  * Vision Audio — мобильный плеер (Android + iOS).
@@ -71,17 +72,14 @@ export default function App() {
 
   return (
     <LocalLibraryProvider>
-      <DownloadsProvider>
-        <PlayerProvider>
-          <DeepLinks />
-          <LibraryScreen onServerOpen={() => setServerOpen(true)} onLogout={() => undefined} />
-          <ServerScreen
-            visible={serverOpen}
-            onClose={() => setServerOpen(false)}
-            onConnected={onServerConnected}
-          />
-        </PlayerProvider>
-      </DownloadsProvider>
+      <SyncProvider>
+        <DownloadsProvider>
+          <PlayerProvider>
+            <DeepLinks />
+            <MainScreen />
+          </PlayerProvider>
+        </DownloadsProvider>
+      </SyncProvider>
     </LocalLibraryProvider>
   );
 }
