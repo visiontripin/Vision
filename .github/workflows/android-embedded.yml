@@ -55,6 +55,8 @@ jobs:
         run: npx tsx --test apps/mobile/src/lib/embedded-server.test.ts apps/mobile/src/lib/tester.test.ts
       - name: Скрипты сборки
         run: node --test scripts/android-embed-node.test.mjs scripts/android-tester-app.test.mjs
+      - name: Исходники Kotlin (const val, ссылки, JNI)
+        run: node --test scripts/kotlin-sanity.test.mjs
 
   # 2. Настоящая сборка APK с Node. Дорогая (10–20 мин), поэтому отдельным job-ом
   #    и с кэшем рантайма.

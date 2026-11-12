@@ -58,8 +58,6 @@ class VisionNodeService : Service() {
 
     companion object {
         private const val CHANNEL_ID = "vision-node"
-        /** Путь в assets APK: `bootstrap.mjs` копируется в каталог данных при старте. */
-        const val BOOTSTRAP_ASSET = "nodejs-project/bootstrap.mjs"
         private const val NOTIFICATION_ID = 4711
 
         fun start(context: Context) {
@@ -86,6 +84,9 @@ class VisionNodeService : Service() {
  * лежат в `pendingArguments`.
  */
 object ServerRunner {
+    /** Путь к скрипту в assets APK: `bootstrap.mjs` копируется в каталог данных. */
+    private const val BOOTSTRAP_ASSET = "nodejs-project/bootstrap.mjs"
+
     @Volatile
     var running: Boolean = false
         private set
