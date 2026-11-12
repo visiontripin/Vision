@@ -187,6 +187,27 @@ test('с скачанным libnode подключается CMake с абсол
   }
 });
 
+test('MainApplication находится и в другом пакете (тестовый applicationId)', () => {
+  // У VisionTester пакет `app.vision.audio.tester`, и Expo генерирует приложение
+  // там: поиск по фиксированному пути ронял сборку «не нашёл MainApplication».
+  const dir = fakeProject();
+  try {
+    rmSync(path.join(dir, 'android/app/src/main/java/app/vision/audio/MainApplication.kt'), { force: true });
+    const nested = path.join(dir, 'android/app/src/main/java/app/vision/audio/tester');
+    mkdirSync(nested, { recursive: true });
+    const file = path.join(nested, 'MainApplication.kt');
+    writeFileSync(file, 'package app.vision.audio.tester\n\nclass MainApplication {\n  init { PackageList(this).packages.apply { } }\n}\n');
+
+    const { status, output } = run(dir);
+    assert.equal(status, 0, output);
+    const text = readFileSync(file, 'utf8');
+    assert.match(text, /add\(VisionNodePackage\(\)\)/);
+    assert.match(text, /import app\.vision\.audio\.node\.VisionNodePackage/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('VISION_ABIS расширяет список ABI, когда нужны старые телефоны и эмулятор', () => {
   const dir = fakeProject();
   try {

@@ -51,10 +51,31 @@ const hasLibnode = existsSync(path.join(libnode, 'include', 'node', 'node.h'));
 const JAVA_SRC = path.join(SRC, 'java/app/vision/audio/node');
 const GRADLE = path.join(ANDROID, 'app/build.gradle');
 const MANIFEST = path.join(ANDROID, 'app/src/main/AndroidManifest.xml');
-const MAIN_APP = [
-  path.join(ANDROID, 'app/src/main/java/app/vision/audio/MainApplication.kt'),
-  path.join(ANDROID, 'app/src/main/java/app/vision/audio/MainApplication.java'),
-].find((file) => existsSync(file));
+/**
+ * `MainApplication` ищем по всему `src/main/java`, а не по фиксированному пути:
+ * Expo кладёт его в пакет, совпадающий с `applicationId`, а у тестового APK он
+ * другой (`app.vision.audio.tester`). Именно на этом падала сборка VisionTester.
+ */
+function findMainApplication(dir) {
+  const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (/^MainApplication\.(kt|java)$/.test(entry.name)) return full;
+    }
+  }
+  return null;
+}
+
+const MAIN_APP = findMainApplication(path.join(ANDROID, 'app/src/main/java'));
 
 if (CHECK_ONLY) {
   const problems = [];
