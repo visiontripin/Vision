@@ -160,7 +160,10 @@ log(`build.gradle: ABI ${hasLibnode ? 'и внешняя сборка CMake' : '
 // Без этого сборка падала: «x86/libnode.so, needed by libvisionnode.so, missing».
 const GRADLE_PROPS = path.join(ANDROID, 'gradle.properties');
 if (existsSync(GRADLE_PROPS)) {
-  const ABIS = 'arm64-v8a,armeabi-v7a,x86_64';
+  // Каждый ABI добавляет ~60 МБ libnode.so: три ABI давали APK на 247 МБ. Для
+  // телефона достаточно arm64-v8a (практически все устройства), остальные — по
+  // флагу VISION_ABIS (эмулятор, старые телефоны).
+  const ABIS = process.env.VISION_ABIS || 'arm64-v8a';
   let props = readFileSync(GRADLE_PROPS, 'utf8');
   if (/^reactNativeArchitectures=.*$/m.test(props)) {
     props = props.replace(/^reactNativeArchitectures=.*$/m, `reactNativeArchitectures=${ABIS}`);
@@ -169,6 +172,9 @@ if (existsSync(GRADLE_PROPS)) {
   }
   writeFileSync(GRADLE_PROPS, props);
   log(`gradle.properties: reactNativeArchitectures=${ABIS}`);
+  if (ABIS.split(',').length < 3) {
+    log('сборка только под указанные ABI (VISION_ABIS) — APK меньше, но не для всех устройств');
+  }
 } else {
   warn('нет gradle.properties — проверьте вручную, что собираются только ABI с libnode');
 }

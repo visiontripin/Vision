@@ -96,7 +96,7 @@ test('вживление раскладывает файлы и делает в�
     // 5. ABI — в gradle.properties, а не в DSL: только по этому списку Gradle
     // создаёт задачи CMake (под x86 libnode.so нет)
     const props = readFileSync(path.join(dir, 'android/gradle.properties'), 'utf8');
-    assert.match(props, /^reactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64$/m);
+    assert.match(props, /^reactNativeArchitectures=arm64-v8a$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -174,9 +174,9 @@ test('с скачанным libnode подключается CMake с абсол
     assert.equal(gradle.includes('abiFilters'), false);
 
     const props = readFileSync(path.join(dir, 'android/gradle.properties'), 'utf8');
-    // x86 исключён: под него нет libnode.so
-    assert.match(props, /^reactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64$/m);
-    assert.equal(props.includes('x86,'), false);
+    // По умолчанию только arm64-v8a: каждый ABI — это +60 МБ libnode.so в APK.
+    assert.match(props, /^reactNativeArchitectures=arm64-v8a$/m);
+    assert.equal(props.includes('x86'), false);
     assert.match(gradle, new RegExp(`arguments "-DVISION_NODE_DIR=${src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
 
     // --check теперь проходит: рантайм, мост, сервис и bootstrap на месте
@@ -184,5 +184,16 @@ test('с скачанным libnode подключается CMake с абсол
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(src, { recursive: true, force: true });
+  }
+});
+
+test('VISION_ABIS расширяет список ABI, когда нужны старые телефоны и эмулятор', () => {
+  const dir = fakeProject();
+  try {
+    run(dir, [], { VISION_ABIS: 'arm64-v8a,armeabi-v7a' });
+    const props = readFileSync(path.join(dir, 'android/gradle.properties'), 'utf8');
+    assert.match(props, /^reactNativeArchitectures=arm64-v8a,armeabi-v7a$/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

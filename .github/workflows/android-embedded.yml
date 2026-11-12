@@ -155,7 +155,11 @@ jobs:
           APK=android/app/build/outputs/apk/release/app-release.apk
           echo "::warning title=apk::размер $(du -h "$APK" | cut -f1)"
           FAIL=0
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          # ABI берём из собранного проекта, а не хардкодом: по умолчанию в APK
+          # только arm64-v8a (каждый ABI добавляет ~60 МБ libnode.so).
+          ABIS=$(grep -E '^reactNativeArchitectures=' apps/mobile/android/gradle.properties | cut -d= -f2 | tr ',' ' ')
+          echo "::warning title=apk::ABI: $ABIS"
+          for abi in $ABIS; do
             if unzip -l "$APK" | grep -q "lib/$abi/libvisionnode.so"; then
               echo "::warning title=apk::мост $abi ✓"
             else
