@@ -71,33 +71,35 @@ if (!existsSync(archive) || statSync(archive).size < 10_000_000) {
 const size = statSync(archive).size;
 if (size < 10_000_000) fail(`архив подозрительно мал (${size} Б) — скачивание не удалось`);
 
-// Распаковываем только нужное: заголовки и .so под три ABI. Остальное (примеры,
-// тесты, исходники) в APK не нужно и только задерживает CI.
+// Распаковываем целиком и переносим только нужное. Раньше здесь была фильтрация
+// имён и `unzip … <3000 аргументов>`: на CI это упирается в лимит длины командной
+// строки и падает с невнятной ошибкой. Полная распаковка 90 МБ дешевле и надёжнее.
 info('распаковываю…');
 rmSync(LIBNODE, { recursive: true, force: true });
 mkdirSync(LIBNODE, { recursive: true });
-
-const listing = execFileSync('unzip', ['-Z1', archive], { encoding: 'utf8' }).split('\n').filter(Boolean);
-const wanted = listing.filter((entry) => {
-  if (entry.endsWith('/')) return false;
-  if (/\/include\/(node|uv|openssl|v8)\//.test(entry) || entry.endsWith('/include/node.h') || entry.endsWith('/include/uv.h')) return true;
-  return MANIFEST.abi.some((abi) => entry.endsWith(`/bin/${abi}/libnode.so`));
-});
-
-if (!wanted.length) fail(`в архиве не нашлись заголовки/libnode.so — структура пакета изменилась (${MANIFEST.asset})`);
-
-execFileSync('unzip', ['-q', '-o', archive, ...wanted, '-d', path.join(LIBNODE, '_raw')], { stdio: 'inherit' });
-
-// Приводим к плоской структуре, на которую рассчитывает CMakeLists.txt:
-//   libnode/include/node/...   libnode/bin/<abi>/libnode.so
 const raw = path.join(LIBNODE, '_raw');
+mkdirSync(raw, { recursive: true });
+
+try {
+  execFileSync('unzip', ['-q', '-o', archive, '-d', raw], { stdio: 'inherit' });
+} catch (error) {
+  const entries = (() => {
+    try {
+      return execFileSync('unzip', ['-Z1', archive], { encoding: 'utf8' }).split('\n').slice(0, 20);
+    } catch {
+      return ['(не удалось прочитать архив)'];
+    }
+  })();
+  fail(`unzip не справился с ${MANIFEST.asset}: ${error?.message ?? error}\nпервые записи архива:\n${entries.join('\n')}`);
+}
 
 /** В архиве бывает обёртка вида `nodejs-mobile-vX-android/` — спускаемся до неё. */
-function findRoot(dir) {
+function findRoot(dir, depth = 0) {
+  if (depth > 3) return dir;
   const entries = readdirSync(dir, { withFileTypes: true });
   if (entries.some((entry) => entry.isDirectory() && (entry.name === 'include' || entry.name === 'bin'))) return dir;
   const nested = entries.find((entry) => entry.isDirectory());
-  return nested ? findRoot(path.join(dir, nested.name)) : dir;
+  return nested ? findRoot(path.join(dir, nested.name), depth + 1) : dir;
 }
 
 const base = findRoot(raw);
@@ -107,7 +109,17 @@ for (const part of ['include', 'bin']) {
 rmSync(raw, { recursive: true, force: true });
 
 if (!hasRuntime()) {
-  fail('после распаковки не хватает заголовков или libnode.so: проверьте apps/mobile/nodejs/android/libnode');
+  // Явно показываем, что оказалось в архиве: молча «не хватает libnode.so» —
+  // худший вариант, потому что непонятно, скачивание виновато или структура.
+  const shown = (() => {
+    try {
+      return execFileSync('unzip', ['-Z1', archive], { encoding: 'utf8' }).split('\n')
+        .filter((line) => /libnode\.so$|node\.h$/.test(line)).slice(0, 10);
+    } catch {
+      return ['(список недоступен)'];
+    }
+  })();
+  fail(`после распаковки не хватает заголовков или libnode.so. В архиве нашлось:\n${shown.join('\n') || '(ничего)'}`);
 }
 
 const total = MANIFEST.abi

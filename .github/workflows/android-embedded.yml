@@ -110,7 +110,23 @@ jobs:
           key: nodejs-mobile-${{ hashFiles('apps/mobile/nodejs/android/node-version.json') }}
 
       - name: Node-рантайм
-        run: node ../../scripts/fetch-nodejs-mobile.mjs
+        run: |
+          set -o pipefail
+          if node ../../scripts/fetch-nodejs-mobile.mjs 2>&1 | tee /tmp/node-fetch.log; then
+            exit 0
+          fi
+          grep -nE "✖|curl|unzip|Error|error" /tmp/node-fetch.log | tail -20 \
+            | while IFS= read -r line; do echo "::error title=node-runtime::$line"; done
+          tail -n 20 /tmp/node-fetch.log | while IFS= read -r line; do echo "::error title=node-fetch-хвост::$line"; done
+          exit 1
+
+      - name: Диагностика рантайма
+        if: always()
+        run: |
+          ls apps/mobile/nodejs/android/libnode 2>/dev/null || echo "libnode отсутствует"
+          du -sh apps/mobile/nodejs/android/libnode 2>/dev/null || true
+          ls -la ~/work/_temp 2>/dev/null | head -5 || true
+          df -h . | tail -1
 
       - name: Вживить сервер в проект
         run: node ../../scripts/android-embed-node.mjs
