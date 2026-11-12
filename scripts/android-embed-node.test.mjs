@@ -22,6 +22,10 @@ function fakeProject() {
   mkdirSync(path.join(app, 'src/main/java/app/vision/audio'), { recursive: true });
   writeFileSync(path.join(app, 'build.gradle'), "android {\n    namespace 'app.vision.audio'\n}\n");
   writeFileSync(
+    path.join(dir, 'android/gradle.properties'),
+    'org.gradle.jvmargs=-Xmx2048m\nreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64\n',
+  );
+  writeFileSync(
     path.join(app, 'src/main/AndroidManifest.xml'),
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n  <application>\n  </application>\n</manifest>\n',
   );
@@ -89,11 +93,10 @@ test('вживление раскладывает файлы и делает в�
     assert.match(manifest, /VisionNodeService/);
     assert.match(manifest, /foregroundServiceType="dataSync"/);
 
-    // 5. ABI-фильтры
-    const gradle = readFileSync(path.join(app, 'build.gradle'), 'utf8');
-    // два места: упаковка (ndk) и нативная сборка (cmake) — без второго Gradle
-    // создаёт задачи CMake и для x86, для которого рантайма нет
-    assert.equal(gradle.match(/abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'/g).length, 1);
+    // 5. ABI — в gradle.properties, а не в DSL: только по этому списку Gradle
+    // создаёт задачи CMake (под x86 libnode.so нет)
+    const props = readFileSync(path.join(dir, 'android/gradle.properties'), 'utf8');
+    assert.match(props, /^reactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -109,8 +112,8 @@ test('повторный запуск ничего не дублирует', () 
     assert.equal(main.match(/add\(VisionNodePackage\(\)\)/g).length, 1);
     const manifest = readFileSync(path.join(app, 'src/main/AndroidManifest.xml'), 'utf8');
     assert.equal(manifest.match(/VisionNodeService/g).length, 1);
-    const gradle = readFileSync(path.join(app, 'build.gradle'), 'utf8');
-    assert.equal(gradle.match(/abiFilters/g).length, 1);
+    const props = readFileSync(path.join(dir, 'android/gradle.properties'), 'utf8');
+    assert.equal(props.match(/^reactNativeArchitectures=/gm).length, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -165,9 +168,15 @@ test('с скачанным libnode подключается CMake с абсол
     const gradle = readFileSync(path.join(dir, 'android/app/build.gradle'), 'utf8');
     // AGP: только файл с именем CMakeLists.txt
     assert.match(gradle, /path "src\/main\/cpp\/visionnode\/CMakeLists\.txt"/);
-    // два списка ABI: упаковка (ndk) и нативная сборка (cmake) — без второго
-    // Gradle создаёт задачи CMake и для x86, для которого рантайма нет
-    assert.equal(gradle.match(/abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'/g).length, 2);
+    // ABI живут только в gradle.properties: `ndk.abiFilters` фильтрует упаковку, но
+    // не мешает Gradle создавать задачи CMake под x86 (нет libnode.so), а
+    // `cmake { abiFilters }` в AGP не существует.
+    assert.equal(gradle.includes('abiFilters'), false);
+
+    const props = readFileSync(path.join(dir, 'android/gradle.properties'), 'utf8');
+    // x86 исключён: под него нет libnode.so
+    assert.match(props, /^reactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64$/m);
+    assert.equal(props.includes('x86,'), false);
     assert.match(gradle, new RegExp(`arguments "-DVISION_NODE_DIR=${src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
 
     // --check теперь проходит: рантайм, мост, сервис и bootstrap на месте

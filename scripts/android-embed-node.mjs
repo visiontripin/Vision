@@ -116,12 +116,6 @@ gradle = stripBlock(gradle, 'abi');
 const abiBlock = `
 ${MARK}:abi
 android {
-    defaultConfig {
-        ndk {
-            // Три ABI: arm64 — телефоны, armeabi-v7a — старые устройства, x86_64 — эмулятор.
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
-        }
-    }
     packagingOptions {
         jniLibs {
             // libnode.so грузится из APK: сжатие ломает dlopen на части устройств.
@@ -141,9 +135,6 @@ android {
         cmake {
             path "src/main/cpp/visionnode/CMakeLists.txt"
             version "3.22.1"
-            // Тот же список, что у ndk: без него Gradle создаёт задачи CMake и для
-            // x86, где libnode.so нет, и сборка падает на «missing and no known rule».
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
         }
     }
     defaultConfig {
@@ -161,6 +152,26 @@ ${MARK}:native-end
 }
 writeFileSync(GRADLE, gradle);
 log(`build.gradle: ABI ${hasLibnode ? 'и внешняя сборка CMake' : '(CMake пропущен — нет libnode)'}`);
+
+// --- 3b. какие ABI вообще собираются -------------------------------------
+// `reactNativeArchitectures` в gradle.properties — единственный рычаг: именно по
+// нему Gradle создаёт задачи CMake по каждому ABI. `ndk.abiFilters` фильтрует
+// только упаковку, а `cmake { abiFilters }` в AGP не существует.
+// Без этого сборка падала: «x86/libnode.so, needed by libvisionnode.so, missing».
+const GRADLE_PROPS = path.join(ANDROID, 'gradle.properties');
+if (existsSync(GRADLE_PROPS)) {
+  const ABIS = 'arm64-v8a,armeabi-v7a,x86_64';
+  let props = readFileSync(GRADLE_PROPS, 'utf8');
+  if (/^reactNativeArchitectures=.*$/m.test(props)) {
+    props = props.replace(/^reactNativeArchitectures=.*$/m, `reactNativeArchitectures=${ABIS}`);
+  } else {
+    props += `\n# vision-node: ABI, под которые есть Node-рантайм\nreactNativeArchitectures=${ABIS}\n`;
+  }
+  writeFileSync(GRADLE_PROPS, props);
+  log(`gradle.properties: reactNativeArchitectures=${ABIS}`);
+} else {
+  warn('нет gradle.properties — проверьте вручную, что собираются только ABI с libnode');
+}
 
 // --- 4. регистрация пакета -------------------------------------------------
 if (!MAIN_APP) {
