@@ -46,6 +46,21 @@
 `npm run test:embedded` 5/5 — сервер запускается процессом и проверяется по HTTP:
 подъём и `state.json`, загрузка/Range/удаление, токен, `/api/shutdown`, занятый порт.
 
+### Стабилизация первых APK
+
+- Node теперь запускается только в отдельном Android-процессе `:vision_node`; JNI и
+  `libnode.so` не загружаются в процесс React Native. Падение V8/Node не должно
+  закрывать приложение и плеер.
+- Имя сервиса в манифесте стало полным (`app.vision.audio.node.VisionNodeService`):
+  относительный `.node.*` ломал тестовую сборку с `applicationId app.vision.audio.tester`.
+- Запуск считается успешным только после реального `/api/health`; зависший `starting`
+  и старый `running` диагностируются по таймауту/health-check.
+- Возвращена production-конфигурация `app.json` (`app.vision.audio`, `visionaudio`);
+  `VisionTester` получает отдельный id и схему только через сборочный скрипт.
+- Убрана module-level зависимость тестера от `TextEncoder`: экран тестера импортируется
+  при запуске плеера, поэтому отсутствие API Hermes могло закрыть оба APK до первого
+  кадра. Тело тестового upload отправляется как `ArrayBuffer`.
+
 ### Ограничения
 
 Сервер собран вокруг диагностического режима: полный `services/api` в APK пока не

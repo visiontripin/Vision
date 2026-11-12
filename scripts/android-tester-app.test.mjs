@@ -19,7 +19,12 @@ const original = {
     name: 'Vision Audio',
     slug: 'vision-audio',
     scheme: 'visionaudio',
-    android: { package: 'app.vision.audio', versionCode: 7, permissions: ['INTERNET'] },
+    android: {
+      package: 'app.vision.audio',
+      versionCode: 7,
+      permissions: ['INTERNET'],
+      intentFilters: [{ data: [{ scheme: 'visionaudio' }] }],
+    },
   },
 };
 
@@ -30,6 +35,14 @@ function withAppJson() {
   writeFileSync(file, text);
   return { dir, file, text };
 }
+
+test('committed app.json remains the installable player configuration', () => {
+  const config = JSON.parse(readFileSync(path.join(ROOT, 'apps/mobile/app.json'), 'utf8'));
+  assert.equal(config.expo.name, 'Vision Audio');
+  assert.equal(config.expo.scheme, 'visionaudio');
+  assert.equal(config.expo.android.package, 'app.vision.audio');
+  assert.deepEqual(config.expo.android.permissions, ['INTERNET', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC']);
+});
 
 const run = (dir, extra = []) => {
   const result = spawnSync(process.execPath, [SCRIPT, ...extra], {
@@ -48,6 +61,10 @@ test('тестовая сборка получает свой applicationId, и�
     assert.equal(config.expo.android.package, 'app.vision.audio.tester');
     assert.equal(config.expo.name, 'Vision Audio Tester');
     assert.equal(config.expo.scheme, 'visiontester');
+    assert.equal(config.expo.android.intentFilters[0].data[0].scheme, 'visiontester');
+    assert.deepEqual(config.expo.android.permissions, [
+      'INTERNET', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC',
+    ]);
     assert.equal(config.expo.android.versionCode, 42);
     // остальное не тронуто
     assert.equal(config.expo.slug, 'vision-audio');

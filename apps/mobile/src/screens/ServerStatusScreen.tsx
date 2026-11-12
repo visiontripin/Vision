@@ -4,12 +4,14 @@ import {
 } from 'react-native';
 import {
   EMPTY_STATUS,
+  HEALTH_TIMEOUT_MS,
   describeStatus,
+  isHealthy,
   libraryMode,
   serverUrl,
   type ServerStatus,
 } from '../lib/embedded-server';
-import { isRuntimeAvailable, readServerState, runtimeVersion, startEmbeddedServer, stopEmbeddedServer } from '../runtime';
+import { checkRuntimeAvailable, readServerState, startEmbeddedServer, stopEmbeddedServer } from '../runtime';
 import { TesterScreen } from './TesterScreen';
 import { colors, radius } from '../theme';
 
@@ -34,35 +36,68 @@ export function ServerStatusScreen({
   onOpenTester: (url: string) => void;
 }) {
   const [status, setStatus] = useState<ServerStatus>(EMPTY_STATUS);
-  const [available, setAvailable] = useState(isRuntimeAvailable());
+  const [available, setAvailable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testerOpen, setTesterOpen] = useState(false);
 
   const refresh = useCallback(async () => {
-    const version = await runtimeVersion();
-    // state.json — источник правды о том, что реально произошло: JNI-вызов мог
-    // вернуть адрес, а процесс — упасть сразу после этого.
+    // state.json — источник правды о запуске. Но нативный процесс может быть
+    // аварийно остановлен без возможности обновить этот файл, поэтому `running`
+    // подтверждаем живым HTTP health-check, а зависший `starting` протухает.
     const file = await readServerState();
-    setAvailable(isRuntimeAvailable());
-    setStatus((previous) => {
-      const phase = file?.phase ?? previous.phase;
-      return {
-        ...previous,
-        phase,
-        runtime: version ?? previous.runtime,
-        error: file?.error ?? previous.error,
-        url: phase === 'running' ? previous.url ?? serverUrl(previous.port) : null,
-      };
-    });
+    if (!file) return;
+
+    let phase = file.phase;
+    let error = file.error;
+    const port = file.port ?? EMPTY_STATUS.port;
+    const url = file.url ?? serverUrl(port);
+
+    if (phase === 'starting' && file.at && Date.now() - file.at > HEALTH_TIMEOUT_MS + 1500) {
+      phase = 'failed';
+      error = 'процесс сервера не ответил вовремя и, вероятно, завершился';
+    } else if (phase === 'running') {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const abortTimer = controller ? setTimeout(() => controller.abort(), 800) : null;
+      try {
+        const response = await fetch(`${url}/api/health`, controller ? { signal: controller.signal } : undefined);
+        const payload: unknown = await response.json().catch(() => null);
+        if (!response.ok || !isHealthy(payload)) {
+          phase = 'failed';
+          error = 'сервер помечен как запущенный, но /api/health не отвечает';
+        }
+      } catch {
+        phase = 'failed';
+        error = 'серверный процесс не отвечает';
+      } finally {
+        if (abortTimer) clearTimeout(abortTimer);
+      }
+    }
+
+    setStatus((previous) => ({
+      ...previous,
+      phase,
+      port,
+      runtime: file.runtime ?? previous.runtime,
+      error: phase === 'failed' ? error ?? previous.error : null,
+      url: phase === 'running' ? url : null,
+      at: file.at ?? previous.at,
+    }));
   }, []);
 
   // Пока экран открыт, состояние обновляется: запуск занимает секунды, и
   // «ничего не происходит» — худшее, что можно показать.
   useEffect(() => {
     if (!visible) return;
+    let active = true;
+    void checkRuntimeAvailable().then((value) => {
+      if (active) setAvailable(value);
+    });
     void refresh();
     const timer = setInterval(() => void refresh(), 1500);
-    return () => clearInterval(timer);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }, [visible, refresh]);
 
   const start = async () => {

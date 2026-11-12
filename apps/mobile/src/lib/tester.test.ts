@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { checks, checkUrl, headersFor, judge, networkError, sampleAudio, summarize } from './tester';
 
 const ctx = { base: 'http://127.0.0.1:4000/' };
@@ -19,6 +20,15 @@ test('sampleAudio — не пустое тело с ID3-заголовком', (
   const body = sampleAudio();
   assert.ok(body.length >= 128);
   assert.equal(String.fromCharCode(...body.slice(0, 3)), 'ID3');
+});
+
+test('модуль тестера импортируется в Hermes без глобального TextEncoder', () => {
+  const testerModule = new URL('./tester.ts', import.meta.url).href;
+  const source = `globalThis.TextEncoder = undefined; await import(${JSON.stringify(testerModule)});`;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', source], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, `${result.stdout ?? ''}\n${result.stderr ?? ''}`);
 });
 
 test('checkUrl не удваивает слэш', () => {

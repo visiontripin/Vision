@@ -70,20 +70,6 @@ static int redirect_output() {
 // --- JNI --------------------------------------------------------------------
 extern "C" {
 
-/** ABI текущей сборки — приложению нужно знать, что именно запущено. */
-JNIEXPORT jstring JNICALL
-Java_app_vision_audio_node_VisionNodeModule_nativeAbi(JNIEnv* env, jobject) {
-#if defined(__aarch64__)
-  return env->NewStringUTF("arm64-v8a");
-#elif defined(__arm__)
-  return env->NewStringUTF("armeabi-v7a");
-#elif defined(__x86_64__)
-  return env->NewStringUTF("x86_64");
-#else
-  return env->NewStringUTF("unknown");
-#endif
-}
-
 /**
  * Блокирующий запуск Node. Вызывается из Java-потока: когда Node завершится
  * (упадёт или его остановят), вернётся код выхода.
@@ -92,7 +78,7 @@ Java_app_vision_audio_node_VisionNodeModule_nativeAbi(JNIEnv* env, jobject) {
  * буфер, как требует libuv (`uv_setup_args` ожидает один блок памяти).
  */
 JNIEXPORT jint JNICALL
-Java_app_vision_audio_node_VisionNodeModule_nativeStart(
+Java_app_vision_audio_node_NodeRuntime_nativeStart(
     JNIEnv* env, jobject, jobjectArray arguments, jboolean redirect_logcat) {
   const jsize count = env->GetArrayLength(arguments);
 

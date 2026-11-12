@@ -46,14 +46,17 @@ export interface TesterContext {
   fileBody?: Uint8Array;
 }
 
-const encoder = new TextEncoder();
-
-/** Минимальный валидный «аудиофайл» для проверки загрузки: не пустой и с тегом. */
+/** Минимальный валидный «аудиофайл» для проверки загрузки: не пустой и с тегом.
+ * Только ASCII-байты: не полагаемся на глобальный TextEncoder, которого может не
+ * быть в некоторых версиях Hermes/React Native (этот модуль импортируется уже
+ * при старте плеера, до открытия экрана тестера).
+ */
 export function sampleAudio(): Uint8Array {
-  const header = encoder.encode('ID3');
   const payload = new Uint8Array(256);
-  payload.set(header, 0);
-  for (let i = header.length; i < payload.length; i += 1) payload[i] = i % 251;
+  payload[0] = 0x49; // I
+  payload[1] = 0x44; // D
+  payload[2] = 0x33; // 3
+  for (let i = 3; i < payload.length; i += 1) payload[i] = i % 251;
   return payload;
 }
 

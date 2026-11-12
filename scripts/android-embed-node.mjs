@@ -82,7 +82,13 @@ if (CHECK_ONLY) {
   if (!hasLibnode) problems.push('нет libnode (node scripts/fetch-nodejs-mobile.mjs)');
   if (!existsSync(GRADLE) || !readFileSync(GRADLE, 'utf8').includes(MARK)) problems.push('build.gradle без внешней сборки');
   if (!MAIN_APP || !readFileSync(MAIN_APP, 'utf8').includes('VisionNodePackage')) problems.push('VisionNodePackage не зарегистрирован');
-  if (!existsSync(MANIFEST) || !readFileSync(MANIFEST, 'utf8').includes('VisionNodeService')) problems.push('сервис не в манифесте');
+  if (!existsSync(MANIFEST)) {
+    problems.push('нет AndroidManifest.xml');
+  } else {
+    const manifest = readFileSync(MANIFEST, 'utf8');
+    if (!manifest.includes('app.vision.audio.node.VisionNodeService')) problems.push('неверное имя VisionNodeService');
+    if (!manifest.includes('android:process=\":vision_node\"')) problems.push('VisionNodeService не изолирован в процессе :vision_node');
+  }
   if (!existsSync(path.join(ANDROID, 'app/src/main/assets/nodejs-project/bootstrap.mjs'))) problems.push('нет bootstrap.mjs в assets');
   if (problems.length) fail(`встроенный сервер не собран: ${problems.join('; ')}`);
   log('встроенный сервер собран: рантайм, мост, сервис и bootstrap на месте');
@@ -228,19 +234,27 @@ if (!mainApp.includes('VisionNodePackage')) {
 
 // --- 5. манифест -----------------------------------------------------------
 let manifest = readFileSync(MANIFEST, 'utf8');
-if (!manifest.includes('VisionNodeService')) {
-  const service = `
-    <!-- vision-node: сервер на телефоне держится foreground-сервисом -->
+const serviceName = 'app.vision.audio.node.VisionNodeService';
+const service = `
+    <!-- vision-node: изолированный foreground-сервис, чтобы сбой Node не закрыл плеер -->
     <service
-        android:name=".node.VisionNodeService"
+        android:name="${serviceName}"
+        android:process=":vision_node"
         android:exported="false"
         android:foregroundServiceType="dataSync" />
 `;
+const serviceTag = /<service\b(?=[^>]*android:name="(?:\.node\.VisionNodeService|app\.vision\.audio\.node\.VisionNodeService)")[^>]*\/>/g;
+const currentService = manifest.match(serviceTag)?.[0] ?? '';
+const serviceIsCurrent = currentService.includes(`android:name="${serviceName}"`)
+  && currentService.includes('android:process=":vision_node"')
+  && currentService.includes('android:foregroundServiceType="dataSync"');
+if (!serviceIsCurrent) {
+  manifest = manifest.replace(serviceTag, '');
   manifest = manifest.replace('</application>', `${service}  </application>`);
   writeFileSync(MANIFEST, manifest);
-  log('AndroidManifest: сервис добавлен');
+  log('AndroidManifest: сервис изолирован в процессе :vision_node');
 } else {
-  log('AndroidManifest: сервис уже есть');
+  log('AndroidManifest: изолированный сервис уже есть');
 }
 
 const size = hasLibnode

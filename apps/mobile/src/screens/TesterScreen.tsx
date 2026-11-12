@@ -57,9 +57,12 @@ export function TesterScreen({
     for (const spec of checks(ctx)) {
       const started = Date.now();
       try {
-        // Тело приводим к `BodyInit`: React Native принимает `Uint8Array`, но тип
-        // `lib.dom` в этом проекте его не знает и ругается на `fetch`.
-        const body = spec.body ? (spec.body(ctx) as unknown as BodyInit) : undefined;
+        // Для React Native отправляем бинарное тело как ArrayBuffer: некоторые
+        // версии fetch/Hermes не сериализуют Uint8Array из BodyInit корректно.
+        const bodyValue = spec.body?.(ctx);
+        const body = bodyValue instanceof Uint8Array
+          ? bodyValue.buffer.slice(bodyValue.byteOffset, bodyValue.byteOffset + bodyValue.byteLength) as unknown as BodyInit
+          : bodyValue as BodyInit | undefined;
         const response = await fetch(checkUrl(ctx.base, spec), {
           method: spec.method,
           headers: headersFor(spec, ctx.token),

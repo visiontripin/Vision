@@ -1,14 +1,20 @@
 import { NativeModules } from 'react-native';
-import { DEFAULT_PORT, LOOPBACK_HOST, parseServerState, type ServerPhase, type ServerStatus } from './lib/embedded-server';
+import {
+  DEFAULT_PORT,
+  HEALTH_TIMEOUT_MS,
+  LOOPBACK_HOST,
+  isHealthy,
+  parseServerState,
+  type ServerPhase,
+  type ServerStatus,
+} from './lib/embedded-server';
 
 /**
- * Мост к встроенному Node-рантайму (`VisionNode.java` в android-проекте).
+ * Мост к встроенному Node-рантайму (`VisionNodeService`, отдельный Android-процесс).
  *
- * Работает по принципу «best effort»: если нативной части в сборке нет (обычный
- * APK без Node, iOS, Expo Go), все функции просто возвращают
- * `phase: 'unavailable'` — приложение обязано работать дальше как локальный
- * плеер. Ни одна ветка ниже не бросает исключение наружу, иначе сломанный
- * рантайм утащит за собой весь экран.
+ * Best effort: если нативной части в сборке нет (обычный APK без Node, iOS,
+ * Expo Go), функции возвращают `unavailable`, и локальный плеер продолжает
+ * работать. Нативный сервер никогда не запускается в процессе React Native.
  */
 
 type NativeNodeModule = {
@@ -21,8 +27,8 @@ type NativeNodeModule = {
 
 /**
  * `NativeModules.VisionNode` появляется только если нативный модуль собран и
- * зарегистрирован. Доступ через try/catch: в тестах и на веб-таргете
- * `NativeModules` может отсутствовать целиком.
+ * зарегистрирован. Доступ через try/catch: в тестах/web-таргете `NativeModules`
+ * может отсутствовать целиком.
  */
 export function nativeNode(): NativeNodeModule | null {
   try {
@@ -34,15 +40,92 @@ export function nativeNode(): NativeNodeModule | null {
 }
 
 export function isRuntimeAvailable(): boolean {
-  return nativeNode() !== null;
+  const native = nativeNode();
+  return Boolean(native?.startServer);
+}
+
+/** Проверяет наличие библиотек в APK, не загружая их в процесс приложения. */
+export async function checkRuntimeAvailable(): Promise<boolean> {
+  const native = nativeNode();
+  if (!native?.startServer) return false;
+  try {
+    return native.isAvailable ? Boolean(await native.isAvailable()) : true;
+  } catch {
+    return false;
+  }
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Проверяем именно HTTP health, а не то, что Android принял Intent сервиса. */
+async function waitForHealth(url: string, timeoutMs: number): Promise<{
+  ok: boolean;
+  runtime: string | null;
+  version: string | null;
+  error: string | null;
+}> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = 'нет ответа';
+
+  while (Date.now() < deadline) {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const abortTimer = controller ? setTimeout(() => controller.abort(), 700) : null;
+    try {
+      const response = await fetch(`${url.replace(/\/+$/, '')}/api/health`, {
+        method: 'GET',
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.ok) {
+        const payload: unknown = await response.json();
+        if (isHealthy(payload)) {
+          const value = payload as Record<string, unknown>;
+          return {
+            ok: true,
+            runtime: typeof value.runtime === 'string' ? value.runtime : null,
+            version: typeof value.version === 'string' ? value.version : null,
+            error: null,
+          };
+        }
+        lastError = 'health ответил без признака ok';
+      } else {
+        lastError = `HTTP ${response.status}`;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (abortTimer) clearTimeout(abortTimer);
+    }
+
+    const state = await readServerState();
+    if (state?.phase === 'failed') {
+      return {
+        ok: false,
+        runtime: state.runtime,
+        version: null,
+        error: state.error ?? lastError,
+      };
+    }
+    await wait(150);
+  }
+
+  const state = await readServerState();
+  return {
+    ok: false,
+    runtime: state?.runtime ?? null,
+    version: null,
+    error: state?.phase === 'failed'
+      ? state.error ?? 'сервер завершился с ошибкой'
+      : `сервер не ответил за ${timeoutMs} мс (${lastError})`,
+  };
 }
 
 /**
- * Запускает сервер и ждёт, пока он реально начнёт отвечать.
+ * Запускает сервер и ждёт, пока `/api/health` реально ответит.
  *
- * Приложение не должно показывать «сервер работает» сразу после вызова
- * `startServer`: процесс поднимается асинхронно. Поэтому состояние сервера —
- * единственный источник правды, а строка ниже лишь просит его запустить.
+ * Адрес из NativeModule означает только «Android принял запрос на запуск». Node
+ * поднимается в отдельном процессе асинхронно, поэтому успех подтверждает только
+ * HTTP health-check. Если серверный процесс упадёт, приложение при этом остаётся
+ * живым и может продолжать воспроизведение.
  */
 export async function startEmbeddedServer(options: {
   port?: number;
@@ -62,7 +145,7 @@ export async function startEmbeddedServer(options: {
     at: Date.now(),
   };
 
-  if (!native?.startServer) {
+  if (!native?.startServer || !(await checkRuntimeAvailable())) {
     options.onPhase?.('unavailable');
     return { ...base, phase: 'unavailable' };
   }
@@ -75,14 +158,27 @@ export async function startEmbeddedServer(options: {
       public: options.public ?? false,
       token: options.token ?? undefined,
     });
-    // Нативная часть возвращает либо адрес, либо код ошибки (`EADDRINUSE: …`).
-    if (typeof reported === 'string' && /^https?:\/\//.test(reported)) {
-      options.onPhase?.('running');
-      return { ...base, phase: 'running', url: reported, runtime: (await runtimeVersion()) ?? null, at: Date.now() };
+    if (typeof reported !== 'string' || !/^https?:\/\//.test(reported)) {
+      const error = reported || 'рантайм не ответил адресом';
+      options.onPhase?.('failed', error);
+      return { ...base, phase: 'failed', error, at: Date.now() };
     }
-    const error = reported || 'рантайм не ответил адресом';
-    options.onPhase?.('failed', error);
-    return { ...base, phase: 'failed', error, at: Date.now() };
+
+    const health = await waitForHealth(reported, HEALTH_TIMEOUT_MS);
+    if (!health.ok) {
+      options.onPhase?.('failed', health.error);
+      return { ...base, phase: 'failed', url: null, runtime: health.runtime, error: health.error, at: Date.now() };
+    }
+
+    const runtime = health.runtime ?? (await runtimeVersion()) ?? null;
+    options.onPhase?.('running');
+    return {
+      ...base,
+      phase: 'running',
+      url: reported,
+      runtime,
+      at: Date.now(),
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     options.onPhase?.('failed', message);
@@ -104,13 +200,15 @@ export async function runtimeVersion(): Promise<string | null> {
   return state?.runtime ?? null;
 }
 
-/**
- * Читает `state.json`, который пишет `bootstrap.mjs`.
- *
- * Это второй, независимый от JNI источник правды: если процесс упал уже после
- * старта, `startServer` об этом не узнает, а файл — узнает.
- */
-export async function readServerState(): Promise<{ phase: ServerPhase; error: string | null; runtime: string | null } | null> {
+/** Читает `state.json`, который пишет `bootstrap.mjs`. */
+export async function readServerState(): Promise<{
+  phase: ServerPhase;
+  error: string | null;
+  runtime: string | null;
+  port: number | null;
+  url: string | null;
+  at: number | null;
+} | null> {
   try {
     const raw = await nativeNode()?.readState?.();
     return parseServerState(raw?.state ?? null);

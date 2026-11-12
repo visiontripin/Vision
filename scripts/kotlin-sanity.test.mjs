@@ -24,7 +24,7 @@ const files = readdirSync(SRC).filter((file) => file.endsWith('.kt'));
 const sources = new Map(files.map((file) => [file, readFileSync(path.join(SRC, file), 'utf8')]));
 
 test('исходники на месте', () => {
-  assert.deepEqual(files.sort(), ['VisionNodeModule.kt', 'VisionNodePackage.kt', 'VisionNodeService.kt']);
+  assert.deepEqual(files.sort(), ['NodeRuntime.kt', 'VisionNodeModule.kt', 'VisionNodePackage.kt', 'VisionNodeService.kt']);
 });
 
 test('const val объявлен только в object или companion object', () => {
@@ -76,19 +76,18 @@ test('ссылки Object.member() между файлами разрешают�
   assert.deepEqual(problems, [], problems.join('\n'));
 });
 
-test('нативные методы объявлены и грузятся под тем же именем', () => {
+test('JNI загружается только в изолированном серверном процессе', () => {
   const module = sources.get('VisionNodeModule.kt');
-  assert.match(module, /System\.loadLibrary\("visionnode"\)/);
-  assert.match(module, /private external fun nativeStart/);
-  assert.match(module, /private external fun nativeAbi/);
+  const runtime = sources.get('NodeRuntime.kt');
+  const service = sources.get('VisionNodeService.kt');
+  assert.doesNotMatch(module, /System\.loadLibrary\("visionnode"\)/);
+  assert.match(runtime, /System\.loadLibrary\("visionnode"\)/);
+  assert.match(runtime, /private external fun nativeStart/);
+  assert.match(service, /NodeRuntime\.start\(arguments, true\)/);
+  assert.match(service, /:vision_node/);
 
-  // JNI-имена в C++ должны совпадать с пакетом и классом: app.vision.audio.node.VisionNodeModule
+  // JNI-имя соответствует app.vision.audio.node.NodeRuntime (applicationId
+  // тестовой сборки на package Kotlin/JNI не влияет).
   const cpp = readFileSync(path.join(ROOT, 'apps/mobile/nodejs/android/vision-node-jni.cpp'), 'utf8');
-  for (const name of ['nativeStart', 'nativeAbi']) {
-    assert.match(
-      cpp,
-      new RegExp(`Java_app_vision_audio_node_VisionNodeModule_${name}`),
-      `в JNI нет Java_app_vision_audio_node_VisionNodeModule_${name}`,
-    );
-  }
+  assert.match(cpp, /Java_app_vision_audio_node_NodeRuntime_nativeStart/);
 });

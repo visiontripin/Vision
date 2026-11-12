@@ -60,12 +60,12 @@ test('вживление раскладывает файлы и делает в�
   const dir = fakeProject();
   try {
     const output = run(dir).output;
-    assert.match(output, /Kotlin: 3 файла/);
+    assert.match(output, /Kotlin: 4 файла/);
     const app = path.join(dir, 'android/app');
 
     // 1. исходники на месте
     const java = path.join(app, 'src/main/java/app/vision/audio/node');
-    for (const file of ['VisionNodeModule.kt', 'VisionNodePackage.kt', 'VisionNodeService.kt']) {
+    for (const file of ['NodeRuntime.kt', 'VisionNodeModule.kt', 'VisionNodePackage.kt', 'VisionNodeService.kt']) {
       assert.ok(existsSync(path.join(java, file)), `нет ${file}`);
     }
     // AGP принимает только файл с именем CMakeLists.txt — это ломало сборку
@@ -90,13 +90,33 @@ test('вживление раскладывает файлы и делает в�
 
     // 4. сервис в манифесте
     const manifest = readFileSync(path.join(app, 'src/main/AndroidManifest.xml'), 'utf8');
-    assert.match(manifest, /VisionNodeService/);
+    assert.match(manifest, /android:name="app\.vision\.audio\.node\.VisionNodeService"/);
+    assert.match(manifest, /android:process=":vision_node"/);
     assert.match(manifest, /foregroundServiceType="dataSync"/);
 
     // 5. ABI — в gradle.properties, а не в DSL: только по этому списку Gradle
     // создаёт задачи CMake (под x86 libnode.so нет)
     const props = readFileSync(path.join(dir, 'android/gradle.properties'), 'utf8');
     assert.match(props, /^reactNativeArchitectures=arm64-v8a$/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('старый относительный service name обновляется и изолируется', () => {
+  const dir = fakeProject();
+  try {
+    const manifestPath = path.join(dir, 'android/app/src/main/AndroidManifest.xml');
+    const original = readFileSync(manifestPath, 'utf8');
+    writeFileSync(manifestPath, original.replace(
+      '</application>', '    <service android:name=".node.VisionNodeService" android:exported="false" />\n  </application>',
+    ));
+
+    run(dir);
+    const manifest = readFileSync(manifestPath, 'utf8');
+    assert.equal((manifest.match(/VisionNodeService/g) ?? []).length, 1);
+    assert.match(manifest, /android:name="app\.vision\.audio\.node\.VisionNodeService"/);
+    assert.match(manifest, /android:process=":vision_node"/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

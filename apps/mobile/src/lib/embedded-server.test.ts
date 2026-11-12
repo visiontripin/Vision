@@ -98,9 +98,11 @@ test('общая библиотека не выключается при под�
 
 test('parseServerState читает state.json и не падает на мусоре', () => {
   const raw = JSON.stringify({ phase: 'running', error: null, runtime: 'v24.22.3', port: 4000 });
-  assert.deepEqual(parseServerState(raw), { phase: 'running', error: null, runtime: 'v24.22.3' });
+  assert.deepEqual(parseServerState(raw), {
+    phase: 'running', error: null, runtime: 'v24.22.3', port: 4000, url: null, at: null,
+  });
   assert.deepEqual(parseServerState(JSON.stringify({ phase: 'failed', error: 'EADDRINUSE' })), {
-    phase: 'failed', error: 'EADDRINUSE', runtime: null,
+    phase: 'failed', error: 'EADDRINUSE', runtime: null, port: null, url: null, at: null,
   });
   // файла ещё нет / он битый — состояния нет, а не «сервер работает»
   assert.equal(parseServerState(null), null);

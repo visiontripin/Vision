@@ -57,9 +57,19 @@ expo.name = 'Vision Audio Tester';
 expo.scheme = 'visiontester';
 expo.android = { ...(expo.android ?? {}), package: TESTER_ID };
 expo.android.versionCode = Number(process.env.GITHUB_RUN_NUMBER || expo.android.versionCode || 1) || 1;
+// Меняем и явный intent-filter, не только expo.scheme: иначе обе установки
+// регистрируются на `visionaudio` и тестовая сборка перехватывает ссылки плеера.
+if (Array.isArray(expo.android.intentFilters)) {
+  expo.android.intentFilters = expo.android.intentFilters.map((filter) => ({
+    ...filter,
+    ...(Array.isArray(filter.data)
+      ? { data: filter.data.map((item) => item.scheme === 'visionaudio' ? { ...item, scheme: 'visiontester' } : item) }
+      : {}),
+  }));
+}
 
-// Тестеру нужен только интернет; разрешение на медиа-уведомления не мешает, но
-// лишние разрешения в тестовой сборке сбивают с толку — оставляем минимум.
+// Минимальные права для сети и foreground-сервиса, в котором работает Node.
+// Доступ к медиатеке и уведомлениям плеера тестеру не нужен.
 expo.android.permissions = ['INTERNET', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC'];
 
 config.expo = expo;

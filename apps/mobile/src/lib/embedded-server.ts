@@ -35,15 +35,30 @@ export function runtimeFromState(state: unknown): string | null {
 }
 
 /** Разбирает `state.json` в состояние экрана; мусор не должен ломать UI. */
-export function parseServerState(raw: string | null | undefined): { phase: ServerPhase; error: string | null; runtime: string | null } | null {
+export function parseServerState(raw: string | null | undefined): {
+  phase: ServerPhase;
+  error: string | null;
+  runtime: string | null;
+  port: number | null;
+  url: string | null;
+  at: number | null;
+} | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const phase = typeof parsed.phase === 'string' ? (parsed.phase as ServerPhase) : 'stopped';
+    const phases: ServerPhase[] = ['unavailable', 'stopped', 'starting', 'running', 'failed'];
+    const phase = typeof parsed.phase === 'string' && phases.includes(parsed.phase as ServerPhase)
+      ? parsed.phase as ServerPhase
+      : 'stopped';
+    const port = Number(parsed.port);
+    const at = Number(parsed.at);
     return {
       phase,
       error: typeof parsed.error === 'string' ? parsed.error : null,
       runtime: runtimeFromState(parsed),
+      port: Number.isInteger(port) && port > 0 && port < 65536 ? port : null,
+      url: typeof parsed.url === 'string' && /^https?:\/\//i.test(parsed.url) ? parsed.url : null,
+      at: Number.isFinite(at) && at > 0 ? at : null,
     };
   } catch {
     return null;

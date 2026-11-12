@@ -27,20 +27,22 @@ D не выключается, когда работает A. Иначе пол�
 
 ```
 ┌──────────────────────────── APK (Android) ────────────────────────────┐
-│                                                                       │
-│  React Native (Hermes)                                                │
-│    App.tsx ── startEmbeddedServer() ── NativeModules.VisionNode       │
-│    экраны: MainScreen → SettingsScreen → ServerStatusScreen → Tester   │
-│                                   │ JNI                               │
-│                                   ▼                                   │
-│  libvisionnode.so  ── node::Start(argv) ──►  libnode.so (Node 24)     │
-│                                   │                                   │
-│                     bootstrap.mjs (assets → filesDir)                 │
-│                       └ HTTP на 127.0.0.1:4000                        │
-│                            /api/health  /api/files  /files/…          │
-│                            /api/shutdown                              │
+│  Процесс приложения (`app.vision.audio`)                               │
+│    React Native (Hermes)                                               │
+│    App.tsx ── startEmbeddedServer() ── NativeModules.VisionNode        │
+│    плеер и UI работают независимо от серверного процесса               │
+│                  │ Intent / state.json / HTTP loopback                  │
+│                  ▼                                                     │
+│  Отдельный процесс сервиса (`:vision_node`)                             │
+│    VisionNodeService → NodeRuntime → libvisionnode.so → libnode.so     │
+│    bootstrap.mjs (assets → filesDir) → HTTP 127.0.0.1:4000             │
+│                                   /api/health  /api/files  /files/…     │
+│                                   /api/shutdown                        │
 └───────────────────────────────────────────────────────────────────────┘
 ```
+
+JNI и `libnode.so` загружаются только в `:vision_node`. Если V8/Node аварийно
+завершится, Android остановит серверный процесс, но не приложение и не плеер.
 
 Файлы:
 
@@ -48,7 +50,9 @@ D не выключается, когда работает A. Иначе пол�
 |---|---|
 | `apps/mobile/nodejs/embedded/bootstrap.mjs` | точка входа в Node: HTTP-сервер, `state.json`, обработка падений |
 | `apps/mobile/nodejs/android/vision-node-jni.cpp` | JNI: `node::Start` в потоке, stdout/stderr → logcat |
-| `apps/mobile/nodejs/android/java/app/vision/audio/node/*.kt` | `VisionNode` для JS, foreground-сервис, распаковка `bootstrap.mjs` |
+| `apps/mobile/nodejs/android/java/app/vision/audio/node/VisionNodeModule.kt` | безопасный мост JS ↔ Android; не загружает Node-библиотеки в UI-процесс |
+| `apps/mobile/nodejs/android/java/app/vision/audio/node/VisionNodeService.kt` | foreground-сервис в отдельном процессе `:vision_node`, Intent-аргументы и `state.json` |
+| `apps/mobile/nodejs/android/java/app/vision/audio/node/NodeRuntime.kt` | загружает `libvisionnode.so` и вызывает JNI только внутри серверного процесса |
 | `apps/mobile/src/runtime.ts` | JS-обёртка: запуск, остановка, чтение `state.json` |
 | `apps/mobile/src/lib/embedded-server.ts` | чистая логика: порты, состояния, тексты |
 | `apps/mobile/src/screens/ServerStatusScreen.tsx` | экран «Сервер на телефоне» |
@@ -149,16 +153,17 @@ scripts/android-embed-node.test.mjs` — 10 тестов, секунды.
 
 ## Правила, которые нельзя ломать
 
-1. **Только петля по умолчанию.** `127.0.0.1`, не `0.0.0.0`: сервер не должен
+1. **Node изолирован от плеера.** `VisionNodeService` работает в Android-процессе `:vision_node`; `System.loadLibrary` вызывается только там. Падение нативного Node не должно закрывать UI.
+2. **Только петля по умолчанию.** `127.0.0.1`, не `0.0.0.0`: сервер не должен
    торчать в сеть без явного решения.
-2. **`state.json` важнее JNI.** `startServer` вернул адрес — это ещё не значит, что
+3. **`state.json` важнее JNI.** `startServer` вернул адрес — это ещё не значит, что
    сервер работает. Состояние читается из файла.
-3. **Падение не должно быть молчаливым.** `uncaughtException` и
+4. **Падение не должно быть молчаливым.** `uncaughtException` и
    `unhandledRejection` пишут `phase: failed` с причиной.
-4. **`EADDRINUSE` — единственная причина пробовать другой порт.** Остальные
+5. **`EADDRINUSE` — единственная причина пробовать другой порт.** Остальные
    ошибки повторять бессмысленно (`failureAction` в `embedded-server.ts`).
-5. **`--data` внутри `filesDir`.** Библиотека переживает обновление APK.
-6. **Teardown.** Остановка идёт через `POST /api/shutdown`, а не убийством потока:
+6. **`--data` внутри `filesDir`.** Библиотека переживает обновление APK.
+7. **Teardown.** Остановка идёт через `POST /api/shutdown`, а не убийством потока:
    иначе `state.json` не обновится.
 
 ## Ограничения
