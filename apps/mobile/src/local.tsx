@@ -70,13 +70,17 @@ type LocalLibraryValue = {
   /** размер локальной библиотеки в байтах — для экрана статистики */
   bytes: number;
   stats: { played: number; top: { trackId: string; title: string; plays: number }[]; weekSeconds: number };
+  /** размер одного файла: нужен синхронизации, чтобы отдать метаданные без чтения файла */
+  bytesOf: (id: string) => number;
+  /** обложка локального трека (сейчас всегда null: теги не читаем) */
+  coverOf: (id: string) => string | null;
   /** локальный файл трека — плеер берёт его первым делом */
   uriOf: (ref: string | null | undefined) => string | null;
   importFiles: () => Promise<ImportResult>;
   /** скачать трек по ссылке в папку приложения и добавить в библиотеку */
-  addFromLink: (input: { url: string; title: string }) => Promise<string | null>;
+  addFromLink: (input: { url: string; title: string; id?: string }) => Promise<string | null>;
   /** добавить один файл по пути (после скачивания или из системного «Поделиться») */
-  adopt: (input: { uri: string; name?: string | null; mime?: string | null; bytes?: number | null }) => Promise<string | null>;
+  adopt: (input: { uri: string; name?: string | null; mime?: string | null; bytes?: number | null; id?: string }) => Promise<string | null>;
   removeTrack: (id: string) => Promise<void>;
   createPlaylist: (name: string) => Promise<string>;
   /** треки плейлиста в порядке добавления (для плеера) */
@@ -215,7 +219,7 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
    * на это нельзя.
    */
   const adoptOne = useCallback(
-    async (input: { uri: string; name?: string | null; mime?: string | null; bytes?: number | null }): Promise<string | null> => {
+    async (input: { uri: string; name?: string | null; mime?: string | null; bytes?: number | null; id?: string }): Promise<string | null> => {
       const uri = String(input.uri ?? '');
       if (!uri) return null;
       const current = libraryRef.current;
@@ -224,7 +228,10 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
       const result = registerFile(
         current,
         {
-          key: uri,
+          // `id` приходит, когда файл скачан с другого устройства: чужой трек
+          // должен сохраниться под своим id, иначе в ленте появятся два разных
+          // трека с одинаковым содержимым.
+          key: input.id ?? uri,
           uri,
           title: guessed.title,
           artist: guessed.artist,
@@ -253,7 +260,7 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
   );
 
   const adopt = useCallback(
-    async (input: { uri: string; name?: string | null; mime?: string | null; bytes?: number | null }) => adoptOne(input),
+    async (input: { uri: string; name?: string | null; mime?: string | null; bytes?: number | null; id?: string }) => adoptOne(input),
     [adoptOne]
   );
 
@@ -265,7 +272,7 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
    * трека — по расширению плеер понимает контейнер, поэтому расширение обязательно.
    */
   const addFromLink = useCallback(
-    async (input: { url: string; title: string }) => {
+    async (input: { url: string; title: string; id?: string }) => {
       const url = String(input.url ?? '').trim();
       if (!url) throw new Error('Пустая ссылка');
       const title = String(input.title ?? '').trim() || 'Трек по ссылке';
@@ -302,6 +309,7 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
         name: `${title}.${ext}`,
         mime: mimeOf(`${title}.${ext}`),
         bytes: size,
+        id: input.id,
       });
       if (!id) {
         // не смогли добавить — файл оставлять незачем
@@ -413,6 +421,8 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
   }, [playlistState, tracks]);
 
   const uriOf = useCallback((ref: string | null | undefined) => localUriOf(libraryRef.current, ref), []);
+  const bytesOf = useCallback((id: string) => libraryRef.current.entries[id]?.bytes ?? 0, []);
+  const coverOf = useCallback(() => null as string | null, []);
 
   const tracksOf = useCallback(
     (playlistId: string) => tracksOfPlaylist(playlistState.find((item) => item.id === playlistId), tracks),
@@ -439,6 +449,8 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
         weekSeconds,
       },
       uriOf,
+      bytesOf,
+      coverOf,
       importFiles,
       adopt,
       addFromLink,
@@ -451,7 +463,7 @@ export function LocalLibraryProvider({ children }: { children: ReactNode }) {
       reload: load,
     };
   }, [
-    ready, tracks, playlists, library, stats, uriOf, importFiles, adopt, addFromLink, removeTrack,
+    ready, tracks, playlists, library, stats, uriOf, bytesOf, coverOf, importFiles, adopt, addFromLink, removeTrack,
     createPlaylist, tracksOf, addTrackToPlaylist, dropFromPlaylist, logPlay, load,
   ]);
 

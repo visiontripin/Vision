@@ -36,6 +36,8 @@ export function MiniPlayer({ cover, onOpen }: { cover?: string; onOpen: () => vo
       accessibilityLabel={`Открыть плеер: ${current.title}, ${current.artist}`}
       accessibilityHint="Открывает плеер с волной и перемоткой"
     >
+      {/* волна-прогресс как тонкая полоса сверху панели: в референсе её видно,
+          даже когда плеер свёрнут */}
       <View style={styles.wave} pointerEvents="none">
         {bars.map((value, index) => {
           const played = (index + 1) / bars.length <= ratio;
@@ -65,6 +67,12 @@ export function MiniPlayer({ cover, onOpen }: { cover?: string; onOpen: () => vo
           </Text>
         </View>
 
+        {/* как в референсе: волна-прогресс видна и в свёрнутом виде, а лайк
+            стоит справа от названия */}
+        <Pressable onPress={() => undefined} hitSlop={10} style={styles.like} accessibilityLabel="Нравится">
+          <Text style={[styles.likeIcon, current.liked && { color: colors.accent }]}>♥</Text>
+        </Pressable>
+
         <Pressable
           onPress={toggle}
           hitSlop={10}
@@ -78,10 +86,6 @@ export function MiniPlayer({ cover, onOpen }: { cover?: string; onOpen: () => vo
         <Pressable onPress={next} hitSlop={10} style={styles.next} accessibilityRole="button" accessibilityLabel="Следующий трек">
           <Text style={styles.nextIcon}>▶▶</Text>
         </Pressable>
-
-        <View style={styles.chevronWrap} pointerEvents="none">
-          <Text style={styles.chevron}>⌃</Text>
-        </View>
       </View>
     </Pressable>
   );
@@ -126,6 +130,6 @@ const styles = StyleSheet.create({
   playIcon: { color: colors.accentInk, fontSize: 14, fontWeight: '800' },
   next: { paddingHorizontal: 2, paddingVertical: 8 },
   nextIcon: { color: colors.muted, fontSize: 12, fontWeight: '700' },
-  chevronWrap: { width: 14, alignItems: 'center' },
-  chevron: { color: colors.dim, fontSize: 14, fontWeight: '700' },
+  like: { paddingHorizontal: 4, paddingVertical: 8 },
+  likeIcon: { color: colors.muted, fontSize: 15 },
 });

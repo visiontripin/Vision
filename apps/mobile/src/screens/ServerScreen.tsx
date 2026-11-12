@@ -49,7 +49,7 @@ export function ServerScreen({ visible, onClose, onConnected }: {
       api.setToken(token);
       await saveBase(normalized);
       await onConnected();
-      Alert.alert('Подключено', 'Треки с сервера доступны в разделе «Сервер».');
+      Alert.alert('Подключено', 'Сервер доступен. Если это ваш реестр, укажите его адрес в настройках — и треки всех устройств появятся в ленте.');
       onClose();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Сервер не ответил';
