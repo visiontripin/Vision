@@ -15,7 +15,12 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(path.join(ROOT, file), 'utf8');
 
+import yaml from 'yaml';
+
 const android = read('.github/workflows/android.yml');
+
+/** Разбор YAML workflow: нужен, когда важна структура, а не текст. */
+const parseWorkflow = (text) => yaml.parse(text);
 const embedded = read('.github/workflows/android-embedded.yml');
 
 test('встроенный Node включается и по тегу, и по кнопке', () => {
@@ -79,4 +84,16 @@ test('проверка APK не хардкодит три ABI', () => {
 test('ABI по умолчанию — один, чтобы APK не раздувался', () => {
   const script = read('scripts/android-embed-node.mjs');
   assert.match(script, /process\.env\.VISION_ABIS \|\| 'arm64-v8a'/);
+});
+
+test('тестовый APK собирается по своему тегу, не трогая релиз', () => {
+  // Без этого `push` тега tester-v* не запускал workflow вообще (теги были только
+  // android-v*), и тестовую сборку нельзя было получить без ручного запуска.
+  assert.match(android, /- 'tester-v\*'/);
+  const doc = parseWorkflow(android);
+  assert.deepEqual(doc.on.push.tags, ['android-v*', 'tester-v*']);
+  // релизный job не должен собираться на тег тестового APK
+  assert.match(String(doc.jobs.apk.if), /tester-v/);
+  // а тестовый — не должен собираться на релизный тег
+  assert.match(String(doc.jobs.tester.if), /tester-v/);
 });
