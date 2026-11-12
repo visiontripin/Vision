@@ -27,9 +27,12 @@ endif()
 
 add_library(visionnode SHARED ${VISION_NODE_DIR}/vision-node-jni.cpp)
 
-# Node-заголовки: `include/node` лежит внутри `include`, потому что Node ищет
-# <node/node.h> и <uv.h> одновременно.
-target_include_directories(visionnode PRIVATE ${VISION_NODE_DIR}/libnode/include)
+# Node-заголовки: `node.h` сам подключает `uv.h`, `v8*.h` и `node_*.h` относительными
+# путями, поэтому каталогом поиска должен быть именно `include/node` (так же
+# поступает сам nodejs-mobile). `include` оставлен для <node/node.h> в будущем.
+target_include_directories(visionnode PRIVATE
+  ${VISION_NODE_DIR}/libnode/include/node
+  ${VISION_NODE_DIR}/libnode/include)
 
 add_library(libnode SHARED IMPORTED)
 set_target_properties(libnode PROPERTIES

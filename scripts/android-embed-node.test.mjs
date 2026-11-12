@@ -67,7 +67,10 @@ test('вживление раскладывает файлы и делает в�
     // AGP принимает только файл с именем CMakeLists.txt — это ломало сборку
     const cmake = path.join(app, 'src/main/cpp/visionnode/CMakeLists.txt');
     assert.ok(existsSync(cmake), 'CMakeLists.txt должен лежать в src/main/cpp/visionnode/');
-    assert.match(readFileSync(cmake, 'utf8'), /vision-node-jni\.cpp/);
+    const cmakeText = readFileSync(cmake, 'utf8');
+    assert.match(cmakeText, /vision-node-jni\.cpp/);
+    // node.h подключает uv.h/v8*.h относительными путями → нужен include/node
+    assert.match(cmakeText, /libnode\/include\/node/);
 
     // 2. bootstrap в assets — из него читает Java при старте
     const bootstrap = path.join(app, 'src/main/assets/nodejs-project/bootstrap.mjs');
