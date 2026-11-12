@@ -69,6 +69,17 @@ v24.22.3 с 16 КБ страницами памяти (требование Andr
 Версия и URL — в `apps/mobile/nodejs/android/node-version.json`, одна точка правды
 для CI и локальной сборки.
 
+## Что получилось на практике (0.9.0)
+
+- `android-v0.9.0` — **94 МБ** (`VisionAudio-0.9.0-android.apk`), внутри
+  `lib/arm64-v8a/libvisionnode.so`, `lib/arm64-v8a/libnode.so`,
+  `assets/nodejs-project/bootstrap.mjs`, сервис `VisionNodeService` в манифесте.
+- `tester-v0.9.0` — `VisionTester-0.9.0-android.apk` (94 МБ), `applicationId`
+  `app.vision.audio.tester`, ставится рядом с обычным приложением.
+- Проверка в CI: `Встроенный сервер (проверка сборки)` собирает APK на каждый пуш
+  в пути `apps/mobile/nodejs/**` и печатает содержимое; релизный workflow
+  (`Android APK`) делает то же по тегу `android-v*`, тестовый — по `tester-v*`.
+
 ## Сборка
 
 ```bash
