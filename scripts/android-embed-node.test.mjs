@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,9 +37,9 @@ function fakeProject() {
  * проверяем их так же, как результат — иначе тест не заметит, что про пропущенный
  * libnode просто промолчали.
  */
-function run(dir, extra = []) {
+function run(dir, extra = [], env = {}) {
   const result = spawnSync(process.execPath, [SCRIPT, ...extra], {
-    env: { ...process.env, VISION_APP_DIR: dir },
+    env: { ...process.env, VISION_APP_DIR: dir, ...env },
     encoding: 'utf8',
   });
   return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
@@ -64,8 +64,10 @@ test('вживление раскладывает файлы и делает в�
     for (const file of ['VisionNodeModule.kt', 'VisionNodePackage.kt', 'VisionNodeService.kt']) {
       assert.ok(existsSync(path.join(java, file)), `нет ${file}`);
     }
-    assert.ok(existsSync(path.join(app, 'src/main/cpp/vision-node-jni.cpp')));
-    assert.ok(existsSync(path.join(app, 'src/main/cpp/vision-node-CMakeLists.txt')));
+    // AGP принимает только файл с именем CMakeLists.txt — это ломало сборку
+    const cmake = path.join(app, 'src/main/cpp/visionnode/CMakeLists.txt');
+    assert.ok(existsSync(cmake), 'CMakeLists.txt должен лежать в src/main/cpp/visionnode/');
+    assert.match(readFileSync(cmake, 'utf8'), /vision-node-jni\.cpp/);
 
     // 2. bootstrap в assets — из него читает Java при старте
     const bootstrap = path.join(app, 'src/main/assets/nodejs-project/bootstrap.mjs');
@@ -130,5 +132,38 @@ test('--check падает, когда сервер не собран, и про
     assert.match(runFailing(dir, ['--check']), /libnode/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('с скачанным libnode подключается CMake с абсолютным путём к рантайму', () => {
+  const dir = fakeProject();
+  // Копия исходников во временном каталоге + фальшивый libnode: проверяем именно
+  // ветку «рантайм есть», не скачивая 90 МБ.
+  const src = mkdtempSync(path.join(tmpdir(), 'vision-nodesrc-'));
+  try {
+    cpSync(path.join(ROOT, 'apps/mobile/nodejs/android'), src, {
+      recursive: true,
+      filter: (from) => !from.includes(`${path.sep}libnode`),
+    });
+    mkdirSync(path.join(src, 'libnode/include/node'), { recursive: true });
+    writeFileSync(path.join(src, 'libnode/include/node/node.h'), '// stub\n');
+    for (const abi of ['arm64-v8a', 'armeabi-v7a', 'x86_64']) {
+      mkdirSync(path.join(src, 'libnode/bin', abi), { recursive: true });
+      writeFileSync(path.join(src, 'libnode/bin', abi, 'libnode.so'), 'stub');
+    }
+
+    const output = run(dir, [], { VISION_NODE_SRC: src }).output;
+    assert.match(output, /внешняя сборка CMake/);
+
+    const gradle = readFileSync(path.join(dir, 'android/app/build.gradle'), 'utf8');
+    // AGP: только файл с именем CMakeLists.txt
+    assert.match(gradle, /path "src\/main\/cpp\/visionnode\/CMakeLists\.txt"/);
+    assert.match(gradle, new RegExp(`arguments "-DVISION_NODE_DIR=${src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+
+    // --check теперь проходит: рантайм, мост, сервис и bootstrap на месте
+    assert.equal(run(dir, ['--check'], { VISION_NODE_SRC: src }).status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(src, { recursive: true, force: true });
   }
 });

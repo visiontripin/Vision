@@ -30,7 +30,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MOBILE = path.join(ROOT, 'apps/mobile');
 const APP_DIR = path.resolve(process.env.VISION_APP_DIR || MOBILE);
 const ANDROID = path.join(APP_DIR, 'android');
-const SRC = path.join(MOBILE, 'nodejs/android');
+// VISION_NODE_SRC — только для тестов: подменяет каталог с мостом и libnode.
+const SRC = path.resolve(process.env.VISION_NODE_SRC || path.join(MOBILE, 'nodejs/android'));
 const CHECK_ONLY = process.argv.includes('--check');
 const MARK = '// vision-node';
 
@@ -82,10 +83,11 @@ for (const file of readdirSync(JAVA_SRC)) {
 }
 log(`Kotlin: ${readdirSync(JAVA_SRC).length} файла в app/vision/audio/node`);
 
-const cppDst = path.join(ANDROID, 'app/src/main/cpp');
+// AGP требует ровно `CMakeLists.txt` — кладём его в подкаталог, чтобы не
+// конфликтовать с другими нативными сборками проекта.
+const cppDst = path.join(ANDROID, 'app/src/main/cpp/visionnode');
 mkdirSync(cppDst, { recursive: true });
-cpSync(path.join(SRC, 'vision-node-jni.cpp'), path.join(cppDst, 'vision-node-jni.cpp'));
-cpSync(path.join(SRC, 'CMakeLists.txt'), path.join(cppDst, 'vision-node-CMakeLists.txt'));
+cpSync(path.join(SRC, 'CMakeLists.txt'), path.join(cppDst, 'CMakeLists.txt'));
 
 // --- 2. bootstrap.mjs в assets --------------------------------------------
 const assets = path.join(ANDROID, 'app/src/main/assets/nodejs-project');
@@ -133,8 +135,17 @@ ${MARK}:native
 android {
     externalNativeBuild {
         cmake {
-            path "src/main/cpp/vision-node-CMakeLists.txt"
+            path "src/main/cpp/visionnode/CMakeLists.txt"
             version "3.22.1"
+        }
+    }
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                // Абсолютный путь: исходник моста и рантайм лежат в репозитории,
+                // а не в сгенерированном каталоге Android-проекта.
+                arguments "-DVISION_NODE_DIR=${SRC}"
+            }
         }
     }
 }
