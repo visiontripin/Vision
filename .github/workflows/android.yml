@@ -256,7 +256,9 @@ jobs:
   # включённым «Собрать отдельный тестовый APK».
   tester:
     name: VisionTester APK
-    if: inputs.tester == true
+    # либо вручную с включённым input, либо тегом tester-v*: workflow_dispatch из
+    # другого workflow не вызвать, а тестовый APK нужен по расписанию релиза
+    if: inputs.tester == true || startsWith(github.ref, 'refs/tags/tester-v')
     runs-on: ubuntu-latest
     defaults:
       run:

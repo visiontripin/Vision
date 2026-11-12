@@ -119,6 +119,23 @@ Actions → Android APK → Run workflow → «Собрать отдельный
   "runtime": "v24.22.3", "mode": "diagnostic", "error": null, "at": 1794470876726 }
 ```
 
+## Что выяснилось на сборке (и уже учтено)
+
+Каждый пункт стоил отдельного прогона CI — записываю, чтобы не наступать снова:
+
+| Симптом в CI | Причина | Решение |
+|---|---|---|
+| `[CXX1400] cmake.path specifies vision-node-CMakeLists.txt but it must be CMakeLists.txt` | AGP принимает только файл с таким именем | `src/main/cpp/visionnode/CMakeLists.txt` + `-DVISION_NODE_DIR=…` |
+| `'node.h' file not found` | `node.h` подключает `uv.h`, `v8*.h` относительными путями | каталог поиска — `libnode/include/node` |
+| `v8config.h: "C++20 or later required"`, concepts в `cppgc` | Node 24 (V8 13.x) требует C++20 | `CMAKE_CXX_STANDARD 20` |
+| `x86/libnode.so, needed by libvisionnode.so, missing` | Gradle создаёт задачи CMake по `reactNativeArchitectures` | в `gradle.properties` только `arm64-v8a` (или `VISION_ABIS`) |
+| `Could not find method abiFilters() … on CmakeOptions` | в AGP у `cmake {}` нет `abiFilters` | ABI задаются только в `gradle.properties` |
+| `const val` в классе → `compileReleaseKotlin` | в Kotlin константа допустима лишь в `object`/`companion object` | `scripts/kotlin-sanity.test.mjs` ловит это до сборки |
+| APK 247 МБ | каждый ABI добавляет ~60 МБ `libnode.so` | по умолчанию один ABI (`arm64-v8a`) → ~90 МБ |
+
+Проверка без Android SDK: `node --test scripts/kotlin-sanity.test.mjs
+scripts/android-embed-node.test.mjs` — 10 тестов, секунды.
+
 ## Правила, которые нельзя ломать
 
 1. **Только петля по умолчанию.** `127.0.0.1`, не `0.0.0.0`: сервер не должен
