@@ -16,8 +16,11 @@
 cmake_minimum_required(VERSION 3.18.1)
 project(visionnode)
 
-set(CMAKE_CXX_STANDARD 17)
+# Node 24 (V8 13.x) требует C++20: `v8config.h` падает с «C++20 or later required»,
+# а `cppgc` использует concepts. С 17 сборка не проходит даже компиляцию.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Путь передаётся абсолютным из Gradle: CMakeLists лежит внутри проекта, а рантайм
 # и исходник моста — в репозитории, вне сгенерированного каталога.

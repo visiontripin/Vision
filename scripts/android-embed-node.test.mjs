@@ -71,6 +71,8 @@ test('вживление раскладывает файлы и делает в�
     assert.match(cmakeText, /vision-node-jni\.cpp/);
     // node.h подключает uv.h/v8*.h относительными путями → нужен include/node
     assert.match(cmakeText, /libnode\/include\/node/);
+    // Node 24 без C++20 не компилируется (v8config.h: «C++20 or later required»)
+    assert.match(cmakeText, /CMAKE_CXX_STANDARD 20/);
 
     // 2. bootstrap в assets — из него читает Java при старте
     const bootstrap = path.join(app, 'src/main/assets/nodejs-project/bootstrap.mjs');
