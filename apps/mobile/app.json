@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "Vision Audio",
+    "name": "Vision Audio Tester",
     "slug": "vision-audio",
     "version": "0.9.0",
     "orientation": "portrait",
-    "scheme": "visionaudio",
+    "scheme": "visiontester",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07070A",
     "icon": "./assets/icon.png",
@@ -29,16 +29,16 @@
       }
     },
     "android": {
-      "package": "app.vision.audio",
+      "package": "app.vision.audio.tester",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#07070A"
       },
       "permissions": [
+        "INTERNET",
         "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
-        "INTERNET"
+        "FOREGROUND_SERVICE_DATA_SYNC"
       ],
       "intentFilters": [
         {

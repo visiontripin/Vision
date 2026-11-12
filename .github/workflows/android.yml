@@ -109,12 +109,18 @@ jobs:
       - name: Встроить сервер в проект
         if: github.event_name != 'workflow_dispatch' || inputs.embedded
         run: |
-          node ../../scripts/android-embed-node.mjs
+          set -o pipefail
+          if node ../../scripts/android-embed-node.mjs 2>&1 | tee /tmp/embed.log; then
+            :
+          else
+            tail -n 15 /tmp/embed.log | while IFS= read -r line; do echo "::error title=embed::$line"; done
+            exit 1
+          fi
           # Проверка настроек в одном месте: если Node не попал в APK, это должно
           # быть видно строкой в логе, а не догадкой по размеру файла.
           grep -E '^reactNativeArchitectures=' android/gradle.properties \
             | while IFS= read -r line; do echo "::warning title=embedded::$line"; done
-          ls -1 apps/mobile/nodejs/android/libnode/bin 2>/dev/null | tr '\n' ' ' \
+          ls -1 ../../apps/mobile/nodejs/android/libnode/bin 2>/dev/null | tr '\n' ' ' \
             | while IFS= read -r line; do echo "::warning title=embedded::libnode ABI: $line"; done
 
       - name: Проверить встроенный сервер
@@ -337,12 +343,18 @@ jobs:
       - name: Встроить сервер в проект
         if: github.event_name != 'workflow_dispatch' || inputs.embedded
         run: |
-          node ../../scripts/android-embed-node.mjs
+          set -o pipefail
+          if node ../../scripts/android-embed-node.mjs 2>&1 | tee /tmp/embed.log; then
+            :
+          else
+            tail -n 15 /tmp/embed.log | while IFS= read -r line; do echo "::error title=embed::$line"; done
+            exit 1
+          fi
           # Проверка настроек в одном месте: если Node не попал в APK, это должно
           # быть видно строкой в логе, а не догадкой по размеру файла.
           grep -E '^reactNativeArchitectures=' android/gradle.properties \
             | while IFS= read -r line; do echo "::warning title=embedded::$line"; done
-          ls -1 apps/mobile/nodejs/android/libnode/bin 2>/dev/null | tr '\n' ' ' \
+          ls -1 ../../apps/mobile/nodejs/android/libnode/bin 2>/dev/null | tr '\n' ' ' \
             | while IFS= read -r line; do echo "::warning title=embedded::libnode ABI: $line"; done
 
       - name: Сборка APK
