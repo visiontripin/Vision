@@ -27,9 +27,9 @@
 
 **Android**
 
-- Плеер Vision Audio 0.6.0 (последняя версия): https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-latest.apk
-- Плеер 0.6.0 (фиксированная версия): https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-0.6.0-android.apk
-- SHA-256 APK: https://github.com/visiontripin/Vision/releases/download/android-v0.6.0/VisionAudio-0.6.0-android.apk.sha256
+- Плеер Vision Audio 0.7.0 (последняя версия): https://github.com/visiontripin/Vision/releases/download/android-v0.7.0/VisionAudio-latest.apk
+- Плеер 0.7.0 (фиксированная версия): https://github.com/visiontripin/Vision/releases/download/android-v0.7.0/VisionAudio-0.7.0-android.apk
+- SHA-256 APK: https://github.com/visiontripin/Vision/releases/download/android-v0.7.0/VisionAudio-0.7.0-android.apk.sha256
 - Админка / запуск сервера (подписан): https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-latest.apk
 
 **Windows**
