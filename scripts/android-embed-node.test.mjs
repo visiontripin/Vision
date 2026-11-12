@@ -91,7 +91,9 @@ test('вживление раскладывает файлы и делает в�
 
     // 5. ABI-фильтры
     const gradle = readFileSync(path.join(app, 'build.gradle'), 'utf8');
-    assert.match(gradle, /abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'/);
+    // два места: упаковка (ndk) и нативная сборка (cmake) — без второго Gradle
+    // создаёт задачи CMake и для x86, для которого рантайма нет
+    assert.equal(gradle.match(/abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'/g).length, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -163,6 +165,9 @@ test('с скачанным libnode подключается CMake с абсол
     const gradle = readFileSync(path.join(dir, 'android/app/build.gradle'), 'utf8');
     // AGP: только файл с именем CMakeLists.txt
     assert.match(gradle, /path "src\/main\/cpp\/visionnode\/CMakeLists\.txt"/);
+    // два списка ABI: упаковка (ndk) и нативная сборка (cmake) — без второго
+    // Gradle создаёт задачи CMake и для x86, для которого рантайма нет
+    assert.equal(gradle.match(/abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'/g).length, 2);
     assert.match(gradle, new RegExp(`arguments "-DVISION_NODE_DIR=${src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
 
     // --check теперь проходит: рантайм, мост, сервис и bootstrap на месте

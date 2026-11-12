@@ -109,6 +109,10 @@ function stripBlock(text, name) {
 gradle = stripBlock(gradle, 'native');
 gradle = stripBlock(gradle, 'abi');
 
+// iOS-симулятор и устаревший x86 в APK не нужны: Node-рантайма под них нет, и
+// `configureCMake` падал на отсутствующем libnode.so для x86. `ndk.abiFilters`
+// фильтрует упаковку, но задачи CMake создаются по `abiFilters` нативного блока —
+// поэтому список задаётся именно здесь.
 const abiBlock = `
 ${MARK}:abi
 android {
@@ -137,6 +141,9 @@ android {
         cmake {
             path "src/main/cpp/visionnode/CMakeLists.txt"
             version "3.22.1"
+            // Тот же список, что у ndk: без него Gradle создаёт задачи CMake и для
+            // x86, где libnode.so нет, и сборка падает на «missing and no known rule».
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
         }
     }
     defaultConfig {
