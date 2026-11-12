@@ -209,20 +209,27 @@ test('занятый порт даёт понятную ошибку, а не м
   const dirB = mkdtempSync(path.join(tmpdir(), 'vision-emb-b-'));
   const port = await freePort();
   const first = start(dirA, port);
-  const second = start(dirB, port);
+  let second;
   try {
+    // Сначала дожидаемся, что первый сервер **уже слушает**, и только потом
+    // запускаем второй. Иначе под нагрузкой гонка решается в пользу второго, он
+    // занимает порт, а падает первый — и тест проверяет не то, что задумано.
+    await waitForState(dirA, 'running');
     await waitFor(`http://127.0.0.1:${port}/api/health`);
+    second = start(dirB, port);
     const state = await waitForState(dirB, 'failed');
     assert.equal(state.phase, 'failed');
     assert.match(state.error, /EADDRINUSE|address already in use/i);
   } finally {
     first.child.kill('SIGTERM');
-    try {
-      second.child.kill('SIGTERM');
-    } catch {
-      /* второй процесс уже завершился сам */
+    if (second) {
+      try {
+        second.child.kill('SIGTERM');
+      } catch {
+        /* второй процесс уже завершился сам */
+      }
     }
-    await Promise.all([waitForExit(first.child), waitForExit(second.child)]);
+    await Promise.all([waitForExit(first.child), second ? waitForExit(second.child) : Promise.resolve()]);
     rmSync(dirA, { recursive: true, force: true });
     rmSync(dirB, { recursive: true, force: true });
   }
