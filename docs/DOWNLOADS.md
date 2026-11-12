@@ -10,9 +10,10 @@
 
 | Что | Ссылка | Размер |
 |---|---|---|
-| **Плеер Vision Audio** (всегда последняя версия) | https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-latest.apk | 57.7 МБ |
-| Плеер Vision Audio 0.8.0 (фиксированная версия) | https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-0.8.0-android.apk | 57.7 МБ |
-| Контрольная сумма APK | https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-0.8.0-android.apk.sha256 | 96 Б |
+| **Плеер Vision Audio** (всегда последняя версия) | https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-latest.apk | 90 МБ |
+| Плеер Vision Audio 0.9.0 (фиксированная версия) | https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk | 90 МБ |
+| **Тестовый APK** (ставится рядом, свой applicationId) | https://github.com/visiontripin/Vision/releases/download/tester-v0.9.0/VisionTester-0.9.0-android.apk | 90 МБ |
+| Контрольная сумма APK | https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk.sha256 | 96 Б |
 | **Админка / запуск сервера** (APK, подписан — ставится) | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-latest.apk | 36 МБ |
 | Админка — фиксированная версия | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-0.1.1-android.apk | 36 МБ |
 | Контрольная сумма APK админки | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-0.1.1-android.apk.sha256 | 97 Б |
@@ -51,8 +52,8 @@ AppImage: `chmod +x Vision.Audio_0.3.0_amd64.AppImage && ./Vision.Audio_0.3.0_am
 ## Проверка целостности APK
 
 ```bash
-curl -LO https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-0.8.0-android.apk
-curl -LO https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-0.8.0-android.apk.sha256
+curl -LO https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk
+curl -LO https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk.sha256
 sha256sum -c VisionAudio-0.6.0-android.apk.sha256
 ```
 
@@ -69,6 +70,6 @@ sha256sum -c VisionAudio-0.6.0-android.apk.sha256
 ## Ссылки на страницы релизов
 
 - Все релизы: https://github.com/visiontripin/Vision/releases
-- Android 0.8.0: https://github.com/visiontripin/Vision/releases/tag/android-v0.8.0
+- Android 0.8.0: https://github.com/visiontripin/Vision/releases/tag/android-v0.9.0
 - Windows-плеер + Linux 0.3.0: https://github.com/visiontripin/Vision/releases/tag/desktop-v0.3.0
 - Сервер + админка 0.1.1: https://github.com/visiontripin/Vision/releases/tag/console-v0.1.1

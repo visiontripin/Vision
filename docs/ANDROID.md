@@ -33,6 +33,18 @@ https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-late
 
 Повторный запуск с тем же тегом не падает: workflow обновляет ассеты (`--clobber`).
 
+## Встроенный сервер и тестовый APK
+
+Сборка с Node-рантаймом (input `embedded`, по умолчанию `true`) дополнительно
+скачивает ≈90 МБ рантайма (кэшируется по версии) и вживляет его скриптом
+`scripts/android-embed-node.mjs`. Проверка APK в этом случае требует
+`lib/<abi>/libnode.so` под три ABI и `assets/nodejs-project/bootstrap.mjs`;
+если рантайма нет — сборка помечается предупреждением «без Node», а не молчит.
+
+Тестовый APK (`VisionTester`) собирается тем же workflow при включённом input
+`tester` (job `tester`): другой `applicationId`, ставится рядом с обычным
+приложением, внутри встроенный Node и тестер API. Подробности — `docs/EMBEDDED.md`.
+
 ## Что проверяется в CI
 
 Сборка не публикуется, если APK не проходит проверки; результаты печатаются

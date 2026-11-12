@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.29.0 — 2026-11-12
+
+**Сервер теперь живёт в самом приложении (вариант A) — вместе с общей библиотекой
+(вариант D).** Приложение поднимает Node-рантайм и HTTP-сервер у себя на телефоне:
+полный доступ к `/api/health`, файлам и перемотке без внешнего сервера. Общая
+библиотека при этом не выключается — треки других устройств по-прежнему приходят
+через реестр в любой сети. Подробности: `docs/EMBEDDED.md`.
+
+### Почему Node 24, а не npm-пакет
+
+`nodejs-mobile-react-native` в npm — Node 18, а серверу нужен `node:sqlite`
+(Node 22.5+, в 24 — release candidate). Поэтому берём сборку
+`RockinChaos/nodejs-mobile` v24.22.3 (16 КБ страницы памяти, требование Android 15+),
+а мост пишем сами: нужен только `node::Start` в потоке, без протокола сообщений.
+
+### Что появилось
+
+- `apps/mobile/nodejs/embedded/bootstrap.mjs` — точка входа в Node: HTTP-сервер
+  (`/api/health`, `/api/files`, `PUT/DELETE /api/files/library/*`, `/files/*` с
+  `Range`, `POST /api/shutdown`), запись `state.json`, обработка падений;
+- `apps/mobile/nodejs/android/vision-node-jni.cpp` — JNI-мост, stdout/stderr в logcat;
+- Kotlin: `VisionNodeModule` (`NativeModules.VisionNode`), `VisionNodeService`
+  (foreground-сервис), распаковка `bootstrap.mjs` из assets;
+- `apps/mobile/src/runtime.ts` — запуск/остановка/чтение состояния; сервер стартует
+  сам при запуске приложения и никогда не роняет экран, если рантайма нет;
+- `src/lib/embedded-server.ts` — порты (4000…4010), `EADDRINUSE` → соседний порт,
+  состояния и тексты (11 тестов);
+- экран **«Сервер на телефоне»**: состояние, адрес, версия Node, причина отказа,
+  запуск и остановка (состояние читается из `state.json`, а не из факта вызова JNI);
+- **встроенный тестер API**: шесть проверок (health, список, загрузка, скачивание,
+  `Range`, удаление), отчёт с копированием/шерингом (8 тестов);
+- **тестовый APK `VisionTester`**: свой `applicationId`
+  `app.vision.audio.tester`, ставится рядом с обычным приложением, содержит Node и
+  тестер (`scripts/android-tester-app.mjs`, job `tester` в CI);
+- скрипты сборки: `scripts/fetch-nodejs-mobile.mjs` (кэш в CI по версии),
+  `scripts/android-embed-node.mjs` (идемпотентное вживление, `--check` для CI);
+- проверка APK в CI: наличие `lib/arm64-v8a/libvisionnode.so`, `libnode.so` под три
+  ABI и `assets/nodejs-project/bootstrap.mjs` — иначе сборка без Node помечается
+  предупреждением, а не выдаётся за рабочую.
+
+### Тесты
+
+`npm test` 191/191, `test:local` 163/163 (+19), `test:scripts` 22/22 (+8),
+`npm run test:embedded` 5/5 — сервер запускается процессом и проверяется по HTTP:
+подъём и `state.json`, загрузка/Range/удаление, токен, `/api/shutdown`, занятый порт.
+
+### Ограничения
+
+Сервер собран вокруг диагностического режима: полный `services/api` в APK пока не
+упакован (`mode: "diagnostic"`, не сделано L2). iOS — как раньше: локальный плеер и
+реестр. `ffmpeg` в APK нет.
+
 ## 0.28.0 — 2026-11-12
 
 **Одна библиотека на всех устройствах — в любой сети.** Загрузили пять песен на

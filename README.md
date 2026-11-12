@@ -27,9 +27,9 @@
 
 **Android**
 
-- Плеер Vision Audio 0.8.0 (последняя версия): https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-latest.apk
-- Плеер 0.8.0 (фиксированная версия): https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-0.8.0-android.apk
-- SHA-256 APK: https://github.com/visiontripin/Vision/releases/download/android-v0.8.0/VisionAudio-0.8.0-android.apk.sha256
+- Плеер Vision Audio 0.9.0 (последняя версия): https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-latest.apk
+- Плеер 0.9.0 (фиксированная версия): https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk
+- SHA-256 APK: https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk.sha256
 - Админка / запуск сервера (подписан): https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-latest.apk
 
 **Windows**
@@ -170,6 +170,13 @@ cd apps/mobile && npm install && npx expo start   # Expo Go на телефон�
 ```
 https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk
 ```
+
+**Сервер внутри приложения:** с версии 0.9.0 приложение поднимает HTTP-сервер на
+самом телефоне (Node 24 в APK) и умеет проверять API без компьютера — экран
+«Настройки → Сервер на телефоне». Общая библиотека при этом работает через реестр
+в любой сети. Устройство, скрипты сборки и ограничения — `docs/EMBEDDED.md`;
+отдельный **тестовый APK** `VisionTester` (свой `applicationId`, ставится рядом)
+собирается тем же workflow при включённом input `tester`.
 
 Подробности, подпись и установка — `docs/ANDROID.md`, ограничения — `apps/mobile/README.md`.
 

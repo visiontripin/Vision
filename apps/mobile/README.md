@@ -153,3 +153,29 @@ npm run build:ios
 - **Загрузка с телефона** (upload) пока только через веб-версию.
 - **Сидирование файлов другим пользователям** — отдельная итерация: план в
   `docs/DISTRIBUTED.md` (контент-адресация, реестр реплик, сиды Termux/десктоп/телефон).
+
+## Сервер на телефоне (v0.9.0)
+
+Приложение поднимает HTTP-сервер у себя на устройстве: Node 24 из
+`nodejs/android/libnode` через `libvisionnode.so`, `bootstrap.mjs` из assets,
+foreground-сервис `VisionNodeService`.
+
+- Стартует сам при запуске (`App.tsx`), ошибок модалками не показывает.
+- Состояние: `Настройки → Сервер на телефоне` — фаза, адрес, версия Node, причина
+  отказа, кнопки «Запустить»/«Остановить» и «Открыть тестер».
+- Данные: `filesDir/vision-node` (`state.json`, `library/`), переживают обновление.
+- Рантайма нет (обычная сборка, iOS, Expo Go) — приложение работает как локальный
+  плеер, экран честно пишет «нет рантайма».
+
+Сборка с рантаймом:
+
+```bash
+npx expo prebuild -p android --no-install
+node ../../scripts/fetch-nodejs-mobile.mjs   # ≈90 МБ, один раз
+node ../../scripts/android-prepare.mjs
+node ../../scripts/android-embed-node.mjs
+```
+
+Тесты: `node --test test/embedded-server.test.mjs` (процесс + HTTP),
+`npx tsx --test src/lib/embedded-server.test.ts src/lib/tester.test.ts` (логика).
+Подробности — `../../docs/EMBEDDED.md`.
