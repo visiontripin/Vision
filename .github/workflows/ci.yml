@@ -120,11 +120,22 @@ jobs:
             throw new Error("MinIO did not become healthy within 60 seconds.");
           '
       - name: PostgreSQL, Redis and S3 integration tests
-        run: >-
-          node --test
-          services/api/test/platform-postgres.integration.test.js
-          services/api/test/platform-queue.integration.test.js
-          services/api/test/platform-storage.integration.test.js
+        shell: bash
+        run: |
+          log_file="$RUNNER_TEMP/platform-integration.log"
+          if node --test \
+            services/api/test/platform-postgres.integration.test.js \
+            services/api/test/platform-queue.integration.test.js \
+            services/api/test/platform-storage.integration.test.js >"$log_file" 2>&1; then
+            cat "$log_file"
+          else
+            status=$?
+            cat "$log_file"
+            details="$(tail -n 40 "$log_file" | tr '\r\n' ' ' | cut -c1-3000)"
+            details="${details//'%'/'%25'}"
+            echo "::error title=Platform integration test details::${details}"
+            exit "$status"
+          fi
 
   smoke:
     name: API smoke (CI job; branch protection pending)

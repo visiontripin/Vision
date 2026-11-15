@@ -78,6 +78,9 @@ test('active CI checks API, web, platform integrations and Android client before
   assert.match(minioStep.run, /MinIO container startup failed/);
   const minioHealthStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'Wait for MinIO readiness');
   assert.match(minioHealthStep.run, /process\.env\.PLATFORM_S3_ENDPOINT/);
+  const integrationTestStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'PostgreSQL, Redis and S3 integration tests');
+  assert.match(integrationTestStep.run, /RUNNER_TEMP\/platform-integration\.log/);
+  assert.match(integrationTestStep.run, /Platform integration test details/);
   assert.deepEqual(ciWorkflow.jobs.smoke.needs, ['test', 'mobile', 'platform-integration']);
   assert.equal(ciWorkflow.permissions.contents, 'read');
   assert.match(ciText, /npm run check:api-types/);
