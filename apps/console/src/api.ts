@@ -291,6 +291,10 @@ export class ConsoleClient {
     return result;
   }
 
+  shutdown() {
+    return this.request<{ ok: boolean; stopping: boolean }>('/api/shutdown', { method: 'POST' });
+  }
+
   me() {
     return this.request<{ ok: boolean; role: string; version: string }>('/api/me');
   }

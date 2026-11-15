@@ -62,7 +62,8 @@ import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
 import {
-  VERSION, PASSWORD, issueToken, verifyToken, safeEqual, rateLimit,
+  VERSION, issueToken, verifyToken, verifyOwnerPassword,
+  ownerPasswordIsConfigured, ownerPasswordSetupEnabled, setInitialOwnerPassword, rateLimit,
   detectAudio, detectImage, json, fail, readJson, uid, str, log,
   signMedia, verifyMedia, MEDIA_TTL_MS,
 } from './lib.js';
@@ -223,7 +224,10 @@ async function handleLogin(req, res) {
   } catch {
     return fail(res, 400, 'invalid_json', 'Ожидался JSON.');
   }
-  if (!safeEqual(body.password || '', PASSWORD)) {
+  if (!ownerPasswordIsConfigured()) {
+    return fail(res, 503, 'setup_required', 'Сначала задайте пароль владельца из локальной панели Vision Server.');
+  }
+  if (!verifyOwnerPassword(body.password || '')) {
     inc('vision_auth_failures_total');
     // факт попытки без пароля: видно подбор, но нечем воспользоваться
     audit('auth.fail', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
@@ -232,6 +236,58 @@ async function handleLogin(req, res) {
   inc('vision_auth_success_total');
   audit('auth.login', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
   json(res, 200, issueToken());
+}
+
+function isLoopbackAddress(req) {
+  const address = String(req.socket.remoteAddress || '').toLowerCase();
+  return address === '127.0.0.1' || address === '::1' || address.startsWith('::ffff:127.');
+}
+
+function trustedSetupOrigin(req) {
+  const origin = String(req.headers.origin || '').toLowerCase();
+  if (!origin) return true;
+  return new Set([
+    'tauri://localhost',
+    'http://tauri.localhost',
+    'https://tauri.localhost',
+    'http://localhost',
+    'https://localhost',
+    'http://127.0.0.1',
+    'https://127.0.0.1',
+  ]).has(origin);
+}
+
+/** Первичная настройка доступна только локальной оболочке и только один раз. */
+async function handleOwnerSetup(req, res) {
+  if (!ownerPasswordSetupEnabled()) return fail(res, 404, 'not_found', 'Маршрут не найден.');
+  if (!isLoopbackAddress(req) || !trustedSetupOrigin(req)) {
+    return fail(res, 403, 'setup_forbidden', 'Первичную настройку можно выполнить только в Vision Server на этом ПК.');
+  }
+  if (req.method === 'GET') {
+    return json(res, 200, { configured: ownerPasswordIsConfigured() });
+  }
+  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed', 'Поддерживаются GET и POST.');
+  if (ownerPasswordIsConfigured()) return fail(res, 409, 'already_configured', 'Пароль владельца уже задан.');
+
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    return fail(res, 400, 'invalid_json', 'Ожидался JSON.');
+  }
+  const password = String(body.password || '');
+  const length = [...password].length;
+  if (length < 12 || length > 256) {
+    return fail(res, 400, 'invalid_password', 'Пароль должен содержать от 12 до 256 символов.');
+  }
+  try {
+    setInitialOwnerPassword(password);
+  } catch (error) {
+    if (ownerPasswordIsConfigured()) return fail(res, 409, 'already_configured', 'Пароль владельца уже задан.');
+    log('error', 'owner password setup failed', { error: error?.message || String(error) });
+    return fail(res, 500, 'setup_failed', 'Не удалось сохранить пароль владельца. Проверьте права на каталог данных.');
+  }
+  return json(res, 201, { configured: true });
 }
 
 /* ----------------------------- сиды и трекер ----------------------------- */
@@ -732,6 +788,8 @@ async function handleApi(req, res, url) {
   const { pathname } = url;
   const method = req.method || 'GET';
 
+  if (pathname === '/api/setup') return handleOwnerSetup(req, res);
+
   if (pathname === '/api/health' && method === 'GET') {
     const free = freeDiskMb();
     setGauge('vision_disk_free_bytes', free === null ? null : free * 1024 * 1024);
@@ -853,6 +911,14 @@ async function handleApi(req, res, url) {
     const sig = url.searchParams.get('sig');
     const signed = Boolean(target && target.kinds.some((kind) => verifyMedia(target.id, kind, exp, sig)));
     if (!signed) return fail(res, 401, 'unauthorized', 'Требуется вход.');
+  }
+
+  // Штатная остановка управляемого Windows-процесса. Только владелец с валидным
+  // Bearer-токеном может её запросить; завершаем сервер после отправки ответа.
+  if (pathname === '/api/shutdown' && method === 'POST') {
+    json(res, 202, { ok: true, stopping: true });
+    res.once('finish', () => setTimeout(shutdown, 25).unref());
+    return;
   }
 
   /*
@@ -1951,7 +2017,7 @@ async function handleApi(req, res, url) {
       if (!idToAdd || !getTrack(idToAdd)) return fail(res, 400, 'invalid_track', 'Трек не найден.');
       const max = db.prepare('SELECT COALESCE(MAX(position), -1) AS p FROM playlist_tracks WHERE playlist_id = ?').get(playlistId);
       db.prepare('INSERT OR REPLACE INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)')
-        .run(playlistId, idToAdd, (max?.p ?? -1) + 1);
+        .run(playlistId, idToAdd, Number(max?.p ?? -1) + 1);
       res.writeHead(204);
       return res.end();
     }
@@ -2430,6 +2496,15 @@ const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     return res.end();
+  }
+
+  if (
+    ownerPasswordSetupEnabled()
+    && !ownerPasswordIsConfigured()
+    && url.pathname !== '/api/setup'
+    && url.pathname !== '/api/health'
+  ) {
+    return fail(res, 503, 'setup_required', 'Сначала завершите первичную настройку Vision Server на этом ПК.');
   }
 
   if (url.pathname === '/metrics' && req.method === 'GET') {

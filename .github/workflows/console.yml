@@ -1,27 +1,19 @@
-name: Console (Windows + Android)
+name: Console (frozen; manual validation only)
 
-# Отдельное приложение «Vision Server»: запуск и админка.
-#   - ubuntu: типы, тесты и сборка панели (дешёвая проверка на каждом PR);
-#   - windows-latest: Tauri-установщик .msi/.exe (NSIS);
-#   - android: Tauri 2 APK (Rust + NDK) в отдельной джобе, не блокирует PR.
-#
-#   git tag console-v0.1.0 && git push origin console-v0.1.0 → GitHub Release
+# Frozen console/Vision Server experiment (ADR-0016).
+# No PR, push, or tag triggers; manual dispatch defaults to notice-only. Set `validate`
+# explicitly for an audit build. Release publication is disabled and contents are read-only.
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'apps/console/**'
-      - 'packages/shared/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/console.yml'
-  push:
-    tags:
-      - 'console-v*'
+    inputs:
+      validate:
+        description: 'Run a manual audit build for this frozen platform (does not publish a release)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: console-${{ github.ref }}
@@ -32,7 +24,14 @@ env:
   CI: 'true'
 
 jobs:
+  frozen_notice:
+    name: Frozen platform notice
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "::notice::Console / Vision Server is frozen by ADR-0016; validation is opt-in and release publication is disabled."
+
   check:
+    if: ${{ inputs.validate }}
     name: Панель (типы, тесты, сборка)
     runs-on: ubuntu-latest
     steps:
@@ -48,11 +47,15 @@ jobs:
         run: npx tsx --test apps/console/src/lib.test.ts
       - name: Сборка панели
         run: npm run build:console
-      - name: Сервер отдаёт /admin
-        run: node --test services/api/test/console.test.js
+      - name: Guards workflow
+        run: npm run test:scripts
+      - name: 'API: /admin, настройка владельца и штатная остановка'
+        run: node --test services/api/test/console.test.js services/api/test/shutdown.test.js services/api/test/owner-setup.test.js
 
   windows:
-    name: Windows (.msi + .exe)
+    if: ${{ inputs.validate }}
+    name: Windows (NSIS installer + service test)
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,19 +80,101 @@ jobs:
             exit 1
           fi
           tail -n 8 build.log
-      - name: Артефакты
+      - name: Проверить включённый серверный runtime
+        shell: pwsh
         run: |
-          Get-ChildItem apps/console/src-tauri/target/release/bundle -Recurse -Include *.msi,*.exe |
+          $required = @(
+            'apps/console/src-tauri/resources/node/node.exe',
+            'apps/console/src-tauri/resources/server/services/api/src/start.js',
+            'apps/console/src-tauri/resources/server/apps/console/dist/index.html',
+            'apps/console/src-tauri/resources/server/bin/ffmpeg.exe',
+            'apps/console/src-tauri/resources/server/service/VisionServer.exe',
+            'apps/console/src-tauri/resources/server/service/VisionServer.exe.config',
+            'apps/console/src-tauri/resources/server/service/VisionServer.xml'
+          )
+          foreach ($path in $required) {
+            if (!(Test-Path $path)) { throw "Не найден ресурс установщика: $path" }
+          }
+          $nodeVersion = & apps/console/src-tauri/resources/node/node.exe --version
+          if ($nodeVersion -ne 'v24.22.3') { throw "Ожидался Node v24.22.3, получен $nodeVersion" }
+          $ffmpegVersion = & apps/console/src-tauri/resources/server/bin/ffmpeg.exe -version
+          if ($LASTEXITCODE -ne 0 -or $ffmpegVersion -notmatch '^ffmpeg version') { throw 'Не удалось запустить упакованный ffmpeg.exe' }
+          Write-Host "Installer resources verified: Node $nodeVersion, API, admin UI, FFmpeg and WinSW"
+      - name: Установить и проверить Windows-службу
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'apps/console/src-tauri/target/release/bundle/nsis' -Filter '*setup.exe' | Select-Object -First 1
+          if (!$installer) { throw 'NSIS setup.exe was not produced' }
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList @('/S', '/D=C:\VisionServerTest') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Silent installer exited with $($install.ExitCode)" }
+
+          $service = Get-Service -Name 'VisionServer' -ErrorAction Stop
+          $deadline = (Get-Date).AddSeconds(60)
+          do {
+            $service.Refresh()
+            if ($service.Status -eq 'Running') { break }
+            Start-Sleep -Seconds 1
+          } while ((Get-Date) -lt $deadline)
+          if ($service.Status -ne 'Running') { throw "VisionServer did not start; state=$($service.Status)" }
+
+          $nativeService = Get-CimInstance Win32_Service -Filter "Name='VisionServer'"
+          if ($nativeService.StartMode -ne 'Auto') { throw "Service must start at boot; StartMode=$($nativeService.StartMode)" }
+          $serviceSddl = (sc.exe sdshow VisionServer | Out-String)
+          if ($serviceSddl -notmatch 'LCRPWP;;;BU') { throw 'Built-in Users cannot query/start/stop the managed service' }
+
+          $health = $null
+          $deadline = (Get-Date).AddSeconds(60)
+          do {
+            try { $health = Invoke-RestMethod 'http://127.0.0.1:4000/api/health' -TimeoutSec 5; break }
+            catch { Start-Sleep -Seconds 1 }
+          } while ((Get-Date) -lt $deadline)
+          if (!$health.ok) { throw 'Packaged Vision API did not become healthy on port 4000' }
+          if (!$health.ffmpeg.available) { throw 'Packaged API cannot launch the bundled FFmpeg binary' }
+          if ($health.runtime.node -ne 'v24.22.3') { throw "Packaged API used unexpected Node $($health.runtime.node)" }
+
+          $setup = Invoke-RestMethod 'http://127.0.0.1:4000/api/setup'
+          if ($setup.configured) { throw 'Fresh service should require a one-time owner password setup' }
+          $ownerPassword = 'CI-Vision-' + [guid]::NewGuid().ToString('N')
+          $body = @{ password = $ownerPassword } | ConvertTo-Json -Compress
+          $rejected = Invoke-WebRequest -Method Post -Uri 'http://127.0.0.1:4000/api/setup' -Headers @{ Origin = 'https://attacker.example' } -ContentType 'application/json' -Body $body -SkipHttpErrorCheck
+          if ($rejected.StatusCode -ne 403) { throw 'Cross-site owner-password setup was not rejected' }
+          Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:4000/api/setup' -ContentType 'application/json' -Body $body | Out-Null
+          $loginBody = @{ password = $ownerPassword } | ConvertTo-Json -Compress
+          $login = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:4000/api/auth/login' -ContentType 'application/json' -Body $loginBody
+          if (!$login.token) { throw 'Owner login failed after first-run setup' }
+          $authFile = Join-Path $env:ProgramData 'VisionServer\data\owner-auth.json'
+          $storedAuth = Get-Content -Raw $authFile
+          if ($storedAuth.Contains($ownerPassword)) { throw 'Owner password was stored in plaintext' }
+
+          sc.exe stop VisionServer | Out-Null
+          $deadline = (Get-Date).AddSeconds(30)
+          do {
+            $service.Refresh()
+            if ($service.Status -eq 'Stopped') { break }
+            Start-Sleep -Milliseconds 500
+          } while ((Get-Date) -lt $deadline)
+          if ($service.Status -ne 'Stopped') { throw 'VisionServer did not stop through SCM' }
+          sc.exe start VisionServer | Out-Null
+          $deadline = (Get-Date).AddSeconds(60)
+          do {
+            try {
+              $me = Invoke-RestMethod 'http://127.0.0.1:4000/api/me' -Headers @{ Authorization = "Bearer $($login.token)" } -TimeoutSec 5
+              break
+            } catch { Start-Sleep -Seconds 1 }
+          } while ((Get-Date) -lt $deadline)
+          if (!$me.ok) { throw 'Owner session or API did not survive service restart' }
+          Write-Host 'Windows installer, boot-start service, bundled API/FFmpeg, first-run setup, SCM stop/start and owner session all passed.'
+      - name: Артефакт NSIS
+        run: |
+          Get-ChildItem apps/console/src-tauri/target/release/bundle/nsis -Filter *.exe |
             Select-Object FullName,Length
       - uses: actions/upload-artifact@v4
         with:
           name: vision-server-windows
           if-no-files-found: error
-          path: |
-            apps/console/src-tauri/target/release/bundle/msi/*.msi
-            apps/console/src-tauri/target/release/bundle/nsis/*.exe
+          path: apps/console/src-tauri/target/release/bundle/nsis/*.exe
       - name: Release (только по тегу console-v*)
-        if: startsWith(github.ref, 'refs/tags/console-v')
+        if: false
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,12 +182,9 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
             --title "Vision Server ${tag#console-}" \
-            --notes "Приложение запуска и админки Vision Audio: Windows-установщик и APK для Android. Панель также открывается на самом сервере по адресу /admin."
-          # Явный список вместо шаблонов: если .exe не собрался (NSIS капризен к
-          # разметке на кириллице), публикуем хотя бы .msi, а не роняем релиз.
+            --notes "Vision Server для Windows: per-machine NSIS-установщик, собственная служба с автозапуском Windows и API/админ-панелью. Android APK остаётся клиентом внешнего API; веб-панель также открывается по адресу /admin."
           files=()
-          for f in apps/console/src-tauri/target/release/bundle/msi/*.msi \
-                   apps/console/src-tauri/target/release/bundle/nsis/*.exe; do
+          for f in apps/console/src-tauri/target/release/bundle/nsis/*.exe; do
             [ -f "$f" ] && files+=("$f")
           done
           [ ${#files[@]} -gt 0 ] || { echo "::error::нечего публиковать"; exit 1; }
@@ -110,6 +192,7 @@ jobs:
           gh release view "$tag" --json assets --jq '.assets[] | "asset: \(.name) \(.size) байт"'
 
   android:
+    if: ${{ inputs.validate }}
     name: Android APK
     runs-on: ubuntu-latest
     # APK — отдельный канал поставки: пока Tauri-оболочка обкатывается, падение
@@ -256,7 +339,7 @@ jobs:
             VisionServer-*.apk
             VisionServer-*.apk.sha256
       - name: Release APK (только по тегу console-v*)
-        if: startsWith(github.ref, 'refs/tags/console-v')
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -205,13 +205,16 @@ async function waitForServer() {
 
 const auth = () => ({ Authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 
+let uploadSequence = 0;
+
 async function upload(track) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(track)) query.set(key, String(value));
+  const sequence = uploadSequence++;
   const res = await fetch(`${BASE}/api/tracks?${query}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'audio/wav' },
-    body: wav({ seconds: 0.2 + Math.random() * 0.1, seed: Math.round(Math.random() * 9) }),
+    body: wav({ seconds: 0.2 + sequence / 100, seed: sequence }),
   });
   if (res.status !== 201) throw new Error(`upload ${res.status}: ${await res.text()}`);
   return res.json();

@@ -50,6 +50,10 @@ function dayKey(iso, offset = 0) {
  * становится числом, поэтому дедупликация здесь, а не в SQL-выборке: иначе она
  * зависела бы от каждого запроса дашборда.
  */
+/**
+ * @param {{trackId?: string, kind?: string, position?: number, duration?: number, source?: string,
+ *   shareId?: string|null, ip?: string|null, at?: string}} [event={}]
+ */
 export function logPlayback({
   trackId,
   kind = 'play',
@@ -231,7 +235,7 @@ export function dashboard({ days = DASHBOARD_DAYS, now = Date.now(), tz = null, 
      * Пустой дашборд — не ошибка: пока ничего не слушали, график нулевой.
      * `hint` объясняет, что для событий нужен хотя бы один запущенный трек.
      */
-    hint: (totals.plays ?? 0) > 0
+    hint: Number(totals.plays ?? 0) > 0
       ? null
       : 'Прослушиваний пока нет: включите трек — события появятся в дашборде.',
   };

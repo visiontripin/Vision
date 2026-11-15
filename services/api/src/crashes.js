@@ -39,6 +39,7 @@ function clip(value, limit) {
  * слились бы в одну запись. А вот адреса памяти и пути сборки (`file:///…/build/`)
  * вырезаются: иначе каждая сборка давала бы новый «уникальный» баг.
  */
+/** @param {{name?: unknown, message?: unknown, stack?: unknown}} [failure={}] */
 export function fingerprintOf({ name, message, stack } = {}) {
   const firstFrame = String(stack ?? '')
     .split('\n')
@@ -79,6 +80,10 @@ export function parseReport(body = {}) {
  *  - `accepted: false` — отброшен по частоте (сломанный цикл не должен забить диск);
  *  - `duplicate: true` — такое падение уже есть, увеличили счётчик.
  */
+/**
+ * @param {any} [rawBody={}]
+ * @param {{now?: number, ipHash?: string|null}} [options={}]
+ */
 export function recordCrash(rawBody = {}, { now = Date.now(), ipHash = null } = {}) {
   const report = parseReport(rawBody);
   const at = new Date(now).toISOString();
@@ -92,9 +97,9 @@ export function recordCrash(rawBody = {}, { now = Date.now(), ipHash = null } = 
      * шестьдесят строк одного цикла. Дальше отказываем: сломанный рендер не
      * должен забивать диск.
      */
-    const recent = db
+    const recent = Number(db
       .prepare('SELECT COUNT(*) AS n FROM crash_reports WHERE device_id = ? AND last_at >= ?')
-      .get(report.deviceId, hourAgo).n;
+      .get(report.deviceId, hourAgo).n);
     if (recent >= CRASH_RATE_PER_HOUR) {
       log('warn', 'crash report rate limited', { deviceId: report.deviceId, ipHash });
       return { accepted: false, duplicate: false, count: 0, reason: 'rate_limited' };
@@ -109,7 +114,7 @@ export function recordCrash(rawBody = {}, { now = Date.now(), ipHash = null } = 
   if (existing) {
     db.prepare('UPDATE crash_reports SET count = count + 1, last_at = ? WHERE id = ?')
       .run(at, existing.id);
-    return { accepted: true, duplicate: true, count: existing.count + 1, id: existing.id };
+    return { accepted: true, duplicate: true, count: Number(existing.count || 0) + 1, id: existing.id };
   }
 
   const info = db.prepare(

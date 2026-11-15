@@ -10,7 +10,6 @@ import { useSync } from '../sync';
 import { formatBytes } from '../lib/format';
 import { NowPlaying } from './NowPlaying';
 import { SettingsScreen } from './SettingsScreen';
-import { ServerStatusScreen } from './ServerStatusScreen';
 import { ServerScreen } from './ServerScreen';
 import { LinkImportScreen } from './LinkImportScreen';
 
@@ -34,7 +33,6 @@ export function MainScreen() {
   const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [serverOpen, setServerOpen] = useState(false);
-  const [embeddedOpen, setEmbeddedOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -284,13 +282,6 @@ export function MainScreen() {
 
       <ServerScreen visible={serverOpen} onClose={() => setServerOpen(false)} onConnected={() => setServerOpen(false)} />
 
-      <ServerStatusScreen
-        visible={embeddedOpen}
-        onClose={() => setEmbeddedOpen(false)}
-        syncEnabled={Boolean(sync.syncUrl)}
-        onOpenTester={() => undefined}
-      />
-
       <SettingsScreen
         visible={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -302,10 +293,6 @@ export function MainScreen() {
         onImport={() => {
           setSettingsOpen(false);
           void importFiles();
-        }}
-        onOpenEmbedded={() => {
-          setSettingsOpen(false);
-          setEmbeddedOpen(true);
         }}
       />
     </SafeAreaView>

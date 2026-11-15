@@ -3,8 +3,24 @@
  * (прежде всего Android/Termux, где Node собран без встроенного SQLite).
  *
  * Сам сервер живёт в `server.js`; здесь только импорт и разбор типичных сбоев,
- * чтобы вместо простыни стека было понятно, что делать.
+ * чтобы вместо простыни стека было понятно, что делать. Windows-служба читает
+ * выбранный порт из отдельного файла настроек до импорта `server.js`.
  */
+
+import { readFileSync } from 'node:fs';
+
+const settingsFile = process.env.VISION_SERVER_SETTINGS_FILE;
+if (settingsFile) {
+  try {
+    const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
+    const port = Number(settings?.port);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) process.env.PORT = String(port);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw new Error(`Некорректный файл настроек Vision Server (${settingsFile}): ${error.message}`);
+    }
+  }
+}
 
 function explain(error) {
   const code = String(error?.code || '');

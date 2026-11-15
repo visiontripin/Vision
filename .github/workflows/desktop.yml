@@ -1,29 +1,19 @@
-name: Desktop (Tauri)
+name: Desktop (frozen; manual validation only)
 
-# Собирает десктопное приложение (тот же web-бандл + Rust-оболочка Tauri 2).
-#
-#   pull_request / push → проверка, что Rust собирается, и артефакт .deb/.AppImage
-#   git tag desktop-v0.3.0 && git push origin desktop-v0.3.0 → GitHub Release
-#   (тег ставить на merge-коммит main, см. docs/RELEASES.md)
-#
-# Локально Rust собирается той же командой: npm --prefix apps/desktop run build:linux
+# Frozen desktop experiment (ADR-0016).
+# No PR, push, or tag triggers; manual dispatch defaults to notice-only. Set `validate`
+# explicitly for an audit build. Release publication is disabled and contents are read-only.
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'apps/desktop/**'
-      - 'apps/web/**'
-      - 'packages/shared/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/desktop.yml'
-  push:
-    tags:
-      - 'desktop-v*'
+    inputs:
+      validate:
+        description: 'Run a manual audit build for this frozen platform (does not publish a release)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: desktop-${{ github.ref }}
@@ -35,7 +25,14 @@ env:
   CI: 'true'
 
 jobs:
+  frozen_notice:
+    name: Frozen platform notice
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "::notice::Desktop is frozen by ADR-0016; validation is opt-in and release publication is disabled."
+
   linux:
+    if: ${{ inputs.validate }}
     name: Десктоп Linux (.deb + .AppImage)
     runs-on: ubuntu-22.04
     steps:
@@ -139,7 +136,7 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
 
       - name: Release (только по тегу desktop-v*)
-        if: startsWith(github.ref, 'refs/tags/desktop-v') && steps.deps.outputs.ok == 'true'
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -162,7 +159,7 @@ jobs:
           gh release view "$tag" --json assets --jq '.assets[] | "asset: \(.name) \(.size) байт"'
 
       - name: Манифест обновлений (latest.json)
-        if: startsWith(github.ref, 'refs/tags/desktop-v') && steps.deps.outputs.ok == 'true'
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -186,6 +183,7 @@ jobs:
           echo "::notice::latest.json опубликован для ${version}"
 
   windows:
+    if: ${{ inputs.validate }}
     name: Десктоп Windows (.msi + .exe)
     runs-on: windows-latest
     steps:
@@ -268,7 +266,7 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
 
       - name: Release (только по тегу desktop-v*)
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: false
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -289,7 +287,7 @@ jobs:
           gh release upload "$tag" --clobber "${files[@]}"
 
       - name: Манифест обновлений для Windows
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: false
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

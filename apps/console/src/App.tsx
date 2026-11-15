@@ -4,6 +4,7 @@ import {
   type AuditPage, type BackupResult, type BackupStatus, type CrashItem, type CrashPage, type CrashSummary, type Dashboard, type Health,
 } from './api';
 import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady, playsChart } from './lib';
+import { ManagedServerPanel } from './ManagedServerPanel';
 
 /**
  * Vision Server — панель запуска и администрирования.
@@ -289,6 +290,29 @@ export function App() {
           <div className="brand__sub">запуск, диагностика и управление библиотекой</div>
         </div>
       </header>
+
+      <ManagedServerPanel
+        base={base}
+        token={token}
+        onSetAddress={(address) => {
+          setBase(address);
+          setHealth(null);
+          setError(null);
+        }}
+        onStarted={(address, nextToken, info) => {
+          setBase(address);
+          setToken(nextToken);
+          setHealth(info);
+          saveSession(address, nextToken);
+          setPassword('');
+          setError(null);
+        }}
+        onStopped={(address) => {
+          if (normalizeBase(base) !== normalizeBase(address)) return;
+          logout();
+          setHealth(null);
+        }}
+      />
 
       {/* --- подключение --- */}
       {!connected && (

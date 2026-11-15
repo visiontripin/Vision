@@ -62,7 +62,10 @@ export class ShareError extends Error {
   }
 }
 
-/** Создание ссылки. Возвращает share + одноразово показанный токен. */
+/**
+ * Создание ссылки. Возвращает share + одноразово показанный токен.
+ * @param {{targetKind?: string, targetId?: string, title?: string|null, ttl?: number|string|null, maxPlays?: number|string|null}} [options={}]
+ */
 export function createShare({ targetKind, targetId, title = null, ttl, maxPlays = null } = {}) {
   if (!SHARE_KINDS.has(targetKind)) {
     throw new ShareError('invalid_kind', 'Ссылку можно сделать только на трек или плейлист.');
@@ -99,6 +102,7 @@ export function rotateShare(id) {
   return { share: updated, token };
 }
 
+/** @param {{targetKind?: string, targetId?: string, includeRevoked?: boolean}} [options={}] */
 export function shareList({ targetKind, targetId, includeRevoked = false } = {}) {
   return listShares({ targetKind, targetId, includeRevoked }).map((share) => ({
     ...share,
@@ -184,7 +188,7 @@ export function guestView(share, { selfBase = '' } = {}) {
 
   const playlist = getPlaylist(share.targetId);
   if (!playlist) return null;
-  const tracks = withSources(listTracks({ playlistId: playlist.id, limit: 500, offset: 0 }), { selfBase });
+  const tracks = withSources(listTracks({ playlistId: String(playlist.id), limit: 500, offset: 0 }), { selfBase });
   return { kind: 'playlist', share: publicShare(share), playlist, track: null, tracks: withComments(tracks) };
 }
 
