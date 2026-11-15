@@ -98,12 +98,7 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci --no-audit --no-fund
       - name: Start private MinIO test service
-        run: |
-          docker run --detach --name vision-minio-ci \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=vision-ci \
-            -e MINIO_ROOT_PASSWORD=vision-ci-secret-very-long \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001
+        run: docker run --detach --name vision-minio-ci --publish 9000:9000 --env MINIO_ROOT_USER=vision-ci --env MINIO_ROOT_PASSWORD=vision-ci-secret-very-long minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001
       - name: Wait for MinIO readiness
         run: |
           node --input-type=module -e '
