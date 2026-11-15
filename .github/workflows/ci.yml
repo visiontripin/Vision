@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! container_output="$(docker run --detach --name vision-minio-ci --publish 127.0.0.1::9000 --env MINIO_ROOT_USER=vision-ci --env MINIO_ROOT_PASSWORD=vision-ci-secret-very-long minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001 2>&1)"; then
+          if ! container_output="$(docker run --detach --name vision-minio-ci --publish 127.0.0.1::9000 --env MINIO_ROOT_USER=vision-ci --env MINIO_ROOT_PASSWORD=vision-ci-secret-very-long ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z server /data --console-address :9001 2>&1)"; then
             container_output="${container_output//$'\n'/ }"
             echo "::error title=MinIO container startup failed::${container_output}"
             exit 1

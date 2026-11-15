@@ -74,6 +74,7 @@ test('active CI checks API, web, platform integrations and Android client before
   assert.match(minioStep.run, /docker port .* 9000\/tcp/);
   assert.match(minioStep.run, /PLATFORM_S3_ENDPOINT=http:\/\/127\.0\.0\.1:%s/);
   assert.match(minioStep.run, /MINIO_ROOT_USER=vision-ci/);
+  assert.match(minioStep.run, /ghcr\.io\/coollabsio\/minio:RELEASE\.2025-10-15T17-29-55Z/);
   assert.match(minioStep.run, /MINIO_ROOT_PASSWORD=vision-ci-secret-very-long/);
   assert.match(minioStep.run, /MinIO container startup failed/);
   const minioHealthStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'Wait for MinIO readiness');
