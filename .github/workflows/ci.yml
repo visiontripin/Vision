@@ -100,7 +100,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          container_id="$(docker run --detach --name vision-minio-ci --publish 127.0.0.1::9000 --env MINIO_ROOT_USER=vision-ci --env MINIO_ROOT_PASSWORD=vision-ci-secret-very-long minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001)"
+          if ! container_output="$(docker run --detach --name vision-minio-ci --publish 127.0.0.1::9000 --env MINIO_ROOT_USER=vision-ci --env MINIO_ROOT_PASSWORD=vision-ci-secret-very-long minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001 2>&1)"; then
+            container_output="${container_output//$'\n'/ }"
+            echo "::error title=MinIO container startup failed::${container_output}"
+            exit 1
+          fi
+          container_id="$container_output"
           port="$(docker port "$container_id" 9000/tcp | awk -F: 'NR == 1 {print $NF}')"
           if [[ ! "$port" =~ ^[0-9]+$ ]]; then
             echo 'Could not determine MinIO host port.' >&2
