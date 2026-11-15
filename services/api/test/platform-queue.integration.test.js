@@ -82,7 +82,8 @@ test('BullMQ retry, duplicate delivery, dead-letter and restart recovery on Redi
     const firstRedis = createPlatformRedisConnection(REDIS_URL);
     const firstQueues = createPlatformQueues({ connection: firstRedis, prefix: restartPrefix });
     await firstQueues.queue.waitUntilReady();
-    const pending = await firstQueues.queue.add('it.restart', { case: 'restart' }, { jobId: randomUUID() });
+    const pendingId = randomUUID();
+    await firstQueues.queue.add('it.restart', { case: 'restart' }, { jobId: pendingId });
     await firstQueues.close();
 
     const nextRedis = createPlatformRedisConnection(REDIS_URL);
@@ -96,7 +97,9 @@ test('BullMQ retry, duplicate delivery, dead-letter and restart recovery on Redi
       concurrency: 1,
     });
     await nextWorker.waitUntilReady();
-    assert.deepEqual(await pending.waitUntilFinished(nextQueues.events, 10_000), { recovered: true });
+    const recoveredJob = await nextQueues.queue.getJob(pendingId);
+    assert.ok(recoveredJob, 'queued job remains available after the original connection closes');
+    assert.deepEqual(await recoveredJob.waitUntilFinished(nextQueues.events, 10_000), { recovered: true });
     await nextWorker.close();
     await nextQueues.close();
   } finally {
