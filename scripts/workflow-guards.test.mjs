@@ -70,9 +70,13 @@ test('active CI checks API, web, platform integrations and Android client before
   assert.match(ciWorkflow.jobs['platform-integration'].services.postgres.image, /pgvector.*pg16/);
   const minioStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'Start private MinIO test service');
   assert.ok(minioStep);
-  assert.match(minioStep.run, /^docker run --detach --name vision-minio-ci --publish 9000:9000 /);
+  assert.match(minioStep.run, /docker run --detach --name vision-minio-ci --publish 127\.0\.0\.1::9000/);
+  assert.match(minioStep.run, /docker port .* 9000\/tcp/);
+  assert.match(minioStep.run, /PLATFORM_S3_ENDPOINT=http:\/\/127\.0\.0\.1:%s/);
   assert.match(minioStep.run, /MINIO_ROOT_USER=vision-ci/);
   assert.match(minioStep.run, /MINIO_ROOT_PASSWORD=vision-ci-secret-very-long/);
+  const minioHealthStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'Wait for MinIO readiness');
+  assert.match(minioHealthStep.run, /process\.env\.PLATFORM_S3_ENDPOINT/);
   assert.deepEqual(ciWorkflow.jobs.smoke.needs, ['test', 'mobile', 'platform-integration']);
   assert.equal(ciWorkflow.permissions.contents, 'read');
   assert.match(ciText, /npm run check:api-types/);

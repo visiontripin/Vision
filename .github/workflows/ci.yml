@@ -85,7 +85,6 @@ jobs:
       PLATFORM_DATABASE_URL: postgresql://vision_platform:vision-platform-ci-password@127.0.0.1:5432/vision_platform_ci
       PLATFORM_AUTH_SECRET: ci-postgres-integration-secret-32-bytes-minimum
       PLATFORM_REDIS_URL: redis://127.0.0.1:6379/0
-      PLATFORM_S3_ENDPOINT: http://127.0.0.1:9000
       PLATFORM_S3_BUCKET: vision-platform-ci
       PLATFORM_S3_ACCESS_KEY_ID: vision-ci
       PLATFORM_S3_SECRET_ACCESS_KEY: vision-ci-secret-very-long
@@ -98,14 +97,24 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci --no-audit --no-fund
       - name: Start private MinIO test service
-        run: docker run --detach --name vision-minio-ci --publish 9000:9000 --env MINIO_ROOT_USER=vision-ci --env MINIO_ROOT_PASSWORD=vision-ci-secret-very-long minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id="$(docker run --detach --name vision-minio-ci --publish 127.0.0.1::9000 --env MINIO_ROOT_USER=vision-ci --env MINIO_ROOT_PASSWORD=vision-ci-secret-very-long minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001)"
+          port="$(docker port "$container_id" 9000/tcp | awk -F: 'NR == 1 {print $NF}')"
+          if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+            echo 'Could not determine MinIO host port.' >&2
+            docker port "$container_id" >&2 || true
+            exit 1
+          fi
+          printf 'PLATFORM_S3_ENDPOINT=http://127.0.0.1:%s\n' "$port" >> "$GITHUB_ENV"
       - name: Wait for MinIO readiness
         run: |
           node --input-type=module -e '
             const deadline = Date.now() + 60000;
             while (Date.now() < deadline) {
               try {
-                const response = await fetch("http://127.0.0.1:9000/minio/health/live");
+                const response = await fetch(`${process.env.PLATFORM_S3_ENDPOINT}/minio/health/live`);
                 if (response.ok) process.exit(0);
               } catch {}
               await new Promise((resolve) => setTimeout(resolve, 500));
