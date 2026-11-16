@@ -27,7 +27,7 @@
 ### Текущее покрытие Ф1 и оставшиеся условия
 
 - **Identity/ownership:** owner-scoped account/token APIs и проверки владения есть; email confirmation/invitations, OAuth/passkey и 2FA отсутствуют.
-- **Postgres:** отдельный pool и checksum-locked migrations 001–007 проверены в CI на PostgreSQL 16 + pgvector; перенос SQLite-данных, rollback/backup/restore rehearsal и Windows проверка не выполнены.
+- **Postgres:** отдельный pool и migrations 001–008; hosted run [#43851825546](https://github.com/visiontripin/Vision/actions/runs/43851825546) прошёл на PostgreSQL 16 + pgvector, включая upgrade 001–007 → 008 с историческими дубликатами `play_30s`, проверку persisted playback ingestion/revocation и health с требуемой версией. Перенос SQLite-данных, rollback/backup/restore rehearsal и Windows проверка не выполнены.
 - **Storage/upload/ingest:** есть quota reservation, private S3 adapter, signed media URLs, outbox/BullMQ/DLQ, idempotent quarantine ingest и transcode; CI интеграция с Redis и S3-compatible MinIO прошла. Локальные uploads выключены, CDN/lifecycle/production provider не утверждены.
 - **Fingerprint/moderation/rights:** provider-neutral fail-closed adapter и moderation/rights/takedown APIs есть; реального fingerprint поставщика, moderator UI, legal-approved policies и назначенного владельца жалоб нет. `not_configured` не означает `clear`.
 - **Artist/catalog:** backend profile/catalog APIs есть; site v2 и публичный контент отсутствуют.
