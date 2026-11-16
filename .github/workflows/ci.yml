@@ -132,6 +132,7 @@ jobs:
           if node --test \
             services/api/test/platform-postgres.integration.test.js \
             services/api/test/platform-queue.integration.test.js \
+            services/api/test/platform-rate-limit.test.js \
             services/api/test/platform-storage.integration.test.js >"$log_file" 2>&1; then
             cat "$log_file"
           else

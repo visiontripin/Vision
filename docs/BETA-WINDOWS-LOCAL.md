@@ -40,7 +40,7 @@ Invoke-RestMethod http://127.0.0.1:4400/api/v2/health
 Invoke-RestMethod http://127.0.0.1:4400/api/v2/catalog
 ```
 
-Ожидаемо: `health.ok` равен `true`, последняя миграция — `007_tts_cost_ledger.sql`, каталог пустой. Документ API: `http://127.0.0.1:4400/api/v2/openapi.json`.
+Ожидаемо: `health.ok` и `health.schemaReady` равны `true`, `health.migration` совпадает с `health.requiredMigration` (`008_playback_sessions.sql`), каталог пустой. Документ API: `http://127.0.0.1:4400/api/v2/openapi.json`.
 
 ## Управление
 

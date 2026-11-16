@@ -5,8 +5,36 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_MIGRATIONS_DIR = fileURLToPath(new URL('./migrations/', import.meta.url));
+export const PLATFORM_SCHEMA_VERSION = '008_playback_sessions.sql';
 const MIGRATION_NAME = /^\d{3}_[a-z0-9_]+\.sql$/;
 const ADVISORY_LOCK = [22_089, 21_326];
+
+/**
+ * Read the schema version used by the API's readiness and startup gates.
+ * @param {import('pg').Pool} pool
+ */
+export async function getPlatformSchemaStatus(pool) {
+  const schema = await pool.query(`
+    SELECT to_regclass('public.platform_schema_migrations') IS NOT NULL AS has_migrations,
+      to_regclass('public.users') IS NOT NULL AS has_users
+  `);
+  if (!schema.rows[0]?.has_migrations || !schema.rows[0]?.has_users) {
+    return { migration: null, ready: false };
+  }
+  const latest = await pool.query('SELECT version FROM platform_schema_migrations ORDER BY version DESC LIMIT 1');
+  const migration = latest.rows[0]?.version ?? null;
+  return { migration, ready: migration === PLATFORM_SCHEMA_VERSION };
+}
+
+/** Refuse API startup unless the complete schema version required by this code is installed. */
+export async function assertPlatformSchemaCurrent(pool) {
+  const { migration, ready } = await getPlatformSchemaStatus(pool);
+  if (ready) return migration;
+  if (!migration) {
+    throw new Error('Platform schema is not installed. Run `npm run migrate:platform` first.');
+  }
+  throw new Error(`Platform schema is at ${migration}, expected ${PLATFORM_SCHEMA_VERSION}. Run npm run migrate:platform before starting the API.`);
+}
 
 /**
  * Apply immutable SQL migrations in order. Each migration and its checksum record

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
 import { createPlatformServer } from '../src/platform/server.js';
+import { createInMemoryRateLimiter } from '../src/platform/rate-limit.js';
 import { runPlatformMigrations } from '../src/platform/migrations.js';
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../src/platform/migrations/', import.meta.url));
@@ -45,14 +46,18 @@ async function withServer(callback) {
       return `https://radio-storage.test/${encodeURIComponent(key)}?type=${encodeURIComponent(contentType)}&ttl=${expiresInSeconds}`;
     },
   };
-  const server = createPlatformServer({ pool, secret: AUTH_SECRET, registrationEnabled: true, storage });
+  const rateLimiter = createInMemoryRateLimiter({ secret: AUTH_SECRET });
+  const server = createPlatformServer({ pool, secret: AUTH_SECRET, registrationEnabled: true, storage, rateLimiter });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
   });
   const address = server.address();
   try { await callback(`http://127.0.0.1:${address.port}`); }
-  finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+  finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rateLimiter.close();
+  }
 }
 
 async function register(base, email, displayName) {

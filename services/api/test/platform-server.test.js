@@ -5,6 +5,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
 import openapiTS from 'openapi-typescript';
 import { createPlatformServer } from '../src/platform/server.js';
+import { createInMemoryRateLimiter } from '../src/platform/rate-limit.js';
 import { runPlatformMigrations } from '../src/platform/migrations.js';
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../src/platform/migrations/', import.meta.url));
@@ -26,7 +27,8 @@ async function applyPlatformMigrations() {
 }
 
 async function withServer(options, callback) {
-  const server = createPlatformServer({ pool, secret: AUTH_SECRET, ...options });
+  const rateLimiter = options.rateLimiter || createInMemoryRateLimiter({ secret: AUTH_SECRET });
+  const server = createPlatformServer({ pool, secret: AUTH_SECRET, ...options, rateLimiter });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
@@ -37,11 +39,12 @@ async function withServer(options, callback) {
     await callback(base);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rateLimiter.close?.();
   }
 }
 
-async function request(base, pathname, { method = 'GET', body, token } = {}) {
-  const headers = {};
+async function request(base, pathname, { method = 'GET', body, token, headers: extraHeaders = {} } = {}) {
+  const headers = { ...extraHeaders };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (token) headers.authorization = `Bearer ${token}`;
   const response = await fetch(`${base}${pathname}`, {
@@ -64,13 +67,17 @@ describe('isolated v2 platform HTTP API', () => {
       const health = await request(base, '/api/v2/health');
       assert.equal(health.response.status, 200);
       assert.equal(health.body.schemaReady, true);
-      assert.equal(health.body.migration, '007_tts_cost_ledger.sql');
+      assert.equal(health.body.rateLimitReady, true);
+      assert.equal(health.body.migration, '008_playback_sessions.sql');
+      assert.equal(health.body.requiredMigration, '008_playback_sessions.sql');
       assert.ok(health.response.headers.get('x-request-id'));
       assert.equal(health.response.headers.get('cache-control'), 'no-store');
 
       const openapi = await request(base, '/api/v2/openapi.json');
       assert.equal(openapi.response.status, 200);
       assert.equal(openapi.body.openapi, '3.1.0');
+      assert.equal(openapi.body.paths['/api/v2/health'].get.responses['200'].content['application/json'].schema.$ref,
+        '#/components/schemas/PlatformHealthResponse');
       assert.ok(openapi.body.paths['/api/v2/auth/register']);
       assert.ok(openapi.body.paths['/api/v2/me'].patch);
       assert.ok(openapi.body.paths['/api/v2/catalog'].get);
@@ -83,6 +90,8 @@ describe('isolated v2 platform HTTP API', () => {
       assert.ok(openapi.body.paths['/api/v2/admin/claims'].get);
       assert.ok(openapi.body.paths['/api/v2/uploads'].post);
       assert.ok(openapi.body.paths['/api/v2/uploads/{id}/complete'].post);
+      assert.ok(openapi.body.paths['/api/v2/playback/sessions'].post);
+      assert.ok(openapi.body.paths['/api/v2/playback/sessions/{sessionId}/revoke'].post);
       assert.ok(openapi.body.paths['/api/v2/events'].post);
       assert.ok(openapi.body.paths['/api/v2/recommendations'].get);
       assert.ok(openapi.body.paths['/api/v2/radio/session'].post);
@@ -90,8 +99,41 @@ describe('isolated v2 platform HTTP API', () => {
       assert.ok(openapi.body.paths['/api/v2/radio/{sessionId}/skip'].post);
       assert.ok(openapi.body.paths['/api/v2/radio/{sessionId}/feedback'].post);
       assert.ok(openapi.body.paths['/api/v2/voice/render'].post);
+      const throttleResponse = openapi.body.paths['/api/v2/auth/login'].post.responses['429'];
+      assert.match(throttleResponse.description, /retry/i);
+      assert.equal(throttleResponse.headers['Retry-After'].schema.type, 'integer');
+      assert.equal(throttleResponse.content['application/json'].schema.$ref, '#/components/schemas/Error');
+      const unavailableResponse = openapi.body.paths['/api/v2/catalog'].get.responses['503'];
+      assert.match(unavailableResponse.description, /unavailable/i);
+      assert.equal(unavailableResponse.content['application/json'].schema.$ref, '#/components/schemas/Error');
+      for (const [path, pathItem] of Object.entries(openapi.body.paths)) {
+        if (path === '/api/v2/health' || path === '/api/v2/openapi.json') continue;
+        for (const operation of Object.values(pathItem)) {
+          if (!operation || typeof operation !== 'object' || !('operationId' in operation)) continue;
+          assert.ok(operation.responses['429'], `${path} must document rate limiting`);
+          assert.ok(operation.responses['503'], `${path} must document fail-closed rate-limit storage errors`);
+        }
+      }
       const generatedContract = await openapiTS(openapi.body);
       assert.ok(generatedContract.length > 0, 'platform OpenAPI compiles into client types');
+    });
+  });
+
+  test('health fails closed when the database is behind the API migration requirement', async () => {
+    const stalePool = {
+      async query(sql) {
+        if (String(sql).includes('to_regclass')) {
+          return { rows: [{ has_migrations: true, has_users: true }] };
+        }
+        return { rows: [{ version: '007_tts_cost_ledger.sql' }] };
+      },
+    };
+    await withServer({ pool: stalePool, registrationEnabled: false }, async (base) => {
+      const health = await request(base, '/api/v2/health');
+      assert.equal(health.response.status, 503);
+      assert.equal(health.body.schemaReady, false);
+      assert.equal(health.body.migration, '007_tts_cost_ledger.sql');
+      assert.equal(health.body.requiredMigration, '008_playback_sessions.sql');
     });
   });
 
@@ -188,6 +230,98 @@ describe('isolated v2 platform HTTP API', () => {
         method: 'POST', body: { refreshToken: rotated.body.refreshToken },
       });
       assert.equal(afterLogout.response.status, 401);
+    });
+  });
+
+  test('registration and login are limited by source address and normalized identity', async () => {
+    const rateLimiter = createInMemoryRateLimiter({ secret: AUTH_SECRET });
+    await withServer({ registrationEnabled: true, rateLimiter }, async (base) => {
+      const registrationStatuses = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const result = await request(base, '/api/v2/auth/register', {
+          method: 'POST',
+          body: {
+            email: '  Throttled@Example.test ',
+            password: 'rate limit registration password',
+            displayName: `Rate limit ${attempt}`,
+          },
+        });
+        registrationStatuses.push(result.response.status);
+      }
+      assert.deepEqual(registrationStatuses, [201, 409, 409]);
+      const blockedRegistration = await request(base, '/api/v2/auth/register', {
+        method: 'POST',
+        body: {
+          email: 'throttled@example.test',
+          password: 'rate limit registration password',
+          displayName: 'Blocked registration',
+        },
+      });
+      assert.equal(blockedRegistration.response.status, 429);
+      assert.equal(blockedRegistration.body.error.code, 'rate_limited');
+      assert.ok(Number(blockedRegistration.response.headers.get('retry-after')) > 0);
+
+      const loginAccount = await request(base, '/api/v2/auth/register', {
+        method: 'POST',
+        body: {
+          email: 'login-limit@example.test',
+          password: 'valid login limiter password',
+          displayName: 'Login limiter',
+        },
+      });
+      assert.equal(loginAccount.response.status, 201);
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const failedLogin = await request(base, '/api/v2/auth/login', {
+          method: 'POST', body: { email: 'LOGIN-LIMIT@example.test', password: 'wrong password long enough' },
+        });
+        assert.equal(failedLogin.response.status, 401);
+      }
+      const blockedLogin = await request(base, '/api/v2/auth/login', {
+        method: 'POST', body: { email: 'login-limit@example.test', password: 'valid login limiter password' },
+      });
+      assert.equal(blockedLogin.response.status, 429);
+      assert.equal(blockedLogin.body.error.code, 'rate_limited');
+      assert.equal(blockedLogin.response.headers.get('ratelimit-limit'), '10');
+      assert.equal(blockedLogin.response.headers.get('ratelimit-remaining'), '0');
+      assert.ok(Number(blockedLogin.response.headers.get('ratelimit-reset')) > 0);
+    });
+  });
+
+  test('per-source throttling cannot be bypassed with X-Forwarded-For', async () => {
+    const rateLimiter = createInMemoryRateLimiter({ secret: AUTH_SECRET });
+    await withServer({ rateLimiter }, async (base) => {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const disabledUpload = await request(base, '/api/v2/uploads', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': `198.51.100.${attempt + 1}` },
+        });
+        assert.equal(disabledUpload.response.status, 403);
+      }
+      const blockedUpload = await request(base, '/api/v2/uploads', {
+        method: 'POST', headers: { 'x-forwarded-for': '203.0.113.250' },
+      });
+      assert.equal(blockedUpload.response.status, 429);
+      assert.equal(blockedUpload.body.error.code, 'rate_limited');
+      assert.equal(blockedUpload.response.headers.get('ratelimit-limit'), '10');
+      assert.equal(blockedUpload.response.headers.get('ratelimit-remaining'), '0');
+      assert.ok(Number(blockedUpload.response.headers.get('retry-after')) > 0);
+    });
+  });
+
+  test('rate-limit storage failure fails closed and readiness reports 503', async () => {
+    const brokenLimiter = {
+      async ready() { throw new Error('synthetic Redis outage'); },
+      async consume() { throw new Error('synthetic Redis outage'); },
+    };
+    await withServer({ rateLimiter: brokenLimiter }, async (base) => {
+      const health = await request(base, '/api/v2/health');
+      assert.equal(health.response.status, 503);
+      assert.equal(health.body.rateLimitReady, false);
+
+      const { response, body } = await request(base, '/api/v2/catalog');
+      assert.equal(response.status, 503);
+      assert.equal(body.error.code, 'rate_limit_unavailable');
+      assert.ok(response.headers.get('x-request-id'));
     });
   });
 

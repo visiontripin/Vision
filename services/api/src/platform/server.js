@@ -21,14 +21,20 @@ import {
   updateCurrentUserProfile,
 } from './identity.js';
 import { PLATFORM_OPENAPI } from './openapi.js';
+import { getPlatformSchemaStatus, PLATFORM_SCHEMA_VERSION } from './migrations.js';
 import { completeUploadIntent, createUploadIntent } from './upload.js';
 import { createTrackMediaUrl } from './media.js';
-import { ingestPlayEvents } from './events.js';
+import { createPlaybackSession, ingestPlayEvents, revokePlaybackSession } from './events.js';
 import { getRecommendations } from './recsys.js';
 import { renderRadioScript, UnconfiguredTtsProvider } from './voice.js';
 import { getRadioSchedule, recordRadioFeedback, skipRadioSegment, startRadioSession } from './radio.js';
+import {
+  PLATFORM_RATE_LIMIT_POLICIES,
+  PlatformRateLimitUnavailableError,
+} from './rate-limit.js';
 
 const MAX_JSON_BYTES = 16 * 1024;
+const MAX_EVENT_JSON_BYTES = 256 * 1024;
 const ROUTE_METHODS = new Map([
   ['/api/v2/health', ['GET']],
   ['/api/v2/openapi.json', ['GET']],
@@ -43,6 +49,7 @@ const ROUTE_METHODS = new Map([
   ['/api/v2/claims', ['POST']],
   ['/api/v2/admin/claims', ['GET']],
   ['/api/v2/uploads', ['POST']],
+  ['/api/v2/playback/sessions', ['POST']],
   ['/api/v2/events', ['POST']],
   ['/api/v2/recommendations', ['GET']],
   ['/api/v2/voice/render', ['POST']],
@@ -66,14 +73,67 @@ function assertAllowedFields(body, allowed) {
   if (unknown) throw new PlatformAuthError('invalid_input', 400, `Unknown field: ${unknown}.`);
 }
 
-/** @param {import('node:http').IncomingMessage} req */
-async function readJson(req) {
+/** Do not trust X-Forwarded-For until a trusted-proxy allowlist is designed and enforced. */
+function requestAddressSubject(req) {
+  const address = req.socket?.remoteAddress;
+  return typeof address === 'string' && address.length <= 128 ? address : 'unknown';
+}
+
+function rateLimitIdentitySubject(value) {
+  if (typeof value !== 'string') return `invalid-${typeof value}`;
+  const normalized = value.normalize('NFKC').trim().toLowerCase();
+  return normalized.slice(0, 1_024) || 'empty';
+}
+
+function requestRateLimitPolicies(method, pathname, matches) {
+  if (pathname === '/api/v2/health' || pathname === '/api/v2/openapi.json') return [];
+  if (pathname === '/api/v2/auth/register') return [PLATFORM_RATE_LIMIT_POLICIES.registerIp];
+  if (pathname === '/api/v2/auth/login') return [PLATFORM_RATE_LIMIT_POLICIES.loginIp];
+  if (pathname === '/api/v2/auth/refresh' || pathname === '/api/v2/auth/logout') {
+    return [PLATFORM_RATE_LIMIT_POLICIES.refreshIp];
+  }
+  if (pathname === '/api/v2/catalog' || matches.trackMediaMatch || (matches.trackMatch && method === 'GET')) {
+    return [PLATFORM_RATE_LIMIT_POLICIES.publicReadIp];
+  }
+  if (pathname === '/api/v2/uploads' || matches.uploadCompleteMatch) return [PLATFORM_RATE_LIMIT_POLICIES.uploadIp];
+  if (pathname === '/api/v2/events') return [PLATFORM_RATE_LIMIT_POLICIES.eventIp];
+  if (pathname === '/api/v2/claims') return [PLATFORM_RATE_LIMIT_POLICIES.rightsClaimIp];
+  if (pathname === '/api/v2/radio/session') return [PLATFORM_RATE_LIMIT_POLICIES.radioSessionIp];
+  if (pathname === '/api/v2/voice/render') return [PLATFORM_RATE_LIMIT_POLICIES.voiceRenderIp];
+  if (method === 'GET') return [PLATFORM_RATE_LIMIT_POLICIES.apiReadIp];
+  return [PLATFORM_RATE_LIMIT_POLICIES.apiWriteIp];
+}
+
+async function enforceRateLimit(rateLimiter, policy, subject, res, requestId) {
+  let decision;
+  try {
+    decision = await rateLimiter.consume({ ...policy, subject });
+  } catch (error) {
+    if (error instanceof PlatformRateLimitUnavailableError) throw error;
+    throw new PlatformRateLimitUnavailableError(error);
+  }
+
+  res.setHeader('RateLimit-Limit', String(decision.limit));
+  res.setHeader('RateLimit-Remaining', String(decision.remaining));
+  res.setHeader('RateLimit-Reset', String(Math.max(0, Math.ceil((decision.resetAtMs - Date.now()) / 1_000))));
+  if (decision.allowed) return true;
+
+  const retryAfter = Math.max(1, Math.ceil(decision.retryAfterMs / 1_000));
+  res.setHeader('Retry-After', String(retryAfter));
+  sendJson(res, 429, {
+    error: { code: 'rate_limited', message: 'Too many requests. Try again later.', request_id: requestId },
+  });
+  return false;
+}
+
+/** @param {import('node:http').IncomingMessage} req @param {number} [maxBytes] */
+async function readJson(req, maxBytes = MAX_JSON_BYTES) {
   const contentType = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
   if (contentType !== 'application/json') {
     throw new PlatformAuthError('unsupported_media_type', 415, 'Content-Type must be application/json.');
   }
   const declaredLength = Number(req.headers['content-length'] || 0);
-  if (declaredLength > MAX_JSON_BYTES) {
+  if (declaredLength > maxBytes) {
     throw new PlatformAuthError('request_too_large', 413, 'JSON request body is too large.');
   }
 
@@ -82,7 +142,7 @@ async function readJson(req) {
   for await (const chunk of req) {
     const bytes = Buffer.from(chunk);
     size += bytes.length;
-    if (size > MAX_JSON_BYTES) {
+    if (size > maxBytes) {
       throw new PlatformAuthError('request_too_large', 413, 'JSON request body is too large.');
     }
     chunks.push(bytes);
@@ -109,6 +169,7 @@ function bearerToken(req) {
  * legacy SQLite HTTP server until a reviewed cutover is approved.
  * @param {{pool: import('pg').Pool, secret?: string|Buffer, registrationEnabled?: boolean,
  *   uploadsEnabled?: boolean, maxUploadBytes?: number, storage?: ReturnType<typeof import('./storage.js').createS3Storage>,
+ *   rateLimiter: Pick<ReturnType<typeof import('./rate-limit.js').createPlatformRateLimiter>, 'consume'> & {ready?: () => Promise<unknown>},
  *   ttsProvider?: import('./voice.js').TtsProvider}} options
  */
 export function createPlatformServer({
@@ -118,15 +179,19 @@ export function createPlatformServer({
   uploadsEnabled = false,
   maxUploadBytes = 200 * 1024 * 1024,
   storage,
+  rateLimiter,
   ttsProvider = new UnconfiguredTtsProvider(),
 }) {
   const signingKey = requirePlatformAuthSecret(secret);
+  if (!rateLimiter || typeof rateLimiter.consume !== 'function') {
+    throw new Error('A platform rate limiter is required before the API can start.');
+  }
 
   const server = createServer((req, res) => {
     const requestId = randomUUID();
     res.setHeader('X-Request-Id', requestId);
     securityHeaders(res);
-    void handleRequest(req, res, { pool, signingKey, registrationEnabled, uploadsEnabled, maxUploadBytes, storage, ttsProvider, requestId });
+    void handleRequest(req, res, { pool, signingKey, registrationEnabled, uploadsEnabled, maxUploadBytes, storage, rateLimiter, ttsProvider, requestId });
   });
   server.requestTimeout = 30_000;
   server.headersTimeout = 35_000;
@@ -134,7 +199,7 @@ export function createPlatformServer({
 }
 
 async function handleRequest(req, res, context) {
-  const { pool, signingKey, registrationEnabled, uploadsEnabled, maxUploadBytes, storage, ttsProvider, requestId } = context;
+  const { pool, signingKey, registrationEnabled, uploadsEnabled, maxUploadBytes, storage, rateLimiter, ttsProvider, requestId } = context;
   const method = String(req.method || 'GET').toUpperCase();
   let url;
   try {
@@ -153,9 +218,11 @@ async function handleRequest(req, res, context) {
   const radioNextMatch = /^\/api\/v2\/radio\/([^/]+)\/next$/.exec(pathname);
   const radioSkipMatch = /^\/api\/v2\/radio\/([^/]+)\/skip$/.exec(pathname);
   const radioFeedbackMatch = /^\/api\/v2\/radio\/([^/]+)\/feedback$/.exec(pathname);
+  const playbackSessionRevokeMatch = /^\/api\/v2\/playback\/sessions\/([^/]+)\/revoke$/.exec(pathname);
   try {
     const methods = ROUTE_METHODS.get(pathname)
       || (trackPublishMatch ? ['POST'] : undefined)
+      || (playbackSessionRevokeMatch ? ['POST'] : undefined)
       || (trackMediaMatch ? ['GET'] : undefined)
       || (radioNextMatch ? ['GET'] : undefined)
       || (radioSkipMatch || radioFeedbackMatch ? ['POST'] : undefined)
@@ -171,22 +238,36 @@ async function handleRequest(req, res, context) {
       return;
     }
 
+    const policies = requestRateLimitPolicies(method, pathname, {
+      trackMediaMatch, trackMatch, uploadCompleteMatch,
+    });
+    const addressSubject = requestAddressSubject(req);
+    for (const policy of policies) {
+      if (!await enforceRateLimit(rateLimiter, policy, addressSubject, res, requestId)) return;
+    }
+
     if (pathname === '/api/v2/health') {
       try {
-        const schema = await pool.query(`
-          SELECT to_regclass('public.platform_schema_migrations') IS NOT NULL AS has_migrations,
-            to_regclass('public.users') IS NOT NULL AS has_users
-        `);
-        const ready = Boolean(schema.rows[0]?.has_migrations && schema.rows[0]?.has_users);
-        let current = null;
-        if (ready) {
-          const migration = await pool.query('SELECT version FROM platform_schema_migrations ORDER BY version DESC LIMIT 1');
-          current = migration.rows[0]?.version ?? null;
-        }
-        const status = ready && current ? 200 : 503;
-        sendJson(res, status, { ok: status === 200, service: 'vision-platform-api', schemaReady: Boolean(current), migration: current });
+        const { migration: current, ready: schemaReady } = await getPlatformSchemaStatus(pool);
+        const rateLimitReady = typeof rateLimiter.ready === 'function' ? await rateLimiter.ready() : true;
+        const status = schemaReady && rateLimitReady ? 200 : 503;
+        sendJson(res, status, {
+          ok: status === 200,
+          service: 'vision-platform-api',
+          schemaReady,
+          migration: current,
+          requiredMigration: PLATFORM_SCHEMA_VERSION,
+          rateLimitReady: Boolean(rateLimitReady),
+        });
       } catch {
-        sendJson(res, 503, { ok: false, service: 'vision-platform-api', schemaReady: false });
+        sendJson(res, 503, {
+          ok: false,
+          service: 'vision-platform-api',
+          schemaReady: false,
+          migration: null,
+          requiredMigration: PLATFORM_SCHEMA_VERSION,
+          rateLimitReady: false,
+        });
       }
       return;
     }
@@ -197,6 +278,13 @@ async function handleRequest(req, res, context) {
     if (pathname === '/api/v2/auth/register') {
       if (!registrationEnabled) throw new PlatformAuthError('registration_disabled', 403, 'Registration is currently disabled.');
       const body = await readJson(req);
+      if (!await enforceRateLimit(
+        rateLimiter,
+        PLATFORM_RATE_LIMIT_POLICIES.registerIdentity,
+        rateLimitIdentitySubject(body.email),
+        res,
+        requestId,
+      )) return;
       assertAllowedFields(body, ['email', 'password', 'displayName']);
       const result = await registerWithPassword(pool, body, { secret: signingKey });
       sendJson(res, 201, result);
@@ -204,6 +292,13 @@ async function handleRequest(req, res, context) {
     }
     if (pathname === '/api/v2/auth/login') {
       const body = await readJson(req);
+      if (!await enforceRateLimit(
+        rateLimiter,
+        PLATFORM_RATE_LIMIT_POLICIES.loginIdentity,
+        rateLimitIdentitySubject(body.email),
+        res,
+        requestId,
+      )) return;
       assertAllowedFields(body, ['email', 'password']);
       const result = await loginWithPassword(pool, body, { secret: signingKey });
       sendJson(res, 200, result);
@@ -246,11 +341,25 @@ async function handleRequest(req, res, context) {
       sendJson(res, 200, await listPublicCatalog(pool, url.searchParams));
       return;
     }
-    if (pathname === '/api/v2/events') {
+    if (playbackSessionRevokeMatch) {
+      const actor = await getCurrentUser(pool, bearerToken(req), { secret: signingKey });
+      const revoked = await revokePlaybackSession(pool, actor.id, playbackSessionRevokeMatch[1]);
+      if (!revoked) throw new PlatformAuthError('not_found', 404, 'Playback session not found.');
+      sendJson(res, 200, { sessionId: playbackSessionRevokeMatch[1].toLowerCase(), revoked: true });
+      return;
+    }
+    if (pathname === '/api/v2/playback/sessions') {
       const actor = await getCurrentUser(pool, bearerToken(req), { secret: signingKey });
       const body = await readJson(req);
+      assertAllowedFields(body, ['trackId']);
+      sendJson(res, 201, await createPlaybackSession(pool, actor.id, body.trackId, { secret: signingKey }));
+      return;
+    }
+    if (pathname === '/api/v2/events') {
+      const actor = await getCurrentUser(pool, bearerToken(req), { secret: signingKey });
+      const body = await readJson(req, MAX_EVENT_JSON_BYTES);
       assertAllowedFields(body, ['events']);
-      sendJson(res, 202, await ingestPlayEvents(pool, actor.id, body));
+      sendJson(res, 202, await ingestPlayEvents(pool, actor.id, body, { secret: signingKey }));
       return;
     }
     if (pathname === '/api/v2/recommendations') {
@@ -380,6 +489,12 @@ async function handleRequest(req, res, context) {
     if (error instanceof PlatformAuthError) {
       sendJson(res, error.status, {
         error: { code: error.code, message: error.message, request_id: requestId },
+      });
+      return;
+    }
+    if (error instanceof PlatformRateLimitUnavailableError) {
+      sendJson(res, 503, {
+        error: { code: 'rate_limit_unavailable', message: 'Request protection is temporarily unavailable.', request_id: requestId },
       });
       return;
     }

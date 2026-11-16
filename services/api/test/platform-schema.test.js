@@ -1,11 +1,17 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
-import { runPlatformMigrations } from '../src/platform/migrations.js';
+import {
+  assertPlatformSchemaCurrent,
+  getPlatformSchemaStatus,
+  runPlatformMigrations,
+} from '../src/platform/migrations.js';
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../src/platform/migrations/', import.meta.url));
 let database;
@@ -47,10 +53,11 @@ describe('platform PostgreSQL schema (PGlite)', () => {
         '005_server_runtime.sql',
         '006_voice_storage.sql',
         '007_tts_cost_ledger.sql',
+        '008_playback_sessions.sql',
       ],
-      current: 7,
+      current: 8,
     });
-    assert.deepEqual(migrationResults.second, { applied: [], current: 7 });
+    assert.deepEqual(migrationResults.second, { applied: [], current: 8 });
 
     const tables = await database.query(`
       SELECT table_name FROM information_schema.tables
@@ -59,7 +66,7 @@ describe('platform PostgreSQL schema (PGlite)', () => {
     const tableNames = new Set(tables.rows.map(({ table_name }) => table_name));
     for (const name of [
       'users', 'artist_profiles', 'tracks', 'media_objects', 'moderation_queue',
-      'rights_claims', 'platform_audit_events', 'play_events', 'taste_profiles', 'radio_sessions',
+      'rights_claims', 'platform_audit_events', 'play_events', 'playback_sessions', 'taste_profiles', 'radio_sessions',
       'radio_schedule', 'radio_scripts', 'tts_cache', 'tts_generation_ledger', 'upload_intents', 'platform_outbox',
     ]) assert.ok(tableNames.has(name), `expected migrated table ${name}`);
     const voiceColumns = await database.query(`
@@ -74,6 +81,77 @@ describe('platform PostgreSQL schema (PGlite)', () => {
       SELECT indexdef FROM pg_indexes WHERE tablename = 'tracks' AND indexname = 'tracks_embedding_hnsw_idx'
     `);
     assert.match(indexes.rows[0].indexdef, /USING hnsw/i);
+    const playbackMilestone = await database.query(`
+      SELECT indexdef FROM pg_indexes
+      WHERE tablename = 'play_events' AND indexname = 'play_events_play_30s_once_idx'
+    `);
+    assert.equal(playbackMilestone.rows.length, 1);
+    assert.match(playbackMilestone.rows[0].indexdef, /UNIQUE/i);
+    assert.match(playbackMilestone.rows[0].indexdef, /play_30s/i);
+  });
+
+  test('API startup schema gate refuses databases behind the required migration', async () => {
+    const stalePool = {
+      async query(sql) {
+        if (String(sql).includes('to_regclass')) {
+          return { rows: [{ has_migrations: true, has_users: true }] };
+        }
+        return { rows: [{ version: '007_tts_cost_ledger.sql' }] };
+      },
+    };
+    assert.deepEqual(await getPlatformSchemaStatus(stalePool), {
+      migration: '007_tts_cost_ledger.sql', ready: false,
+    });
+    await assert.rejects(
+      assertPlatformSchemaCurrent(stalePool),
+      /Platform schema is at 007_tts_cost_ledger\.sql, expected 008_playback_sessions\.sql/,
+    );
+    assert.equal(await assertPlatformSchemaCurrent(database), '008_playback_sessions.sql');
+  });
+
+  test('migration 008 keeps one historical play_30s milestone per session before indexing', async () => {
+    const migrationDirectory = await mkdtemp(path.join(tmpdir(), 'vision-platform-upgrade-'));
+    const upgradeDb = new PGlite({ extensions: { vector } });
+    try {
+      await upgradeDb.waitReady;
+      const client = {
+        query: async (sql, values) => {
+          if (values?.length) return upgradeDb.query(sql, values);
+          const results = await upgradeDb.exec(sql);
+          return results.at(-1) ?? { rows: [] };
+        },
+        release() {},
+      };
+      const upgradePool = { connect: async () => client, query: client.query };
+      for (const name of (await readdir(MIGRATIONS_DIR)).filter((file) => file < '008_playback_sessions.sql')) {
+        await copyFile(path.join(MIGRATIONS_DIR, name), path.join(migrationDirectory, name));
+      }
+      const beforeUpgrade = await runPlatformMigrations(upgradePool, { directory: migrationDirectory });
+      assert.equal(beforeUpgrade.current, 7);
+
+      const session = '10000000-0000-4000-8000-000000000001';
+      const firstMilestone = '20000000-0000-4000-8000-000000000001';
+      await upgradeDb.query(`
+        INSERT INTO play_events (event_id, session_id, kind, source, occurred_at, received_at) VALUES
+          ($1, $3, 'play_30s', 'wave', '2026-01-01T00:00:30Z', '2026-01-01T00:00:31Z'),
+          ($2, $3, 'play_30s', 'wave', '2026-01-01T00:00:30Z', '2026-01-01T00:00:32Z'),
+          ('20000000-0000-4000-8000-000000000003', $3, 'start', 'wave', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+      `, [firstMilestone, '20000000-0000-4000-8000-000000000002', session]);
+
+      const afterUpgrade = await runPlatformMigrations(upgradePool, { directory: MIGRATIONS_DIR });
+      assert.deepEqual(afterUpgrade.applied, ['008_playback_sessions.sql']);
+      const milestones = await upgradeDb.query(`
+        SELECT event_id FROM play_events WHERE session_id = $1 AND kind = 'play_30s'
+      `, [session]);
+      assert.deepEqual(milestones.rows, [{ event_id: firstMilestone }]);
+      const unrelated = await upgradeDb.query(`
+        SELECT count(*)::integer AS count FROM play_events WHERE session_id = $1 AND kind = 'start'
+      `, [session]);
+      assert.equal(unrelated.rows[0].count, 1);
+    } finally {
+      await upgradeDb.close();
+      await rm(migrationDirectory, { recursive: true, force: true });
+    }
   });
 
   test('case-insensitive email uniqueness and default-quarantine catalog state hold', async () => {

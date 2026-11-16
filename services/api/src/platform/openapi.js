@@ -10,8 +10,14 @@ export const PLATFORM_OPENAPI = {
       get: {
         operationId: 'platformHealth',
         responses: {
-          200: { description: 'Database and platform schema are ready.' },
-          503: { description: 'Database or platform schema is not ready.' },
+          200: {
+            description: 'Database, required platform schema migration, and Redis rate-limit store are ready.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/PlatformHealthResponse' } } },
+          },
+          503: {
+            description: 'Database, required platform schema migration, or Redis rate-limit store is not ready.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/PlatformHealthResponse' } } },
+          },
         },
       },
     },
@@ -214,6 +220,32 @@ export const PLATFORM_OPENAPI = {
         },
       },
     },
+    '/api/v2/playback/sessions': {
+      post: {
+        operationId: 'createPlaybackSession', security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/PlaybackSessionRequest' } } },
+        },
+        responses: {
+          201: { description: 'Persisted one-hour HMAC capability bound to the authenticated user, session, and playable track; the owner may revoke it. It is not proof of actual listening.', content: { 'application/json': { schema: { $ref: '#/components/schemas/PlaybackSessionResponse' } } } },
+          400: { description: 'Invalid playback-session request.' },
+          401: { description: 'Missing or invalid bearer token.' },
+          404: { description: 'Track is not currently playable.' },
+        },
+      },
+    },
+    '/api/v2/playback/sessions/{sessionId}/revoke': {
+      parameters: [{ name: 'sessionId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+      post: {
+        operationId: 'revokePlaybackSession', security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: 'Owned playback session revoked; repeated revocation is idempotent.', content: { 'application/json': { schema: { $ref: '#/components/schemas/PlaybackSessionRevokeResponse' } } } },
+          401: { description: 'Missing or invalid bearer token.' },
+          404: { description: 'Playback session not found or not owned by the authenticated user.' },
+        },
+      },
+    },
     '/api/v2/events': {
       post: {
         operationId: 'ingestPlayEvents', security: [{ bearerAuth: [] }],
@@ -222,10 +254,11 @@ export const PLATFORM_OPENAPI = {
           content: { 'application/json': { schema: { $ref: '#/components/schemas/PlayEventBatch' } } },
         },
         responses: {
-          202: { description: 'Privacy-minimal play events; repeated event ids are ignored.', content: { 'application/json': { schema: { $ref: '#/components/schemas/PlayEventBatchResponse' } } } },
-          400: { description: 'Invalid event batch or event fields.' },
-          401: { description: 'Missing or invalid bearer token.' },
+          202: { description: 'Privacy-minimal events validated against published track metadata and an active persisted playback session; repeated event ids and duplicate play_30s milestones per session are ignored.', content: { 'application/json': { schema: { $ref: '#/components/schemas/PlayEventBatchResponse' } } } },
+          400: { description: 'Invalid event batch, impossible playback position, or duration inconsistent with the published track.' },
+          401: { description: 'Missing bearer token or invalid/expired/revoked playback capability.' },
           404: { description: 'A referenced track is not publicly available.' },
+          413: { description: 'Event JSON batch exceeds the 256 KiB request limit.' },
         },
       },
     },
@@ -390,6 +423,15 @@ export const PLATFORM_OPENAPI = {
       bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'VisionAccessToken' },
     },
     schemas: {
+      PlatformHealthResponse: {
+        type: 'object', additionalProperties: false,
+        required: ['ok', 'service', 'schemaReady', 'migration', 'requiredMigration', 'rateLimitReady'],
+        properties: {
+          ok: { type: 'boolean' }, service: { const: 'vision-platform-api' },
+          schemaReady: { type: 'boolean' }, migration: { type: ['string', 'null'] },
+          requiredMigration: { type: 'string' }, rateLimitReady: { type: 'boolean' },
+        },
+      },
       RegisterRequest: {
         type: 'object', additionalProperties: false, required: ['email', 'password', 'displayName'],
         properties: {
@@ -459,16 +501,33 @@ export const PLATFORM_OPENAPI = {
           visibility: { type: 'string', enum: ['private', 'unlisted', 'public'] },
         },
       },
+      PlaybackSessionRequest: {
+        type: 'object', additionalProperties: false, required: ['trackId'],
+        properties: { trackId: { type: 'string', format: 'uuid' } },
+      },
+      PlaybackSessionResponse: {
+        type: 'object', additionalProperties: false,
+        required: ['sessionId', 'trackId', 'playbackToken', 'expiresAt', 'expiresInSeconds'],
+        properties: {
+          sessionId: { type: 'string', format: 'uuid' }, trackId: { type: 'string', format: 'uuid' },
+          playbackToken: { type: 'string', minLength: 1, maxLength: 2048 },
+          expiresAt: { type: 'string', format: 'date-time' }, expiresInSeconds: { type: 'integer', minimum: 1 },
+        },
+      },
+      PlaybackSessionRevokeResponse: {
+        type: 'object', additionalProperties: false, required: ['sessionId', 'revoked'],
+        properties: { sessionId: { type: 'string', format: 'uuid' }, revoked: { const: true } },
+      },
       PlayEventBatch: {
         type: 'object', additionalProperties: false, required: ['events'],
         properties: {
           events: {
             type: 'array', minItems: 1, maxItems: 100, items: {
               type: 'object', additionalProperties: false,
-              required: ['eventId', 'trackId', 'sessionId', 'kind', 'source', 'occurredAt'],
+              required: ['eventId', 'trackId', 'sessionId', 'playbackToken', 'kind', 'source', 'occurredAt'],
               properties: {
                 eventId: { type: 'string', format: 'uuid' }, trackId: { type: 'string', format: 'uuid' },
-                sessionId: { type: 'string', format: 'uuid' },
+                sessionId: { type: 'string', format: 'uuid' }, playbackToken: { type: 'string', minLength: 1, maxLength: 2048 },
                 kind: { type: 'string', enum: ['start', 'play_30s', 'finish', 'skip_early', 'repeat', 'segment_skip'] },
                 positionMs: { type: 'integer', minimum: 0, maximum: 86400000 },
                 durationMs: { type: 'integer', minimum: 0, maximum: 86400000 },
@@ -716,3 +775,31 @@ export const PLATFORM_OPENAPI = {
     },
   },
 };
+
+// Every v2 operation except health and schema discovery is rate-limited. Keep
+// standard throttle/storage-failure responses visible in the published contract.
+function rateLimitErrorResponse(description, { retryAfter = false } = {}) {
+  return {
+    description,
+    ...(retryAfter ? {
+      headers: {
+        'Retry-After': { description: 'Seconds until this rate-limit window resets.', schema: { type: 'integer', minimum: 1 } },
+        'RateLimit-Limit': { description: 'Maximum requests in the current window.', schema: { type: 'integer', minimum: 1 } },
+        'RateLimit-Remaining': { description: 'Requests remaining in the current window.', schema: { type: 'integer', minimum: 0 } },
+        'RateLimit-Reset': { description: 'Seconds until this rate-limit window resets.', schema: { type: 'integer', minimum: 0 } },
+      },
+    } : {}),
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+  };
+}
+
+for (const [path, pathItem] of Object.entries(PLATFORM_OPENAPI.paths)) {
+  if (path === '/api/v2/health' || path === '/api/v2/openapi.json') continue;
+  for (const method of ['get', 'post', 'patch', 'delete']) {
+    const operation = pathItem[method];
+    if (!operation) continue;
+    operation.responses ??= {};
+    operation.responses[429] ??= rateLimitErrorResponse('Too many requests; retry after the indicated delay.', { retryAfter: true });
+    operation.responses[503] ??= rateLimitErrorResponse('Rate-limit protection is temporarily unavailable.');
+  }
+}
