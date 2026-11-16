@@ -2,7 +2,7 @@
 
 **Статус:** инструкция для разработки/локального smoke-test; это не пользовательская установка, публичный staging или готовая бета.
 **Выбранный владельцем сценарий:** платформа независимой музыки v2 на домашнем Windows-ПК. Docker Desktop с WSL2 можно установить.
-**Проверки:** GitHub Actions [run #43722985545](https://github.com/visiontripin/Vision/actions/runs/43722985545) прошёл API/web/Android checks, health/OpenAPI smoke и PostgreSQL 16 + pgvector, Redis и S3-compatible MinIO integration. Этот run предшествует текущей authenticated `mc ready local` readiness-проверке, поэтому её hosted CI подтверждение ожидает отдельного run; локальный Docker Engine, целевой Windows-ПК и backup/restore на нём также ещё не проверены.
+**Проверки:** GitHub Actions [run #43806758735](https://github.com/visiontripin/Vision/actions/runs/43806758735) прошёл API/web/Android checks, health/OpenAPI smoke, authenticated MinIO readiness через `mc ready local` с CI credentials и интеграции на PostgreSQL 16 + pgvector, Redis и S3-compatible MinIO. Локальный Docker Engine, целевой Windows-ПК и backup/restore на нём ещё не проверены.
 
 ## Важно: что этот контур делает и чего не делает
 
