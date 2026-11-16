@@ -39,6 +39,8 @@ test('local environment uses high-entropy URL-safe secrets and refuses to overwr
 test('local Compose stack is loopback-bound, registration-closed and persistent', () => {
   assert.equal(compose.services.database.image, 'pgvector/pgvector:pg16');
   assert.equal(compose.services.storage.image, 'ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z');
+  assert.deepEqual(compose.services.storage.healthcheck.test, ['CMD', 'mc', 'ready', 'local']);
+  assert.match(compose.services.storage.environment.MC_HOST_local, /^http:\/\/\$\{PLATFORM_S3_ACCESS_KEY_ID\}:\$\{PLATFORM_S3_SECRET_ACCESS_KEY\}@127\.0\.0\.1:9000$/);
   assert.equal(compose.services.database.ports, undefined, 'PostgreSQL must not be published to the host');
   assert.equal(compose.services.redis.ports, undefined, 'Redis must not be published to the host');
   assert.deepEqual(compose.services.api.ports, ['127.0.0.1:4400:4400']);

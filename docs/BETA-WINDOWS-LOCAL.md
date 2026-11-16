@@ -2,7 +2,7 @@
 
 **Статус:** инструкция для разработки/локального smoke-test; это не пользовательская установка, публичный staging или готовая бета.
 **Выбранный владельцем сценарий:** платформа независимой музыки v2 на домашнем Windows-ПК. Docker Desktop с WSL2 можно установить.
-**Последняя проверка в репозитории:** YAML/настройки и автоматические тесты; Docker Engine, Windows и настоящая PostgreSQL ещё не запускались в этой среде.
+**Проверки:** GitHub Actions [run #43722985545](https://github.com/visiontripin/Vision/actions/runs/43722985545) прошёл API/web/Android checks, health/OpenAPI smoke и PostgreSQL 16 + pgvector, Redis и S3-compatible MinIO integration. Этот run предшествует текущей authenticated `mc ready local` readiness-проверке, поэтому её hosted CI подтверждение ожидает отдельного run; локальный Docker Engine, целевой Windows-ПК и backup/restore на нём также ещё не проверены.
 
 ## Важно: что этот контур делает и чего не делает
 
@@ -17,7 +17,7 @@ Compose запускает изолированные PostgreSQL 16 с pgvector,
 - Windows 10/11 x64 с включённой аппаратной виртуализацией.
 - Docker Desktop для Windows с WSL2 backend и Linux containers; после установки проверьте в новом PowerShell: `docker compose version`.
 - Node.js 22.5+ и npm (для репозитория рекомендован Node 22 LTS); проверьте `node --version` и `npm --version`.
-- Свободное место для Docker-образа и named volume PostgreSQL. Данные остаются на диске после остановки контейнеров.
+- Свободное место для Docker-образов и named volumes PostgreSQL, Redis и MinIO. Данные остаются на диске после остановки контейнеров.
 
 Установку Docker Desktop выполняет владелец на своём ПК. Репозиторий не запускает установщик и не меняет Windows Firewall.
 
@@ -31,9 +31,9 @@ npm run platform:local:init
 npm run platform:local:up
 ```
 
-`init` один раз создаёт `.env.platform.local` с криптографически случайными паролем базы и ключом подписи. Файл добавлен в `.gitignore`; он не должен попадать в Git, архивы обратной связи или скриншоты. Команда не перезаписывает существующие секреты.
+`init` один раз создаёт `.env.platform.local` с криптографически случайными секретами базы, подписи, Redis и S3. Файл добавлен в `.gitignore`; он не должен попадать в Git, архивы обратной связи или скриншоты. Команда не перезаписывает существующие секреты.
 
-`up` поднимает только PostgreSQL, собирает ранний API-контейнер, применяет проверяемые миграции и запускает API. Первое скачивание образов/сборка могут занять время. После успеха проверьте:
+`up` поднимает PostgreSQL, Redis и закрытое S3-хранилище, собирает ранний API-контейнер, применяет миграции и запускает API вместе с worker. Первое скачивание образов/сборка могут занять время. После успеха проверьте:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:4400/api/v2/health
@@ -51,13 +51,13 @@ npm run platform:local:migrate  # применить/проверить новы
 npm run platform:local:down     # остановить контейнеры, данные сохранить
 ```
 
-`down` сохраняет named volume `platform-pgdata`. Не добавляйте `-v` к `docker compose down`, если не хотите безвозвратно удалить локальную тестовую базу. `.env.platform.local` остаётся после остановки, чтобы тот же signing key продолжал работать при следующем запуске.
+`down` сохраняет named volumes `platform-pgdata`, `platform-redisdata` и `platform-miniodata`. Не добавляйте `-v` к `docker compose down`, если не хотите безвозвратно удалить локальные тестовые данные. `.env.platform.local` остаётся после остановки, чтобы тот же signing key продолжал работать при следующем запуске.
 
 ## Сетевые и продуктовые ограничения
 
-- Порт API опубликован только на loopback (`127.0.0.1:4400`); база доступна только внутри Docker-сети. Не меняйте привязку на `0.0.0.0`, не открывайте порт в Windows Firewall и не делайте port-forward на роутере.
+- API опубликован только на loopback (`127.0.0.1:4400`), S3 endpoint — только на `127.0.0.1:9001`; PostgreSQL и Redis доступны лишь внутри Docker-сети. Не меняйте привязки на `0.0.0.0`, не открывайте порты в Windows Firewall и не делайте port-forward на роутере.
 - Регистрация закрыта (`PLATFORM_REGISTRATION_ENABLED=0`). Не включайте её для домашней сети: у раннего API ещё нет приглашений/email-подтверждения и rate limits.
-- Нет загрузки аудио, транскодирования, fingerprint-проверки, публичной публикации или v2 UI. Миграции PGlite-проверены, но этот рецепт не заменяет PostgreSQL/Windows smoke, backup/restore, security review и Stack Ready gate.
+- Регистрация и загрузки отключены; runtime не является пользовательским ingest-процессом. Реального fingerprint-провайдера и v2 UI нет, `not_configured` не означает `clear`. Несмотря на зелёную CI-интеграцию, этот рецепт на Windows, backup/restore, security review и Stack Ready gate ещё не проверен.
 - Публичная бета, внешний набор участников и пользовательские загрузки остаются заблокированы legal/privacy/rights/moderation/operations гейтами из [`BETA-PLAN.md`](BETA-PLAN.md).
 
 Останавливайте контур через `npm run platform:local:down`, когда закончили. Если возникла проблема, передавайте только текст ошибки из логов; не прикладывайте `.env.platform.local`, токены, адреса электронной почты или содержимое пользовательских файлов.

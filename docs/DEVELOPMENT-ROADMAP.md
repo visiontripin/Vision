@@ -3,54 +3,51 @@
 **Срез:** 2026-11-12
 **Целевой продукт:** платформа независимой музыки v2, а не личная библиотека.
 **Первая тестовая среда:** Windows 10/11, локальный Docker Desktop + WSL2.
-**Статус:** разработка продолжается; готовность к бете не достигнута. Подробный продуктовый backlog и критерии фаз остаются в [`ROADMAP-v2.md`](ROADMAP-v2.md), ограничения набора — в [`BETA-PLAN.md`](BETA-PLAN.md).
+**Статус:** серверный backend-контур Ф1–Ф3 существенно реализован и прошёл hosted CI-интеграции на PostgreSQL/Redis/S3, но Stack Ready и готовность к бете не приняты. Подробный список подтверждённых возможностей и оставшихся гейтов — в [`ROADMAP-v2.md`](ROADMAP-v2.md), ограничения набора — в [`BETA-PLAN.md`](BETA-PLAN.md).
 
 ## Точка остановки и процент
 
-> **Общий прогресс v2: около 16%. Готовность к закрытой бете: 0%.**
+> **Готовность к закрытой бете: 0%.** Общий процент выполнения не пересчитан после backend-first прохода ADR-0021: прежние оценки 16% / 29% устарели и не должны использоваться как текущие.
 
-Процент — грубая оценка выполнения задач roadmap, а не сроков и не «процента качества». В фазах Ф0–Ф5 сейчас 59 задач: 3 отмечены завершёнными, 13 частично выполнены, 43 не начинались. Для оценки частичная задача считается за половину: `(3 + 13 × 0,5) / 59 = 16,1%`, округлено до **16%**. Веса задач не равны их длительности, поэтому это ориентир, а не финансовая или календарная оценка.
+Серверные контракты Ф1–Ф3 реализованы существенно дальше, чем показывали прежние проценты: account/owner APIs, квоты, приватное S3-хранилище, queue/worker/ingest, moderation/rights endpoints, privacy-minimal events, детерминированные рекомендации/offline evaluation, radio APIs и voice/TTS cost path существуют и проходят автоматические проверки. GitHub CI также проверяет PostgreSQL 16 + pgvector, Redis/BullMQ, S3-compatible storage, API smoke и Android TypeScript.
 
-**Ф1, мультипользовательская платформа: около 29% по той же методике** — 7 из 12 задач затронуты, но ни одна не закрыта приёмкой. Главные недостающие блоки — хранение аудио, загрузка/ingest, квоты, fingerprint, рабочий модерационный процесс и реальная интеграция сайта.
-
-**Бета readiness — 0%:** нет работающего пользовательского пути v2, сайт пока не подключён к platform API, загрузка аудио отсутствует, реальная PostgreSQL/Windows-сборка ещё не проверена, юридические и операционные гейты открыты, когорта не приглашена (0/0). Технический процент не разрешает запуск.
+**Это не означает приёмку:** локальный Docker/Windows-контур и backup/restore не проверены на ПК владельца; нет реального fingerprint/TTS поставщика, подключённого сайта, полного пользовательского E2E, завершённого legal/privacy процесса, production-операций и утверждённого Go решения. Регистрация/загрузки выключены в локальном контуре; UGC непубличен. Техническая реализация не разрешает запуск.
 
 ## Состояние фаз
 
-| Фаза | Статус | Где остановились |
+| Фаза | Текущий статус | Где остановились |
 |---|---|---|
-| **Ф0 — стабилизация и pivot** | Частично завершена, около 60% чек-листа | Направление v2, документация продукта и бумажная сетка зафиксированы. Не закрыты юридическое заключение, решение по репликации UGC, метаданные репозитория, требуемая проверка CI/веток и готовность беты. |
-| **Ф1 — мультипользовательская платформа** | Частично, около 29% чек-листа | Есть ранний изолированный API, схемы PostgreSQL, identity, права/модерация и каталог. Нет storage/upload/worker, реального PG/restore rehearsal и завершённого end-to-end контура. |
-| **Ф2 — вкус и рекомендации** | 0% | Есть только заготовки таблиц/pgvector. Нет событийного контура, embeddings, retrieval/ranking, оценки качества или UI cold start. |
-| **Ф3 — «Моя волна» и радио** | 0% | Есть схема данных и бумажная сетка; нет планировщика, voice/TTS runtime, клиентского проигрывания или эфирной аналитики. |
-| **Ф4 — промо, монетизация и лейбл** | 0% | Не начиналась; дополнительно заблокирована правовым решением и требованиями маркировки/биллинга. |
-| **Ф5 — масштабирование и рост** | 0% | Не начиналась; зависит от готовых Ф1–Ф3 и подтверждённой ценности продукта. |
+| **Ф0 — стабилизация и pivot** | Частично завершена | Направление v2 и продуктовые документы зафиксированы. Открыты legal/privacy review, решение по правам на UGC и продуктовый go/no-go. |
+| **Ф1 — мультипользовательская платформа** | Backend реализован частично и CI-интегрирован; фаза не принята | Есть PostgreSQL migrations 001–007, account/owner APIs, quotas/uploads, private S3, outbox/BullMQ/worker/ingest, moderation/rights APIs и catalog API. Открыты production backup/restore/rollback, legacy SQLite migration, real fingerprint, legal process, anti-fraud/rate limits, v2 UI и end-to-end acceptance. |
+| **Ф2 — вкус и рекомендации** | Backend foundations реализованы, продуктовые KPI не приняты | Есть privacy-minimal events, deterministic recommendations и offline evaluator; pgvector schema/vector scoring подключены. Нет pipeline генерации embeddings и taste profiles, оценки на контрольных профилях и cold-start/product UI. |
+| **Ф3 — «Моя волна» и радио** | Backend foundations реализованы, пользовательский эфир не принят | Есть private radio sessions/schedule/feedback и provider-neutral voice/TTS cache/cost APIs. Нет реального TTS поставщика, клиентского sequencer/player, редакционного runtime и проверенной эфирной аналитики. |
+| **Ф4 — промо, монетизация и лейбл** | Не начиналась | Заблокирована правовым решением и требованиями маркировки/биллинга. |
+| **Ф5 — масштабирование и рост** | Не начиналась | Зависит от готовых и принятых Ф1–Ф3 и подтверждённой ценности продукта. |
 
-### Что учтено как частичная работа Ф1
+### Текущее покрытие Ф1 и оставшиеся условия
 
-- **Ф1.1 Аккаунты:** email/password, роли и artist-profile API есть; нет подтверждения email, приглашений, OAuth/passkey.
-- **Ф1.2 Postgres:** отдельный pool и миграции 001–004 есть; тестирование пока на PGlite, без прогона на настоящей PostgreSQL 16, backup/restore и SQLite migration.
-- **Ф1.7 Права и takedown:** есть API подачи на публикацию, модерации, жалоб и counter-notice; согласие/политики — черновики, юридическая процедура и владелец жалоб не утверждены.
-- **Ф1.8 Артист:** создание профиля есть на backend; нет витрины, статистики и клиентского пути.
-- **Ф1.10 Auth/ownership:** access/refresh rotation и проверки владельца есть; 2FA и production-проверки отсутствуют.
-- **Ф1.11 Каталог:** backend-поиск и фильтры есть; пользовательского v2 UI и опубликованного контента нет.
-- **Ф1.12 Тесты:** PGlite/HTTP/permission-тесты есть; реальная PostgreSQL, Windows и полноценный E2E не проверены.
+- **Identity/ownership:** owner-scoped account/token APIs и проверки владения есть; email confirmation/invitations, OAuth/passkey и 2FA отсутствуют.
+- **Postgres:** отдельный pool и checksum-locked migrations 001–007 проверены в CI на PostgreSQL 16 + pgvector; перенос SQLite-данных, rollback/backup/restore rehearsal и Windows проверка не выполнены.
+- **Storage/upload/ingest:** есть quota reservation, private S3 adapter, signed media URLs, outbox/BullMQ/DLQ, idempotent quarantine ingest и transcode; CI интеграция с Redis и S3-compatible MinIO прошла. Локальные uploads выключены, CDN/lifecycle/production provider не утверждены.
+- **Fingerprint/moderation/rights:** provider-neutral fail-closed adapter и moderation/rights/takedown APIs есть; реального fingerprint поставщика, moderator UI, legal-approved policies и назначенного владельца жалоб нет. `not_configured` не означает `clear`.
+- **Artist/catalog:** backend profile/catalog APIs есть; site v2 и публичный контент отсутствуют.
+- **Tests/operations:** PGlite/security/HTTP tests и hosted CI integration/smoke проходят; production observability/alarms, runbooks, backup/restore review и Windows end-to-end не пройдены.
 
-Остальные задачи Ф1 считаются незапущенными, если в `ROADMAP-v2.md` не указан отдельный статус. В частности, сама схема `media_objects` не является готовым объектным хранилищем.
+Схема данных и зелёный CI не закрывают фазовый acceptance gate: каждый блок должен пройти оставшиеся продуктовые, юридические и operational-проверки.
 
 ## Ближайший порядок работ
 
-1. **Проверить локальный Windows-контур на ПК владельца.** Установить Docker Desktop/WSL2, запустить инструкции из [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md), проверить настоящую PostgreSQL 16 + pgvector, миграции, повторный запуск, backup/restore и портовые ограничения. Пока этот шаг проверяет только backend — не сайт.
-2. **Завершить фундамент Ф1:** quotas/ownership, приватный S3-compatible адаптер (локальный MinIO в dev), подписанные URL, удаление и cache invalidation.
-3. **Сделать закрытый ingest:** ограниченная загрузка → карантин → idempotent queue/worker → transcode/fingerprint adapter → ручное решение. До юридического разрешения не открывать регистрацию/загрузки для внешних пользователей и не публиковать пользовательскую музыку.
-4. **Закрыть права и модерацию:** версионированные условия после legal review, доступ к очереди/жалобам, takedown, audit, counter-notice, SLA и ответственный человек.
-5. **Завершить серверную Ф2–Ф3:** privacy-safe events, offline evaluation, retrieval/ranking, radio scheduler, fake voice provider и интеграционные тесты. Провайдеров и расходы не выбирать без отдельного решения.
-6. **Пройти Stack Ready gate (ADR-0021):** контрактные/security tests, PG миграция и восстановление, storage/takedown, queue retry/idempotency, ingest/moderation, recsys/radio integration, CI smoke, наблюдаемость и runbooks.
-7. **Только затем подключать v2 сайт:** listener-каталог/прослушивание, artist onboarding/submission/status, модерационный экран; покрыть путь E2E от разрешённой тестовой загрузки до публикации.
-8. **Внутренний закрытый alpha → внешняя закрытая бета:** сначала тест только на явно разрешённых/синтетических материалах, затем внешний набор — только после legal/privacy/consent review, утверждения feedback-канала, процесса жалоб, операционных тестов и отдельного Go решения.
-9. **Ф4–Ф5:** промо/монетизация/лейбл и масштабирование — после проверки ценности и правового/финансового дизайна; они не нужны для первого локального smoke.
+1. **Проверить локальный Windows-контур на ПК владельца.** По [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md) запустить PostgreSQL 16 + pgvector, Redis, private S3, миграции 001–007, API и worker; проверить повторный запуск, loopback-only ports, backup/restore и процедуру восстановления. Это backend smoke, не сайт.
+2. **Закрыть операционные пробелы Ф1:** backup/restore/rollback review, SQLite data migration plan, runbooks/alarms, anti-fraud/rate limits и выбранное production storage; тестовые MinIO image/endpoint не считать production решением.
+3. **Закрыть права и moderation operations:** legal-approved terms, human complaint/takedown/appeal ownership, SLA и тест end-to-end изолированного ingest → moderation → rights-aware decision. До этого не открывать внешние регистрации/загрузки и не публиковать пользовательские треки.
+4. **Дополнить Ф2:** embeddings/pgvector retrieval и offline metrics на контрольных профилях; сохранить privacy-minimal events и не выдавать `not_configured` fingerprint за чистый результат.
+5. **Дополнить Ф3:** radio transport/player, editorial runtime, playback/event analytics и выбранный TTS provider/cost limits — только после отдельного решения владельца.
+6. **Пройти Stack Ready gate (ADR-0021):** проверить API/security, реальные PG миграции и recovery, storage/takedown, queue retry/idempotency/DLQ, ingest/moderation, recsys/radio integration, CI smoke, наблюдаемость и runbooks; gate требует явной приёмки владельцем.
+7. **После принятия gate подключать v2 сайт:** listener-каталог/прослушивание, artist onboarding/submission/status, moderation UI; E2E только на разрешённом синтетическом/тестовом контенте.
+8. **Внутренний alpha → внешняя закрытая бета:** только после legal/privacy/consent review, процесса жалоб, операционных тестов и отдельного Go решения; текущая когорта — 0.
+9. **Ф4–Ф5:** промо/монетизация/лейбл и масштабирование — после подтверждённой ценности и правового/финансового дизайна.
 
-Не назначены календарные даты: зависимости включают внешнюю юридическую консультацию, реальную проверку на Windows и выбор storage/fingerprint-интеграций.
+Календарные даты не назначены: остаются owner-run Windows, юридическая консультация, операционная приёмка и решения по production-провайдерам.
 
 ## Beta go/no-go
 
@@ -68,6 +65,6 @@
 
 ## Состояние ветки и уборка
 
-Работа продолжается только в активной ветке `arena/3e05af70-vision`; `main` и текущая ветка сохраняются. Нужные исходники и технические инструкции остаются в репозитории. Для публичной витрины README оставлен только как презентация продукта; подробности разработки собраны в Markdown-документации.
+Работа продолжается только в активной ветке `arena/3e05af70-vision`; `main` не изменялся, другие ветки не создавались и не переключались. При восстановлении checkout локальный `HEAD` был выровнен с remote через `git reset --mixed`, сохранив изменения рабочей копии. `git clean` и удаление remote refs не выполнялись.
 
-Удалялись только игнорируемые артефакты `apps/web/dist/` и `apps/console/dist/`; исходники, незакоммиченная работа и секреты не очищались. `git clean`, reset, commit, push и удаление remote refs не выполнялись. Состав работы и решения сохранены в [`WORKSPACE-RECOVERY-LOG.md`](WORKSPACE-RECOVERY-LOG.md); состояние remote refs — в [`BRANCH-CLEANUP-AUDIT.md`](BRANCH-CLEANUP-AUDIT.md).
+README остаётся презентацией продукта; технические детали собраны в Markdown-документации. Актуальное состояние ветки, backend checkpoint и открытые гейты описаны в [`ROADMAP-v2.md`](ROADMAP-v2.md) и [`BETA-PLAN.md`](BETA-PLAN.md).

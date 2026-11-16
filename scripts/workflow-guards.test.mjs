@@ -77,7 +77,13 @@ test('active CI checks API, web, platform integrations and Android client before
   assert.match(minioStep.run, /MINIO_ROOT_PASSWORD=vision-ci-secret-very-long/);
   assert.match(minioStep.run, /MinIO container startup failed/);
   const minioHealthStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'Wait for MinIO readiness');
-  assert.match(minioHealthStep.run, /process\.env\.PLATFORM_S3_ENDPOINT/);
+  assert.match(minioHealthStep.run, /while ! docker exec/);
+  assert.match(minioHealthStep.run, /MC_HOST_local=/);
+  assert.match(minioHealthStep.run, /\$\{PLATFORM_S3_ACCESS_KEY_ID\}/);
+  assert.match(minioHealthStep.run, /\$\{PLATFORM_S3_SECRET_ACCESS_KEY\}/);
+  assert.match(minioHealthStep.run, /@127\.0\.0\.1:9000/);
+  assert.match(minioHealthStep.run, /mc ready local/);
+  assert.match(minioHealthStep.run, /deadline=\$\(\(SECONDS \+ 60\)\)/);
   const integrationTestStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'PostgreSQL, Redis and S3 integration tests');
   assert.match(integrationTestStep.run, /RUNNER_TEMP\/platform-integration\.log/);
   assert.match(integrationTestStep.run, /Platform integration test details/);

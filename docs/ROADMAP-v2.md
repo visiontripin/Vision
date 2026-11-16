@@ -1,7 +1,7 @@
 # Vision — план реализации v2
 ### От личного плеера к публичной платформе с живым радио «Моя волна»
 
-**Файл:** `docs/ROADMAP-v2.md` · **Владелец:** @visiontripin · **Статус:** scope Ф0–Ф5 выбран; после выбора владельца F1–F3 выполняются backend-first до Stack Ready gate (ADR-0021); Фаза 0 и внешние/юридические гейты остаются открытыми · **Срез анализа:** main @ `9524489e0ea9dafe439e43cf41f265411e0e7f0b` (12.11.2026)
+**Файл:** `docs/ROADMAP-v2.md` · **Владелец:** @visiontripin · **Статус:** scope Ф0–Ф5 выбран; после выбора владельца F1–F3 выполняются backend-first до Stack Ready gate (ADR-0021); Фаза 0 и внешние/юридические гейты остаются открытыми · **Исходный baseline:** main @ `9524489e0ea9dafe439e43cf41f265411e0e7f0b` (12.11.2026); актуальный backend checkpoint и CI evidence ниже относятся к активной ветке `arena/3e05af70-vision`.
 
 **Назначение документа.** Единый источник правды для разработки: видение, целевая архитектура, контракты, роли, дорожная карта и критерии приёмки. Заменяет `docs/PRODUCT.md` в части scope и дополняет `docs/IMPROVEMENTS.md` (тот остаётся как технический бэклог плеера).
 
@@ -15,7 +15,8 @@
 
 | Метка | Значение |
 |---|---|
-| `- [ ]` | задача в плане, не начата |
+| `- [ ]` | задача не принята; отметка сама по себе не говорит, начиналась ли реализация |
+| `- [~]` | есть частичная реализация, но задача и фазовый гейт ещё не приняты |
 | `- [x]` | сделано и принято по гейту |
 | `- [-]` | **вырезано** — не делаем; после дефиса дописать причину |
 | `- [?]` | **под вопросом** — нужно решение владельца, см. §18 |
@@ -62,7 +63,7 @@
 
 ## 2. Что уже есть
 
-Срез `main @ 9524489`, пуш 12.11.2026. Репозиторий создан 09.11.2026 — **вся история занимает 4 дня**.
+Исходная инвентаризация: `main @ 9524489`, 12.11.2026. Статические counts и замечания ниже — исторический baseline, не текущий отчёт о backend/CI; актуальная реализация и проверки активной ветки описаны в checkpoint §17.4.
 
 ### 2.1 Факты
 
@@ -117,14 +118,14 @@
 | ADR | Решение | Статус | Владелец |
 |---|---|---|---|
 | 0011 | **Pivot:** личный плеер → публичная UGC-платформа с радио. `PRODUCT.md` и промпты обновлены | принято владельцем как направление, запуск не одобрен | PO |
-| 0012 | **Postgres + pgvector** как основное хранилище; SQLite остаётся только для локального режима | первые migrations/schema для отдельной platform DB проходят PGlite; новый изолированный identity API использует platform pool, legacy API остаётся на SQLite; SQLite-миграции и production PG16 не проверены | TL |
+| 0012 | **Postgres + pgvector** как основное хранилище; SQLite остаётся только для локального режима | отдельный platform pool и migrations 001–007; PostgreSQL 16 + pgvector integration проходят в hosted CI; SQLite-миграция, production backup/restore и owner-run Windows rehearsal открыты | TL |
 | 0013 | **S3-совместимое хранилище + CDN** для медиа; provider и бюджет не выбраны | принято как целевая архитектура, provider открыт | TL / OPS |
-| 0014 | **Эфир как плейлист сегментов** (клиентский секвенсор), а не серверный live-mix на MVP | принято для MVP, runtime не реализован | TL / RADIO |
+| 0014 | **Эфир как плейлист сегментов** (клиентский секвенсор), а не серверный live-mix на MVP | принято для MVP; server-side radio session/schedule APIs есть, client sequencer/player runtime не принят | TL / RADIO |
 | 0015 | **Реплики-сиды для UGC:** только подтверждённый контент либо отключение; вариант требует решения владельца после консультации | proposed; не принято | SEC / LEGAL / PO |
 | 0016 | **Заморозка платформ:** desktop, console, embedded Node-in-APK — эксперименты, развитие приостановлено до PMF | принято; код сохранён, workflow ручной/заморожен | PO |
-| 0017 | **Модерация до публикации** (quarantine → fingerprint → очередь → publish) | политика принята; отдельный platform API покрывает submission, queue, approve/reject/escalate, claims и counter-notice; миграционные и HTTP-тесты проходят на PGlite. Fingerprint/worker, real PostgreSQL rehearsal, legal process и production gate остаются открытыми | TRUST |
+| 0017 | **Модерация до публикации** (quarantine → fingerprint → очередь → publish) | политика принята; platform API покрывает submission, queue, approve/reject/escalate, claims и counter-notice; quarantine ingest/worker и PostgreSQL/Redis/S3 CI integration проходят. Real fingerprint provider, moderator UI/operations, legal process и production gate открыты | TRUST |
 | 0018 | **Маркировка рекламы/промо**; рынок и применимые идентификаторы определит юрист | принято как safety-гейт; реклама выключена | LEGAL / ADTECH |
-| 0019 | **Транспорт эфира:** progressive-секвенсор на MVP, HLS/MSE — Ф3.13, live-микс — после Ф5 | принято для целевого MVP, runtime не реализован | TL |
+| 0019 | **Транспорт эфира:** progressive-секвенсор на MVP, HLS/MSE — Ф3.13, live-микс — после Ф5 | принято для целевого MVP; client playback/sequence runtime не реализован | TL |
 | 0020 | **Windows Vision Server:** код сохранён, workflow временно заморожен; отдельное требование владельца конфликтует с freeze и остаётся открытым | не считать выполненным или отменённым | PO |
 | 0021 | **Backend-first:** полный серверный контур Ф1–Ф3 до новых app-фич | принято владельцем; gate в §17.4 | PO / TL |
 
@@ -675,20 +676,26 @@ Provider, region/budget, fingerprint/TTS vendor и ADR-0015 не выбират�
 **Гейт:** регистрация → загрузка → модерация → публикация end-to-end; переезд данных без потерь.
 **KPI:** загрузка p95 < 30 с · модерация < 24 ч · 0 потерянных файлов при миграции.
 
-**Backend checkpoint (2026-11-12, implementation progress only; Ф1 и Stack Ready не приняты):** v2 server сохраняет изолированный PostgreSQL pool и locked/checksummed migrations; добавлены owner-scoped uploads с quota reservation, private S3-compatible storage и короткими signed URLs, outbox/BullMQ/DLQ, идемпотентный quarantine ingest с hash/audio-magic проверки, FFmpeg variants и закрытым fingerprint adapter, moderation/rights claim/takedown APIs. Добавлены privacy-minimal deduplicated play events, deterministic recommendations/offline evaluator, private music-only radio sessions/schedule/feedback и provider-neutral TTS cache/cost path с fake adapter. OpenAPI, PGlite/security/HTTP acceptance tests, CI checks и integration job заведены; registration/uploads и реальные fingerprint/TTS провайдеры остаются выключены до решения владельца/операторов. Сейчас `npm test`, `typecheck:api` и generated API type check проходят; opt-in реальный PostgreSQL 16/pgvector, Redis и MinIO прогоны здесь не запускались. Не выполнены production backup/restore+rollback review, миграция SQLite данных, OAuth/passkey/2FA, Redis rate limits/anti-fraud, production provider/license/cost decisions, observability/alarms и staging runbooks. UGC остаётся непубличным без прав и модерации; `not_configured` fingerprint не означает `clear`. Поэтому все roadmap gate/checklist пункты остаются незакрытыми.
+**Backend checkpoint (2026-11-12; реализация и CI evidence, не acceptance; Ф1 и Stack Ready не приняты):** v2 server имеет изолированный PostgreSQL pool и locked/checksummed migrations 001–007; owner-scoped quota-backed upload APIs, private S3-compatible storage и signed URLs, outbox/BullMQ/DLQ, идемпотентный quarantine ingest с hash/audio-magic проверками, FFmpeg variants, fail-closed fingerprint adapter и moderation/rights/takedown APIs. Добавлены privacy-minimal deduplicated play events, deterministic recommendations/offline evaluator, private music-only radio sessions/schedule/feedback и provider-neutral TTS cache/cost ledger с fake adapter. Регистрация и uploads в локальном контуре выключены; реальные fingerprint/TTS providers и production storage не выбраны.
 
-- [ ] **Ф1.1** Аккаунты: email/OAuth/passkey, роли listener / artist / moderator / admin — `BE, SEC` · P0 · 5 д
-- [ ] **Ф1.2** Postgres + нумерованные миграции; перенос данных из SQLite; local-mode сохранён — `BE, TL` · P0 · 6 д
-- [ ] **Ф1.3** S3/MinIO + CDN для медиа и обложек, подписанные URL, lifecycle — `OPS, BE` · P0 · 4 д
-- [ ] **Ф1.4** Очереди и воркер `ingest`: transcode → fingerprint → moderation → publish — `BE, OPS` · P0 · 5 д
-- [ ] **Ф1.5** Фингерпринт-проверка прав (внешний API + кэш совпадений) — `TRUST, BE` · P0 · 3 д
+**Локальные проверки:** `npm run test:all`, `npm run typecheck:api`, `npm run check:api-types` и `apps/mobile: npx tsc --noEmit` проходят; API suite содержит 3 опциональных skip без `PLATFORM_REDIS_URL`. В текущей среде Docker Engine не установлен, поэтому `platform:local:up` и Windows smoke здесь не запускались.
+
+**Hosted CI:** [run #43722985545](https://github.com/visiontripin/Vision/actions/runs/43722985545) прошёл API/web/mobile, OpenAPI/typecheck, smoke, PostgreSQL 16 + pgvector, Redis/BullMQ retry/deduplication/DLQ/restart и S3 integration against a pinned MinIO community image. Этот run подтверждает hosted integration baseline, но предшествует текущему authenticated `mc ready local` guard; новую readiness-проверку нельзя считать hosted-confirmed до отдельного CI run. Hosted CI не заменяет local Docker Desktop/Windows smoke владельца или production rehearsal.
+
+Открыты production backup/restore+rollback review, миграция SQLite данных, OAuth/passkey/2FA, Redis rate limits/anti-fraud, production provider/license/cost decisions, observability/alarms, staging runbooks и полное приложение/UI E2E. Тестовый MinIO image — зависимость CI/dev, не production approval. UGC остаётся непубличным без прав и модерации; `not_configured` fingerprint не означает `clear`. Все roadmap gate/checklist пункты остаются незакрытыми до отдельной проверки и явной приёмки.
+
+- [~] **Ф1.1** Backend account/token APIs и роли есть; email confirmation, OAuth/passkey и 2FA не реализованы — `BE, SEC` · P0 · 5 д
+- [~] **Ф1.2** PostgreSQL migrations 001–007 и PG16 integration есть; перенос SQLite и rollback/restore rehearsal открыты — `BE, TL` · P0 · 6 д
+- [~] **Ф1.3** Private S3-compatible storage и signed URLs интегрированы; CDN/lifecycle и production provider не выбраны — `OPS, BE` · P0 · 4 д
+- [~] **Ф1.4** Queue/worker, quarantine ingest и transcode реализованы; real fingerprint и полный moderation→publish E2E открыты — `BE, OPS` · P0 · 5 д
+- [~] **Ф1.5** Fail-closed fingerprint adapter есть; внешняя проверка прав и кэш совпадений не подключены — `TRUST, BE` · P0 · 3 д
 - [ ] **Ф1.6** Очередь модерации в `web/admin`: карточка, решение, причины, эскалация — `FE, TRUST` · P0 · 4 д
-- [ ] **Ф1.7** Оферта, подтверждение прав, форма жалобы, takedown + counter-notice, repeat-infringer — `LEGAL, TRUST` · P0 · 4 д
-- [ ] **Ф1.8** Профили артистов: витрина, статистика, подписка, словарь произношения — `FE, UX` · P1 · 4 д
-- [ ] **Ф1.9** Квоты, лимиты, антифрод загрузок и событий — `BE, SEC` · P0 · 3 д
-- [ ] **Ф1.10** Токены: access 15 мин + refresh с ротацией, проверки владения, 2FA — `SEC, BE` · P0 · 3 д
-- [ ] **Ф1.11** Публичный каталог: поиск по Postgres FTS, фильтры жанр/настроение, пагинация — `BE, FE` · P1 · 3 д
-- [ ] **Ф1.12** Контрактные тесты v2 + IDOR/безопасность-тесты — `QA, SEC` · P0 · 3 д
+- [~] **Ф1.7** Rights claims, takedown и counter-notice APIs есть; legal-approved offer/policies и repeat-infringer process открыты — `LEGAL, TRUST` · P0 · 4 д
+- [~] **Ф1.8** Artist profile API есть; витрина, статистика, подписка и словарь произношения не приняты — `FE, UX` · P1 · 4 д
+- [~] **Ф1.9** Quota reservation есть; rate limits и anti-fraud не реализованы — `BE, SEC` · P0 · 3 д
+- [~] **Ф1.10** Password auth, access/refresh rotation и ownership checks есть; OAuth/passkey и 2FA открыты — `SEC, BE` · P0 · 3 д
+- [~] **Ф1.11** Backend catalog API есть; v2 web UI и опубликованный пользовательский каталог отсутствуют — `BE, FE` · P1 · 3 д
+- [~] **Ф1.12** Contract/security/IDOR tests и hosted integration checks есть; полный product E2E/owner acceptance открыт — `QA, SEC` · P0 · 3 д
 
 **Кандидаты на вырез:** Ф1.8 (витрину можно упростить до карточки), Ф1.11 (каталог можно отложить — волна важнее поиска).
 
@@ -700,14 +707,14 @@ Provider, region/budget, fingerprint/TTS vendor и ADR-0015 не выбират�
 **Гейт:** на 10 контрольных профилях подборки релевантны; skip-rate ниже шаффла ≥ 20%.
 **KPI:** skip-rate < 25% · подборка < 300 мс p95 · покрытие каталога > 80%.
 
-- [ ] **Ф2.1** Событийный контур `services/events`: приём батчей, дедуп, антифрод, витрины — `DATA, BE` · P0 · 4 д
-- [ ] **Ф2.2** Эмбеддинги аудио (ONNX) в `ingest`, хранение в pgvector, векторный индекс — `RECSYS` · P0 · 5 д
+- [~] **Ф2.1** Privacy-minimal event API и дедупликация есть; batch ingestion, anti-fraud и materialized views не реализованы — `DATA, BE` · P0 · 4 д
+- [~] **Ф2.2** pgvector schema/index и vector-score path есть; ONNX/audio embedding generation и заполнение каталога отсутствуют — `RECSYS` · P0 · 5 д
 - [ ] **Ф2.3** Авто-теги жанра и настроения, заполнение ≥ 80% каталога — `RECSYS` · P1 · 3 д
-- [ ] **Ф2.4** Профиль вкуса: центроид, веса, аффинити, усталость, затухание — `RECSYS, DATA` · P0 · 4 д
-- [ ] **Ф2.5** Кандидаты + ранжирование + MMR-разнообразие — `RECSYS` · P0 · 5 д
+- [~] **Ф2.4** Ranker читает taste-profile weights/centroid; их расчёт, обновление и fatigue model не реализованы — `RECSYS, DATA` · P0 · 4 д
+- [~] **Ф2.5** Deterministic candidate ranking и MMR-like diversity primitive есть; продуктовая калибровка и acceptance по KPI открыты — `RECSYS` · P0 · 5 д
 - [ ] **Ф2.6** Cold start: онбординг выбора жанров и артистов — `UX, FE` · P0 · 3 д
 - [ ] **Ф2.7** «Похожие треки» и объяснения «почему это в эфире» в UI — `FE` · P1 · 2 д
-- [ ] **Ф2.8** Офлайн-оценка (recall@50, nDCG@20) + A/B-каркас — `DATA, QA` · P0 · 4 д
+- [~] **Ф2.8** Offline evaluator (recall@K/nDCG@K/coverage) есть; контрольные профили, quality thresholds и A/B scaffold не готовы — `DATA, QA` · P0 · 4 д
 
 **Кандидаты на вырез:** Ф2.3 (авто-теги можно заменить ручными тегами артиста на старте).
 
@@ -719,10 +726,10 @@ Provider, region/budget, fingerprint/TTS vendor и ADR-0015 не выбират�
 **Гейт:** час эфира собирается автоматически, склейки незаметны, вставки не ломают поток.
 **KPI:** сессия > 30 мин · отток на вставках < 5% · себестоимость часа посчитана.
 
-- [ ] **Ф3.1** Планировщик `services/radio`: сегменты, счётчики, правила 1–12 из §9.3 — `RADIO, BE` · P0 · 6 д
+- [~] **Ф3.1** Private music-only session/schedule API и recommendation-based top-up есть; editorial segments, rules 1–12 и hour-long runtime не реализованы — `RADIO, BE` · P0 · 6 д
 - [ ] **Ф3.2** Клиентский секвенсор: предзагрузка, кроссфейд, ducking, восстановление сессии — `FE` · P0 · 5 д
-- [ ] **Ф3.3** TTS `services/voice`: 2 тембра, кэш по хешу, словарь произношения, стоимость — `VOICE` · P0 · 5 д
-- [ ] **Ф3.4** Сценарный движок: шаблоны подводок, контекст предыдущего трека, время суток, гео — `RADIO, VOICE` · P0 · 4 д
+- [~] **Ф3.3** Provider-neutral TTS adapter, private cache и cost ledger есть; production provider, 2 voices и pronunciation dictionary отсутствуют — `VOICE` · P0 · 5 д
+- [~] **Ф3.4** Server-owned script templates/variable rendering есть; contextual scenario generation (previous track/time/geo) и editorial runtime не реализованы — `RADIO, VOICE` · P0 · 4 д
 - [ ] **Ф3.5** Викторины: генерация из каталога, оверлей ответа, счёт, streak — `FE, RADIO` · P1 · 4 д
 - [ ] **Ф3.6** Погода: API, кэш по гео, шаблон, актуальность < 30 мин — `BE, RADIO` · P1 · 2 д
 - [ ] **Ф3.7** Брейкньюз: лента, факт-чек редактором, окно свежести 60 мин — `RADIO, TRUST` · P1 · 3 д
@@ -730,7 +737,7 @@ Provider, region/budget, fingerprint/TTS vendor и ADR-0015 не выбират�
 - [ ] **Ф3.9** Джинглы и звуковая идентичность: 8–12 штук, ночной режим — `RADIO, UX` · P2 · 2 д
 - [ ] **Ф3.10** Единая лаудность −14 LUFS на всём эфире, тест на склейках — `VOICE, BE` · P0 · 2 д
 - [ ] **Ф3.11** Настройки вставок пользователем + понижение частоты после скипа — `FE, BE` · P1 · 2 д
-- [ ] **Ф3.12** Эфирная аналитика: удержание по типам сегментов, скипы после вставок — `DATA` · P0 · 3 д
+- [~] **Ф3.12** Session/segment feedback API есть; analytics by segment type и skip/retention metrics не реализованы — `DATA` · P0 · 3 д
 - [ ] **Ф3.13** HLS/MSE-плеер (hls.js) для длинных сессий и слабых сетей — `FE` · P2 · 3 д
 
 **Кандидаты на вырез:** Ф3.7 (новости — самый дорогой и рискованный тип), Ф3.8, Ф3.9, Ф3.13.
