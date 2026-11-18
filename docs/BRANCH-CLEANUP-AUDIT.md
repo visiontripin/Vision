@@ -48,7 +48,7 @@
 
 ## Интеграция: коммит + merge (2026-11-12)
 
-- По указанию владельца выбран путь «сначала коммит»: WIP закоммичен на текущем `HEAD` как `f02a15c` (201 файл, keystore не затронут), затем выполнен `git merge 4bfec863…`.
+- По указанию владельца выбран путь «сначала коммит»: WIP закоммичен на текущем `HEAD` как `dcd2c83` (201 файл, keystore не затронут), затем выполнен `git merge 4bfec863…`. (Первая попытка интеграции `f02a15c`/`b2e65c2`/`55095bf` была потеряна при пересоздании песочницы между сессиями; рабочее дерево WIP восстановлено без потерь, интеграция повторена.)
 - Merge дал 30 конфликтов (12 content + 18 add/add). Во всех случаях локальная версия — более новая (remediation + metrics/backup + ADR-0022), удалённая — устаревшая (CSP `*`, `engines >=22.5`, `node-version: 22`, pre-metrics platform, до-чисточный текст аудита). Все конфликты разрешены в пользу локальной стороны; уникального нового контента в удалённой версии не было. 15 локально-новых файлов сохранены.
-- Merge-коммит `b2e65c2`. Удалённый tip — предок `HEAD`, push возможен fast-forward без force. Push в этом срезе не выполнялся.
+- Merge-коммит `418829f`. Удалённый tip — предок `HEAD`, push возможен fast-forward без force.
 - После merge повторно прошли: `npm run test:all` (API 273 pass / 6 skipped, local 145, scripts 31), `npm run build`, `npm run build:console`, `npm run typecheck:api`, `npm run check:api-types` (после `npm ci` — `openapi-typescript` отсутствовал в `node_modules`), `bash -n scripts/termux-setup.sh`, `git diff --check`. Сгенерированный `openapi.d.ts` не изменился при регенерации — в синхроне с merged `openapi.js`.
