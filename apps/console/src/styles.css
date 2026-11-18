@@ -166,6 +166,11 @@ input {
   background: transparent;
 }
 
+.btn--danger {
+  border-color: rgba(255, 107, 107, 0.45);
+  color: #ff9a9a;
+}
+
 .btn--small {
   min-height: 34px;
   padding: 0 12px;
@@ -376,4 +381,27 @@ input {
 .plays-chart__col i.is-shared {
   background: var(--muted, #8a8a9a);
   opacity: 0.55;
+}
+
+.server-logs {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--panel-2);
+}
+
+.server-logs summary {
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.server-logs pre {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 10px 0 0;
+  color: var(--muted);
 }

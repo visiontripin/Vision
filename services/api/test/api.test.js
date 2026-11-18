@@ -232,6 +232,7 @@ test('health: схема БД и версия', async () => {
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(typeof body.version, 'string');
+  assert.equal(typeof body.security.mediaSecretConfigured, 'boolean');
   assert.equal(body.migrations.pending, 0);
 });
 

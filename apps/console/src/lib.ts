@@ -80,6 +80,7 @@ export function diagnose(health: {
   ffmpeg?: { available: boolean; version: string | null; path?: string | null };
   storage?: { mode: string; seedEnabled: boolean; deviceId: string; publicUrl: string | null };
   tracker?: { blobs: number; seeds: number; noSource: number };
+  security?: { mediaSecretConfigured?: boolean };
 } | null): ServerCheck[] {
   if (!health) {
     return [
@@ -92,6 +93,14 @@ export function diagnose(health: {
   }
 
   const checks: ServerCheck[] = [];
+
+  if (health.security?.mediaSecretConfigured === false) {
+    checks.push({
+      level: 'warn',
+      title: 'Секрет подписи медиа зависит от пароля',
+      detail: 'Задайте случайный постоянный VISION_SECRET и сохраните его между перезапусками сервера.',
+    });
+  }
 
   checks.push(
     health.ok === false

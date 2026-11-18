@@ -1,3 +1,4 @@
+// @ts-check
 import { VERSION } from './lib.js';
 
 /**
@@ -5,16 +6,22 @@ import { VERSION } from './lib.js';
  * с реализацией: `/api/v1/openapi.json` отдаётся тем же процессом.
  */
 
+/**
+ * @type {Record<string, any>}
+ * `openapi-types` currently rejects valid OpenAPI 3.1 JSON-Schema unions such as
+ * `type: ['integer', 'null']`; generated client types and API contract tests are
+ * checked in CI. Replace this escape hatch when the upstream schema typing is fixed.
+ */
 export const OPENAPI = {
   openapi: '3.1.0',
   info: {
     title: 'Vision Audio API',
     version: VERSION,
     description:
-      'Личная аудиобиблиотека: загрузка, поиск, поток и обложки. ' +
-      'Все приватные маршруты требуют Bearer-токен; медиа дополнительно принимает ' +
-      'короткоживущую HMAC-подпись в query (её выдают /api/media).',
-    license: { name: 'MIT' },
+      'Текущий API обслуживает приватную одно-владельческую библиотеку; целевая ' +
+      'Vision Audio v2 — публичная UGC-платформа с персональным радио. ' +
+      'Публичный UGC-контур пока не реализован. Приватные маршруты требуют Bearer-токен; ' +
+      'медиа дополнительно принимает короткоживущую HMAC-подпись в query (/api/media).',
   },
   servers: [{ url: '/api/v1', description: 'Версия 1 (алиас /api)' }],
   tags: [
@@ -493,6 +500,10 @@ export const OPENAPI = {
                     tracks: { type: 'integer' },
                     diskFreeMb: { type: ['integer', 'null'] },
                     version: { type: 'string' },
+                    security: {
+                      type: 'object',
+                      properties: { mediaSecretConfigured: { type: 'boolean' } },
+                    },
                     migrations: {
                       type: 'object',
                       properties: {
@@ -547,6 +558,64 @@ export const OPENAPI = {
               },
             },
           },
+        },
+      },
+    },
+    '/setup': {
+      get: {
+        tags: ['system'],
+        summary: 'Проверить первичную настройку владельца Vision Server',
+        description: 'Только loopback; доступен, если задан VISION_PASSWORD_FILE. Остальной API до настройки пароля возвращает 503.',
+        security: [],
+        responses: {
+          200: {
+            description: 'Состояние первоначальной настройки',
+            content: { 'application/json': { schema: { type: 'object', required: ['configured'], properties: { configured: { type: 'boolean' } } } } },
+          },
+          403: { description: 'Запрос не пришёл с loopback или Origin не разрешён' },
+          404: { description: 'Режим первичной настройки выключен' },
+        },
+      },
+      post: {
+        tags: ['system'],
+        summary: 'Один раз задать пароль владельца Vision Server',
+        description: 'Только loopback и только если владелец ещё не настроен. Пароль сохраняется как salted scrypt-хеш.',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['password'],
+                properties: { password: { type: 'string', minLength: 12, maxLength: 256 } },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Пароль владельца сохранён',
+            content: { 'application/json': { schema: { type: 'object', required: ['configured'], properties: { configured: { type: 'boolean' } } } } },
+          },
+          400: { description: 'Пароль некорректен' },
+          403: { description: 'Запрос не пришёл с loopback или Origin не разрешён' },
+          404: { description: 'Режим первичной настройки выключен' },
+          409: { description: 'Пароль владельца уже задан' },
+        },
+      },
+    },
+    '/shutdown': {
+      post: {
+        tags: ['system'],
+        summary: 'Штатная остановка процесса сервера',
+        description: 'Только владелец с Bearer-токеном. Используется менеджером локального процесса; сервер завершает работу после ответа.',
+        responses: {
+          202: {
+            description: 'Сервер принял запрос на остановку',
+            content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, stopping: { type: 'boolean' } } } } },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
         },
       },
     },

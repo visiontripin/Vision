@@ -1,3 +1,4 @@
+import './server-preflight.js';
 import { createServer } from 'node:http';
 import { createReadStream, createWriteStream, existsSync, readFileSync, statSync, statfsSync, rmSync } from 'node:fs';
 import { rename, rm, writeFile } from 'node:fs/promises';
@@ -62,7 +63,8 @@ import { readTags, isSupportedCover } from './tags.js';
 import { inc, observeDuration, renderMetrics, setGauge } from './metrics.js';
 import { OPENAPI } from './openapi.js';
 import {
-  VERSION, PASSWORD, issueToken, verifyToken, safeEqual, rateLimit,
+  VERSION, issueToken, verifyToken, verifyOwnerPassword,
+  ownerPasswordIsConfigured, ownerPasswordSetupEnabled, setInitialOwnerPassword, mediaSecretIsConfigured, rateLimit,
   detectAudio, detectImage, json, fail, readJson, uid, str, log,
   signMedia, verifyMedia, MEDIA_TTL_MS,
 } from './lib.js';
@@ -85,10 +87,9 @@ const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_UPLOAD = 500 * 1024 * 1024;
 const MAX_COVER = 8 * 1024 * 1024;
-// Разрешаем только официальный виджет SoundCloud: он играет со своих серверов,
-// наших файлов и нашего трафика это не касается.
-// Остальные узлы роя (Termux/десктоп) живут на своих адресах — их нужно явно
-// разрешить в CSP и CORS-политике медиа, иначе браузер не даст проиграть файл.
+// CSP для основных клиентов: SoundCloud iframe разрешён отдельно в frame-src.
+// Родительские сайты для собственного виджета задаются только через отдельную
+// allowlist-конфигурацию, а не глобальным wildcard.
 const EXTRA_ORIGINS = (process.env.EXTRA_ORIGINS || '')
   .split(',')
   .map((value) => value.trim().replace(/\/$/, ''))
@@ -106,7 +107,7 @@ const SECURITY_TXT = [
   "worker-src 'self'",
   "manifest-src 'self'",
   'frame-src https://w.soundcloud.com https://soundcloud.com',
-  'frame-ancestors *',
+  "frame-ancestors 'self'",
   "base-uri 'self'",
   "form-action 'self'",
 ].join('; ');
@@ -223,7 +224,10 @@ async function handleLogin(req, res) {
   } catch {
     return fail(res, 400, 'invalid_json', 'Ожидался JSON.');
   }
-  if (!safeEqual(body.password || '', PASSWORD)) {
+  if (!ownerPasswordIsConfigured()) {
+    return fail(res, 503, 'setup_required', 'Сначала задайте пароль владельца из локальной панели Vision Server.');
+  }
+  if (!verifyOwnerPassword(body.password || '')) {
     inc('vision_auth_failures_total');
     // факт попытки без пароля: видно подбор, но нечем воспользоваться
     audit('auth.fail', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
@@ -232,6 +236,58 @@ async function handleLogin(req, res) {
   inc('vision_auth_success_total');
   audit('auth.login', { ipHash: auditIpHash(clientIp(req)), requestId: req.visionRequestId });
   json(res, 200, issueToken());
+}
+
+function isLoopbackAddress(req) {
+  const address = String(req.socket.remoteAddress || '').toLowerCase();
+  return address === '127.0.0.1' || address === '::1' || address.startsWith('::ffff:127.');
+}
+
+function trustedSetupOrigin(req) {
+  const origin = String(req.headers.origin || '').toLowerCase();
+  if (!origin) return true;
+  return new Set([
+    'tauri://localhost',
+    'http://tauri.localhost',
+    'https://tauri.localhost',
+    'http://localhost',
+    'https://localhost',
+    'http://127.0.0.1',
+    'https://127.0.0.1',
+  ]).has(origin);
+}
+
+/** Первичная настройка доступна только локальной оболочке и только один раз. */
+async function handleOwnerSetup(req, res) {
+  if (!ownerPasswordSetupEnabled()) return fail(res, 404, 'not_found', 'Маршрут не найден.');
+  if (!isLoopbackAddress(req) || !trustedSetupOrigin(req)) {
+    return fail(res, 403, 'setup_forbidden', 'Первичную настройку можно выполнить только в Vision Server на этом ПК.');
+  }
+  if (req.method === 'GET') {
+    return json(res, 200, { configured: ownerPasswordIsConfigured() });
+  }
+  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed', 'Поддерживаются GET и POST.');
+  if (ownerPasswordIsConfigured()) return fail(res, 409, 'already_configured', 'Пароль владельца уже задан.');
+
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    return fail(res, 400, 'invalid_json', 'Ожидался JSON.');
+  }
+  const password = String(body.password || '');
+  const length = [...password].length;
+  if (length < 12 || length > 256) {
+    return fail(res, 400, 'invalid_password', 'Пароль должен содержать от 12 до 256 символов.');
+  }
+  try {
+    setInitialOwnerPassword(password);
+  } catch (error) {
+    if (ownerPasswordIsConfigured()) return fail(res, 409, 'already_configured', 'Пароль владельца уже задан.');
+    log('error', 'owner password setup failed', { error: error?.message || String(error) });
+    return fail(res, 500, 'setup_failed', 'Не удалось сохранить пароль владельца. Проверьте права на каталог данных.');
+  }
+  return json(res, 201, { configured: true });
 }
 
 /* ----------------------------- сиды и трекер ----------------------------- */
@@ -732,6 +788,8 @@ async function handleApi(req, res, url) {
   const { pathname } = url;
   const method = req.method || 'GET';
 
+  if (pathname === '/api/setup') return handleOwnerSetup(req, res);
+
   if (pathname === '/api/health' && method === 'GET') {
     const free = freeDiskMb();
     setGauge('vision_disk_free_bytes', free === null ? null : free * 1024 * 1024);
@@ -740,6 +798,7 @@ async function handleApi(req, res, url) {
       tracks: stats().tracks,
       diskFreeMb: free,
       version: VERSION,
+      security: { mediaSecretConfigured: mediaSecretIsConfigured() },
       migrations: migrationStatus(),
       ffmpeg: {
         available: await ffmpegAvailable(),
@@ -853,6 +912,14 @@ async function handleApi(req, res, url) {
     const sig = url.searchParams.get('sig');
     const signed = Boolean(target && target.kinds.some((kind) => verifyMedia(target.id, kind, exp, sig)));
     if (!signed) return fail(res, 401, 'unauthorized', 'Требуется вход.');
+  }
+
+  // Штатная остановка управляемого Windows-процесса. Только владелец с валидным
+  // Bearer-токеном может её запросить; завершаем сервер после отправки ответа.
+  if (pathname === '/api/shutdown' && method === 'POST') {
+    json(res, 202, { ok: true, stopping: true });
+    res.once('finish', () => setTimeout(shutdown, 25).unref());
+    return;
   }
 
   /*
@@ -1951,7 +2018,7 @@ async function handleApi(req, res, url) {
       if (!idToAdd || !getTrack(idToAdd)) return fail(res, 400, 'invalid_track', 'Трек не найден.');
       const max = db.prepare('SELECT COALESCE(MAX(position), -1) AS p FROM playlist_tracks WHERE playlist_id = ?').get(playlistId);
       db.prepare('INSERT OR REPLACE INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)')
-        .run(playlistId, idToAdd, (max?.p ?? -1) + 1);
+        .run(playlistId, idToAdd, Number(max?.p ?? -1) + 1);
       res.writeHead(204);
       return res.end();
     }
@@ -2223,7 +2290,7 @@ async function serveShare(req, res, url) {
     // media-src разрешает редирект на живой сид (другой узел роя); script-src —
     // только наш короткий inline-скрипт с перемоткой по таймкоду; form-action 'self'
     // нужен форме комментария, которая умеет работать без JavaScript.
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'self'; frame-ancestors *",
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; media-src 'self' https: http:; img-src 'self' data: https:; base-uri 'none'; form-action 'self'; frame-ancestors 'self'",
   });
   res.end(html);
 }
@@ -2432,6 +2499,15 @@ const server = createServer(async (req, res) => {
     return res.end();
   }
 
+  if (
+    ownerPasswordSetupEnabled()
+    && !ownerPasswordIsConfigured()
+    && url.pathname !== '/api/setup'
+    && url.pathname !== '/api/health'
+  ) {
+    return fail(res, 503, 'setup_required', 'Сначала завершите первичную настройку Vision Server на этом ПК.');
+  }
+
   if (url.pathname === '/metrics' && req.method === 'GET') {
     const metricsToken = process.env.METRICS_TOKEN;
     if (metricsToken) {
@@ -2501,7 +2577,22 @@ const server = createServer(async (req, res) => {
   }
 });
 
+server.on('error', (error) => {
+  const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+  if (code === 'EADDRINUSE') {
+    console.error(`\n✖ Не удалось запустить Vision Audio\n\nПорт ${PORT} уже занят. Остановите другой процесс или задайте другой порт: PORT=<номер> npm start.\n`);
+  } else if (code === 'EACCES') {
+    console.error(`\n✖ Нет прав открыть ${HOST}:${PORT}. Выберите доступный порт выше 1024 или проверьте права процесса.\n`);
+  } else {
+    console.error(`\n✖ Не удалось открыть listener ${HOST}:${PORT}: ${error?.message || String(error)}\n`);
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
+  if (process.env.NODE_ENV === 'production' && !mediaSecretIsConfigured()) {
+    log('warn', 'media URL signing secret is derived from the owner password; configure a persistent random VISION_SECRET', {});
+  }
   // отметка в журнале: «когда поднимался сервер» — первое, что спрашивают при разборе
   audit('server.start', {
     details: { version: VERSION, platform: process.platform, node: process.version },

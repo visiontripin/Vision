@@ -1,99 +1,149 @@
 /**
- * Проверки workflow сборки APK — те места, где ошибка не видна локально и стоит
- * либо релиза без функции, либо 10 минут CI.
- *
- * Уже случалось: `if: inputs.embedded != false` на push тега вычислялось в ложь
- * (при push `inputs` — null, а `null != false` в выражениях GitHub неверно),
- * и релизный APK молча вышел без встроенного Node: 23 МБ вместо 90.
+ * Workflow guards: мобильный APK остаётся клиентом, frozen-платформы не запускаются
+ * автоматически, а активный CI содержит OpenAPI type/smoke gates.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import yaml from 'yaml';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(path.join(ROOT, file), 'utf8');
-
-import yaml from 'yaml';
-
-const android = read('.github/workflows/android.yml');
-
-/** Разбор YAML workflow: нужен, когда важна структура, а не текст. */
 const parseWorkflow = (text) => yaml.parse(text);
-const embedded = read('.github/workflows/android-embedded.yml');
+const androidText = read('.github/workflows/android.yml');
+const consoleText = read('.github/workflows/console.yml');
+const desktopText = read('.github/workflows/desktop.yml');
+const ciText = read('.github/workflows/ci.yml');
+const android = parseWorkflow(androidText);
+const consoleWorkflow = parseWorkflow(consoleText);
+const desktopWorkflow = parseWorkflow(desktopText);
+const ciWorkflow = parseWorkflow(ciText);
 
-test('встроенный Node включается и по тегу, и по кнопке', () => {
-  // при push `inputs` не существует → любое `inputs.x != false` даёт ложь
-  assert.equal(
-    /inputs\.embedded\s*!=\s*false/.test(android),
-    false,
-    'условие `inputs.embedded != false` ложно при push тега — Node не попадёт в APK',
-  );
-  for (const step of ['Встроить сервер в проект', 'Node-рантайм для встроенного сервера']) {
-    const index = android.indexOf(step);
-    assert.ok(index > 0, `в android.yml нет шага «${step}»`);
-    // условие шага — в пределах 200 символов перед `run:`
-    const chunk = android.slice(index, index + 200);
-    assert.match(chunk, /github\.event_name != 'workflow_dispatch' \|\| inputs\.embedded/, `шаг «${step}» без верного условия`);
-  }
+test('Android workflow builds only the Vision Audio player', () => {
+  assert.deepEqual(android.on.push.tags, ['android-v*']);
+  assert.equal(android.on.workflow_dispatch.inputs.embedded, undefined);
+  assert.equal(android.on.workflow_dispatch.inputs.tester, undefined);
+  assert.equal(android.jobs.tester, undefined);
+  assert.doesNotMatch(androidText, /nodejs-mobile|android-embed-node|fetch-nodejs-mobile|VisionTester/);
 });
 
-test('публикация APK не привязана к inputs.release', () => {
-  // `inputs.release` на push тега тоже null → релиз не создавался бы, если бы
-  // условие опиралось только на него. Допустимая форма — с проверкой тега.
-  const uses = [...android.matchAll(/if:.*inputs\.release.*$/gm)].map((m) => m[0]);
-  assert.ok(uses.length > 0, 'публикация должна учитывать inputs.release');
-  for (const line of uses) {
-    assert.match(line, /startsWith\(github\.ref, 'refs\/tags\/android-v'\)/, `условие без проверки тега: ${line}`);
+test('APK check rejects bundled Node, JNI server and server bootstrap', () => {
+  assert.match(androidText, /libnode/);
+  assert.match(androidText, /libvisionnode/);
+  assert.match(androidText, /nodejs-project\//);
+  assert.match(androidText, /VisionNodeService/);
+  const check = android.jobs.apk.steps.find((step) => step.name === 'Проверка APK');
+  assert.ok(check, 'APK validation step is missing');
+  const pattern = check.run.match(/grep -Eq '([^']+)'/)?.[1];
+  assert.ok(pattern, 'APK server-artifact grep expression is missing');
+  const rejectsServerArtifacts = new RegExp(pattern);
+  for (const entry of [
+    'lib/arm64-v8a/libnode.so',
+    'lib/arm64-v8a/libvisionnode.so',
+    'assets/nodejs-project/bin/node',
+    'assets/VisionNodeService',
+    'assets/node.exe',
+  ]) {
+    assert.match(entry, rejectsServerArtifacts, `APK guard did not reject ${entry}`);
   }
+  assert.doesNotMatch('assets/nodeXexe', rejectsServerArtifacts);
+  assert.doesNotMatch('lib/arm64-v8a/libvision.so', rejectsServerArtifacts);
+  assert.match(androidText, /index\.android\.bundle/);
+  assert.match(androidText, /applicationId отличается от app\.vision\.audio/);
 });
 
-test('в workflow есть проверка содержимого APK', () => {
-  for (const marker of ['libvisionnode.so', 'bootstrap.mjs', 'VisionNodeService']) {
-    assert.ok(android.includes(marker) || embedded.includes(marker), `нигде не проверяется ${marker}`);
-  }
-  // размер APK печатается: по нему видно, попал ли рантайм
-  assert.match(embedded, /размер \$\(du -h/);
+test('Android release requires an explicit tag or manual opt-in', () => {
+  const publish = android.jobs.apk.steps.find((step) => step.name === 'Публикация Release');
+  assert.ok(publish);
+  assert.equal(android.on.workflow_dispatch.inputs.release.default, false);
+  assert.match(publish.if, /startsWith\(github\.ref, 'refs\/tags\/android-v'\)/);
+  assert.match(publish.if, /inputs\.release/);
 });
 
-test('сборка с Node идёт в обоих workflow одинаково', () => {
-  for (const file of [android, embedded]) {
-    assert.match(file, /scripts\/fetch-nodejs-mobile\.mjs/);
-    assert.match(file, /scripts\/android-embed-node\.mjs/);
-  }
-  // кэш рантайма — по версии, иначе 90 МБ качаются каждый раз
-  for (const file of [android, embedded]) {
-    assert.match(file, /key: nodejs-mobile-\$\{\{ hashFiles\('apps\/mobile\/nodejs\/android\/node-version\.json'\) \}\}/);
-  }
+test('active CI checks API, web, platform integrations and Android client before API smoke', () => {
+  assert.equal(ciWorkflow.jobs.mobile.name, 'Android client typecheck');
+  assert.equal(ciWorkflow.jobs.mobile.defaults.run['working-directory'], 'apps/mobile');
+  assert.ok(ciWorkflow.jobs.mobile.steps.some((step) => step.run === 'npx tsc --noEmit'));
+  assert.deepEqual(ciWorkflow.jobs['platform-integration'].needs, ['test']);
+  assert.match(ciWorkflow.jobs['platform-integration'].services.postgres.image, /pgvector.*pg16/);
+  const minioStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'Start private MinIO test service');
+  assert.ok(minioStep);
+  assert.match(minioStep.run, /docker run --detach --name vision-minio-ci --publish 127\.0\.0\.1:9000:9000/);
+  assert.equal(ciWorkflow.jobs['platform-integration'].env.PLATFORM_S3_ENDPOINT, 'http://127.0.0.1:9000');
+  assert.match(minioStep.run, /MINIO_ROOT_USER=vision-ci/);
+  assert.match(minioStep.run, /ghcr\.io\/coollabsio\/minio:RELEASE\.2025-10-15T17-29-55Z/);
+  assert.match(minioStep.run, /MINIO_ROOT_PASSWORD=vision-ci-secret-very-long/);
+  assert.match(minioStep.run, /MinIO container startup failed/);
+  const minioHealthStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'Wait for MinIO readiness');
+  assert.match(minioHealthStep.run, /while ! docker exec/);
+  assert.match(minioHealthStep.run, /MC_HOST_local=/);
+  assert.match(minioHealthStep.run, /\$\{PLATFORM_S3_ACCESS_KEY_ID\}/);
+  assert.match(minioHealthStep.run, /\$\{PLATFORM_S3_SECRET_ACCESS_KEY\}/);
+  assert.match(minioHealthStep.run, /@127\.0\.0\.1:9000/);
+  assert.match(minioHealthStep.run, /mc ready local/);
+  assert.match(minioHealthStep.run, /deadline=\$\(\(SECONDS \+ 60\)\)/);
+  const integrationTestStep = ciWorkflow.jobs['platform-integration'].steps.find((step) => step.name === 'PostgreSQL, Redis and S3 integration tests');
+  assert.match(integrationTestStep.run, /RUNNER_TEMP\/platform-integration\.log/);
+  assert.match(integrationTestStep.run, /Platform integration test details/);
+  assert.deepEqual(ciWorkflow.jobs.smoke.needs, ['test', 'mobile', 'platform-integration']);
+  assert.equal(ciWorkflow.permissions.contents, 'read');
+  assert.match(ciText, /npm run check:api-types/);
+  assert.match(ciText, /npm run typecheck:api/);
+  assert.match(ciText, /api\/v1\/openapi\.json/);
+  assert.match(ciText, /Health and OpenAPI smoke passed/);
 });
 
-test('проверка APK не хардкодит три ABI', () => {
-  // Собирается один ABI по умолчанию — проверка должна брать список из проекта,
-  // иначе релиз падает на «нет libnode.so для armeabi-v7a».
-  for (const file of [android, embedded]) {
-    assert.equal(
-      /for abi in arm64-v8a armeabi-v7a x86_64/.test(file),
-      false,
-      'список ABI захардкожен в проверке APK',
-    );
-    assert.match(file, /ABIS=\$\(grep -E '\^reactNativeArchitectures=' android\/gradle\.properties/);
+test('desktop and console workflows are frozen, manual-only and cannot publish', () => {
+  const workflows = [
+    [consoleWorkflow, consoleText, ['check', 'windows', 'android']],
+    [desktopWorkflow, desktopText, ['linux', 'windows']],
+  ];
+  for (const [workflow, text, jobs] of workflows) {
+    assert.ok(workflow.on.workflow_dispatch.inputs.validate);
+    assert.equal(workflow.on.workflow_dispatch.inputs.validate.default, false);
+    assert.equal(workflow.on.push, undefined);
+    assert.equal(workflow.on.pull_request, undefined);
+    assert.equal(workflow.permissions.contents, 'read');
+    assert.match(text, /ADR-0016/);
+    assert.doesNotMatch(text, /contents: write/);
+    for (const name of jobs) {
+      assert.equal(workflow.jobs[name].if, '${{ inputs.validate }}');
+    }
+    const publishSteps = Object.values(workflow.jobs)
+      .flatMap((job) => job.steps || [])
+      .filter((step) => /^(Release|Манифест обновлений)/.test(String(step.name || '')));
+    assert.ok(publishSteps.length > 0);
+    for (const step of publishSteps) assert.equal(step.if, false);
   }
+  assert.equal(consoleWorkflow.jobs.windows.needs, 'check');
+  // Existing installer sources are retained for history/audit, not run by normal CI.
+  assert.match(consoleText, /npm run build:windows/);
+  assert.equal(existsSync(path.join(ROOT, 'apps/console/src-tauri/nsis/vision-service-hooks.nsh')), true);
+  assert.equal(existsSync(path.join(ROOT, 'apps/console/scripts/prepare-server.mjs')), true);
 });
 
-test('ABI по умолчанию — один, чтобы APK не раздувался', () => {
-  const script = read('scripts/android-embed-node.mjs');
-  assert.match(script, /process\.env\.VISION_ABIS \|\| 'arm64-v8a'/);
+test('mobile UI removes embedded server controls and keeps external API connection', () => {
+  const mobileFiles = [
+    'apps/mobile/App.tsx',
+    'apps/mobile/src/screens/MainScreen.tsx',
+    'apps/mobile/src/screens/SettingsScreen.tsx',
+  ].map(read).join('\n');
+  assert.doesNotMatch(mobileFiles, /startEmbeddedServer|ServerStatusScreen|onOpenEmbedded|isRuntimeAvailable/);
+  assert.match(read('apps/mobile/src/screens/MainScreen.tsx'), /ServerScreen/);
+  assert.match(read('apps/mobile/src/screens/ServerScreen.tsx'), /api\.login/);
+  assert.equal(JSON.parse(read('apps/mobile/app.json')).expo.android.package, 'app.vision.audio');
+  assert.doesNotMatch(read('apps/mobile/app.json'), /FOREGROUND_SERVICE_DATA_SYNC/);
 });
 
-test('тестовый APK собирается по своему тегу, не трогая релиз', () => {
-  // Без этого `push` тега tester-v* не запускал workflow вообще (теги были только
-  // android-v*), и тестовую сборку нельзя было получить без ручного запуска.
-  assert.match(android, /- 'tester-v\*'/);
-  const doc = parseWorkflow(android);
-  assert.deepEqual(doc.on.push.tags, ['android-v*', 'tester-v*']);
-  // релизный job не должен собираться на тег тестового APK
-  assert.match(String(doc.jobs.apk.if), /tester-v/);
-  // а тестовый — не должен собираться на релизный тег
-  assert.match(String(doc.jobs.tester.if), /tester-v/);
+test('removed Android server build scripts cannot be called by a workflow', () => {
+  for (const file of [
+    'apps/mobile/nodejs',
+    'scripts/android-embed-node.mjs',
+    'scripts/fetch-nodejs-mobile.mjs',
+    '.github/workflows/android-embedded.yml',
+  ]) {
+    assert.equal(existsSync(path.join(ROOT, file)), false, `${file} still exists`);
+  }
 });

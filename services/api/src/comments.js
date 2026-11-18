@@ -76,6 +76,10 @@ export function publicComment(comment) {
   };
 }
 
+/**
+ * @param {any} share
+ * @param {{trackId?: string|null}} [options={}]
+ */
 export function listComments(share, { trackId = null } = {}) {
   if (trackId && !shareAllowsTrack(share, trackId)) {
     throw new CommentError('track_not_in_share', 'Этого трека нет в присланной ссылке.', 403);
@@ -86,6 +90,9 @@ export function listComments(share, { trackId = null } = {}) {
 /**
  * Создание комментария. `actor` — { ip } для гостя или { owner: true } для владельца.
  * Возвращает публичное представление; причина отказа — `CommentError`.
+ * @param {any} share
+ * @param {{trackId?: string, at?: number|string, author?: string, body?: string}} [input={}]
+ * @param {{ip?: string|null, duration?: number|null}} [actor={}]
  */
 export function addComment(share, { trackId, at, author, body } = {}, { ip = null, duration = null } = {}) {
   const track = String(trackId || '');
@@ -102,7 +109,7 @@ export function addComment(share, { trackId, at, author, body } = {}, { ip = nul
   const name = cleanText(author, COMMENT_MAX_AUTHOR) || 'Гость';
 
   const hash = authorHash(ip);
-  if (hash && countRecentComments(share.id, hash, 60_000) >= COMMENT_MAX_PER_MINUTE) {
+  if (hash && Number(countRecentComments(share.id, hash, 60_000)) >= COMMENT_MAX_PER_MINUTE) {
     throw new CommentError('too_many', 'Слишком много комментариев подряд — подождите минуту.', 429);
   }
 

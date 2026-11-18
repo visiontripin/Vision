@@ -2,10 +2,15 @@ node_modules/
 dist/
 dist-pages/
 data/
+backups/platform-v2/
 *.log
+*.p12
+*.jks
+*.keystore
 .DS_Store
 .env
 .env.local
+.env.platform.local
 apps/mobile/.expo/
 apps/mobile/node_modules/
 apps/desktop/src-tauri/target/
@@ -14,10 +19,6 @@ apps/desktop/node_modules/
 # нативный проект Expo генерируется prebuild-ом в CI
 apps/mobile/android/
 
-# Node-рантайм для встроенного сервера: ~120 МБ бинарников, скачивается
-# scripts/fetch-nodejs-mobile.mjs (версия в apps/mobile/nodejs/android/node-version.json)
-apps/mobile/nodejs/android/libnode/
-.node-mobile-cache/
 apps/mobile/ios/
 apps/mobile/.expo/
 apps/mobile/dist/
@@ -27,7 +28,5 @@ apps/console/src-tauri/target/
 apps/console/src-tauri/gen/
 apps/console/dist/
 
-# резервная копия app.json при сборке тестового APK
-apps/mobile/app.json.vision-backup
-
-# локальный prebuild для проверки конфигурации (в CI генерируется заново)
+# ресурсы Node и API для Windows-установщика Vision Server (генерируются перед сборкой)
+apps/console/src-tauri/resources/

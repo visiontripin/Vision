@@ -1,19 +1,21 @@
 {
   "name": "@vision/console",
   "private": true,
-  "version": "0.1.1",
-  "description": "Vision Server — запуск сервера и админка (Windows и Android, Tauri 2)",
+  "version": "0.2.0",
+  "description": "Vision Server — Windows-менеджер отдельного API-процесса и админ-панель (Tauri 2)",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
+    "prepare:server": "node scripts/prepare-server.mjs",
     "tauri": "tauri",
-    "build:windows": "tauri build --bundles nsis,msi",
+    "build:windows": "npm run build && npm run prepare:server && tauri build --bundles nsis --config src-tauri/tauri.windows.conf.json",
     "build:android": "tauri android build",
     "icon": "tauri icon src-tauri/icons/icon.png"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
     "@vision/shared": "*",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
@@ -23,7 +25,11 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
+    "node-windows": "1.0.0-beta.8",
     "typescript": "^5.9.3",
     "vite": "^8.3.6"
+  },
+  "optionalDependencies": {
+    "node-win-x64": "24.22.3"
   }
 }

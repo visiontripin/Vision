@@ -106,6 +106,8 @@ describe('панель Vision Server', () => {
     const csp = res.headers.get('content-security-policy') || '';
     assert.match(csp, /default-src 'self'/);
     assert.match(csp, /connect-src 'self'/);
+    assert.match(csp, /frame-ancestors 'self'/);
+    assert.doesNotMatch(csp, /frame-ancestors\s+\*/);
     assert.ok(!/connect-src[^;]*https:\/\/\*/.test(csp), 'никаких «любых» доменов');
   });
 

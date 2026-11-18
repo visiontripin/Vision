@@ -53,7 +53,9 @@ export function toMatchQuery(input) {
   return tokens.map((token) => `"${token}"*`).join(' AND ');
 }
 
-function buildQuery({ q, genre, liked, playlistId, sort = 'recent' }) {
+/** @typedef {{q?: string|null, genre?: string|null, liked?: boolean, playlistId?: string|null, sort?: string, limit?: number, offset?: number}} TrackFilters */
+/** @param {TrackFilters} [filters={}] */
+function buildQuery({ q, genre, liked, playlistId, sort = 'recent' } = {}) {
   const joins = [];
   const joinParams = [];
 
@@ -95,6 +97,7 @@ function buildQuery({ q, genre, liked, playlistId, sort = 'recent' }) {
   };
 }
 
+/** @param {TrackFilters} [filters={}] */
 export function listTracks(filters = {}) {
   const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 2000);
   const offset = Math.max(Number(filters.offset) || 0, 0);
@@ -107,6 +110,7 @@ export function listTracks(filters = {}) {
   return rows.map((row) => toTrack(row));
 }
 
+/** @param {TrackFilters} [filters={}] */
 export function countTracks(filters = {}) {
   const { from, params } = buildQuery(filters);
   return db.prepare(`SELECT COUNT(*) AS n ${from}`).get(...params).n;
@@ -597,6 +601,7 @@ export function rotateShareToken(id, tokenHash) {
   return getShare(id);
 }
 
+/** @param {{targetKind?: string, targetId?: string, includeRevoked?: boolean}} [options={}] */
 export function listShares({ targetKind, targetId, includeRevoked = false } = {}) {
   const clauses = [];
   const params = [];
@@ -733,9 +738,10 @@ export function getShareComment(id) {
  * Список для гостя и владельца. Удалённые не отдаём (тред не рвём в БД, но
  * наружу «[удалено]» не нужно), сортировка по времени в треке.
  */
+/** @param {{shareId?: string, trackId?: string|null, includeDeleted?: boolean, limit?: number}} [options={}] */
 export function listShareComments({ shareId, trackId = null, includeDeleted = false, limit = 500 } = {}) {
   const where = ['share_id = ?'];
-  const values = [shareId];
+  const values = /** @type {(string|number|null)[]} */ ([String(shareId ?? '')]);
   if (trackId) {
     where.push('track_id = ?');
     values.push(trackId);

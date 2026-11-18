@@ -1,9 +1,9 @@
 {
   "name": "vision-audio",
   "private": true,
-  "version": "0.29.0",
+  "version": "0.30.0",
   "type": "module",
-  "description": "Vision Audio — личный аналог SoundCloud: web, Android, iOS, Windows, Linux",
+  "description": "Vision Audio — платформа независимой музыки и персонального радио «Моя волна»",
   "workspaces": [
     "apps/web",
     "apps/console",
@@ -15,9 +15,23 @@
     "build": "npm run build --workspace apps/web",
     "build:pages": "VITE_LOCAL_MODE=1 BASE_PATH=${BASE_PATH:-/Vision/} OUT_DIR=dist-pages npm run build --workspace apps/web",
     "start": "node services/api/src/start.js",
+    "migrate:platform": "node services/api/src/platform/migrate.js",
+    "start:platform": "node services/api/src/platform/start.js",
+    "platform:local:init": "node scripts/platform-local.mjs init",
+    "platform:local:up": "node scripts/platform-local.mjs up",
+    "platform:local:migrate": "node scripts/platform-local.mjs migrate",
+    "platform:local:status": "node scripts/platform-local.mjs status",
+    "platform:local:logs": "node scripts/platform-local.mjs logs",
+    "platform:local:backup": "node scripts/platform-local.mjs backup",
+    "platform:local:restore": "node scripts/platform-local.mjs restore",
+    "platform:local:down": "node scripts/platform-local.mjs down",
+    "platform:sqlite:audit": "node scripts/platform-sqlite-audit.mjs",
     "test": "node --test services/api/test/*.test.js",
-    "test:local": "tsx --test apps/web/src/local/client.test.ts apps/web/src/audio.test.ts apps/web/src/bulk/zip.test.ts apps/web/src/offline.test.ts apps/web/src/offline.cache.test.ts apps/mobile/src/lib/format.test.ts apps/mobile/src/lib/queue.test.ts apps/mobile/src/lib/media.test.ts apps/mobile/src/lib/downloads.test.ts apps/mobile/src/lib/sync.test.ts apps/mobile/src/lib/local.test.ts apps/mobile/src/lib/link.test.ts apps/mobile/src/lib/wave.test.ts apps/console/src/lib.test.ts apps/web/src/embed.test.ts apps/web/src/deep-link.test.ts apps/mobile/src/lib/deeplink.test.ts apps/mobile/src/lib/upload.test.ts apps/web/src/updates.test.ts apps/web/src/library-cache.test.ts apps/web/src/smart/smart-form.test.ts apps/web/src/crash-reporter.test.ts apps/web/src/now-playing.test.ts apps/web/src/track-menu.test.ts apps/mobile/src/lib/embedded-server.test.ts apps/mobile/src/lib/tester.test.ts",
+    "test:local": "tsx --test apps/web/src/local/client.test.ts apps/web/src/audio.test.ts apps/web/src/bulk/zip.test.ts apps/web/src/offline.test.ts apps/web/src/offline.cache.test.ts apps/mobile/src/lib/format.test.ts apps/mobile/src/lib/queue.test.ts apps/mobile/src/lib/media.test.ts apps/mobile/src/lib/downloads.test.ts apps/mobile/src/lib/sync.test.ts apps/mobile/src/lib/local.test.ts apps/mobile/src/lib/link.test.ts apps/mobile/src/lib/wave.test.ts apps/console/src/lib.test.ts apps/web/src/embed.test.ts apps/web/src/deep-link.test.ts apps/mobile/src/lib/deeplink.test.ts apps/mobile/src/lib/upload.test.ts apps/web/src/updates.test.ts apps/web/src/library-cache.test.ts apps/web/src/smart/smart-form.test.ts apps/web/src/crash-reporter.test.ts apps/web/src/now-playing.test.ts apps/web/src/track-menu.test.ts",
     "test:all": "npm test && npm run test:local && npm run test:scripts",
+    "generate:api-types": "node scripts/generate-openapi-types.mjs",
+    "check:api-types": "node scripts/generate-openapi-types.mjs --check",
+    "typecheck:api": "tsc --noEmit -p services/api/tsconfig.json",
     "test:ffmpeg": "FFMPEG_PATH=${FFMPEG_PATH:?укажите путь к ffmpeg} npm test",
     "preview": "npm run build && npm start",
     "seed": "node scripts/seed-demo.mjs",
@@ -26,18 +40,29 @@
     "dev:console": "npm --prefix apps/console run dev",
     "build:console:windows": "cd apps/console && npm run build:windows",
     "build:console:android": "cd apps/console && npm run build:android",
-    "test:scripts": "node --test scripts/*.test.mjs",
-    "test:embedded": "node --test apps/mobile/test/embedded-server.test.mjs"
+    "test:scripts": "node --test scripts/*.test.mjs"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.16.0"
   },
   "optionalDependencies": {
     "ffmpeg-static": "^5.3.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@electric-sql/pglite-pgvector": "^0.0.17",
+    "@types/pg": "^8.23.1",
     "fake-indexeddb": "^6.2.8",
+    "openapi-types": "^12.1.3",
+    "openapi-typescript": "^7.13.0",
     "tsx": "^4.23.15",
     "yaml": "^2.8.1"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1169.0",
+    "@aws-sdk/s3-request-presigner": "^3.1169.0",
+    "bullmq": "^6.7.6",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.1"
   }
 }

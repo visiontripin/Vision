@@ -1,12 +1,99 @@
-import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
+import { createHmac, timingSafeEqual, randomBytes, scryptSync } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
-export const VERSION = '0.29.0';
-export const PASSWORD = process.env.VISION_PASSWORD || 'vision';
+export const VERSION = '0.30.0';
 export const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-const SECRET =
-  process.env.VISION_SECRET ||
-  createHmac('sha256', 'vision-audio').update(PASSWORD).digest('hex');
+const PASSWORD_FILE = process.env.VISION_PASSWORD_FILE?.trim() || null;
+const OWNER_SETUP_ENABLED = Boolean(PASSWORD_FILE);
+
+function readOwnerPasswordConfig(file) {
+  if (!file || !existsSync(file)) return null;
+  let config;
+  try {
+    config = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Не удалось прочитать защищённую конфигурацию пароля Vision Server: ${error.message}`);
+  }
+  if (
+    config?.version !== 1
+    || config?.algorithm !== 'scrypt'
+    || typeof config?.salt !== 'string'
+    || typeof config?.passwordHash !== 'string'
+    || typeof config?.secret !== 'string'
+  ) {
+    throw new Error('Файл пароля Vision Server повреждён или имеет неизвестный формат.');
+  }
+  const salt = Buffer.from(config.salt, 'base64url');
+  const passwordHash = Buffer.from(config.passwordHash, 'base64url');
+  if (salt.length !== 16 || passwordHash.length !== 64 || config.secret.length < 32) {
+    throw new Error('Файл пароля Vision Server повреждён или имеет неверную длину ключа.');
+  }
+  return { salt, passwordHash, secret: config.secret };
+}
+
+let ownerPasswordConfig = readOwnerPasswordConfig(PASSWORD_FILE);
+const ENV_SECRET = process.env.VISION_SECRET?.trim() || null;
+export let PASSWORD = PASSWORD_FILE ? '' : (process.env.VISION_PASSWORD || 'vision');
+let SECRET = ownerPasswordConfig?.secret
+  || ENV_SECRET
+  || (PASSWORD
+    ? createHmac('sha256', 'vision-audio').update(PASSWORD).digest('hex')
+    : randomBytes(32).toString('hex'));
+
+/** Не раскрывает секрет; health может сообщить только, задан ли он независимо от пароля. */
+export function mediaSecretIsConfigured() {
+  return Boolean(ownerPasswordConfig?.secret || ENV_SECRET);
+}
+
+export function ownerPasswordSetupEnabled() {
+  return OWNER_SETUP_ENABLED;
+}
+
+export function ownerPasswordIsConfigured() {
+  return !OWNER_SETUP_ENABLED || Boolean(ownerPasswordConfig);
+}
+
+export function verifyOwnerPassword(value) {
+  if (!ownerPasswordIsConfigured()) return false;
+  const candidate = String(value ?? '');
+  if (!ownerPasswordConfig) return safeEqual(candidate, PASSWORD);
+  const actual = scryptSync(candidate, ownerPasswordConfig.salt, ownerPasswordConfig.passwordHash.length);
+  return timingSafeEqual(actual, ownerPasswordConfig.passwordHash);
+}
+
+/** Первый пароль Vision Server задаётся только один раз и не хранится открытым текстом. */
+export function setInitialOwnerPassword(value) {
+  if (!PASSWORD_FILE) throw new Error('Настройка пароля доступна только в управляемом Vision Server.');
+  if (ownerPasswordConfig || existsSync(PASSWORD_FILE)) {
+    throw new Error('Пароль владельца уже задан.');
+  }
+  const password = String(value ?? '');
+  const salt = randomBytes(16);
+  const passwordHash = scryptSync(password, salt, 64);
+  const secret = randomBytes(32).toString('base64url');
+  const config = {
+    version: 1,
+    algorithm: 'scrypt',
+    salt: salt.toString('base64url'),
+    passwordHash: passwordHash.toString('base64url'),
+    secret,
+  };
+  const directory = path.dirname(PASSWORD_FILE);
+  mkdirSync(directory, { recursive: true });
+  const temporary = `${PASSWORD_FILE}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(config)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  try {
+    renameSync(temporary, PASSWORD_FILE);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+  ownerPasswordConfig = { salt, passwordHash, secret };
+  SECRET = secret;
+  PASSWORD = '';
+}
 
 const b64u = (buf) => Buffer.from(buf).toString('base64url');
 

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { api, apiBase, initApi } from './src/api';
 import { installCrashReporter } from './src/crash';
-import { KEYS, loadBase, saveBase } from './src/config';
+import { KEYS } from './src/config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DownloadsProvider } from './src/downloads';
 import { LocalLibraryProvider } from './src/local';
@@ -11,16 +11,14 @@ import { SyncProvider } from './src/sync';
 import { PlayerProvider, usePlayer } from './src/player';
 import { DeepLinkHandler } from './src/components/DeepLinkHandler';
 import { useLibrary } from './src/useLibrary';
-import { isRuntimeAvailable, startEmbeddedServer } from './src/runtime';
 import { MainScreen } from './src/screens/MainScreen';
-import { ServerScreen } from './src/screens/ServerScreen';
 import { colors } from './src/theme';
 
 /**
  * Версия приложения для отчётов о падениях: одна строка, чтобы в панели было
  * видно, какая сборка падает.
  */
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '0.10.0';
 
 /**
  * Vision Audio — мобильный плеер (Android + iOS).
@@ -36,7 +34,6 @@ const APP_VERSION = '0.9.0';
  */
 export default function App() {
   const [booting, setBooting] = useState(true);
-  const [serverOpen, setServerOpen] = useState(false);
 
   /* Отчёты о падениях ставятся до всего остального: падение при запуске — самое
      обидное, человек видит только закрывшееся приложение. */
@@ -55,25 +52,6 @@ export default function App() {
         void api.me().catch(() => undefined);
       }
     })().finally(() => setBooting(false));
-  }, []);
-
-  /**
-   * Сервер на телефоне поднимается сам, без кнопок: приложение не должно
-   * начинаться с настроек.
-   *
-   * Запуск не блокирует старт: если рантайма в сборке нет (обычный APK, iOS,
-   * Expo Go), функция сразу вернёт `unavailable`, и приложение продолжит работать
-   * как локальный плеер. Ошибку не показываем модалкой — она видна на экране
-   * «Сервер на телефоне», где ей и место.
-   */
-  useEffect(() => {
-    if (!isRuntimeAvailable()) return;
-    void startEmbeddedServer().catch(() => undefined);
-  }, []);
-
-  const onServerConnected = useCallback(async () => {
-    await saveBase(api.baseUrl);
-    setServerOpen(false);
   }, []);
 
   if (booting) {
