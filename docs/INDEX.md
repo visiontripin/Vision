@@ -17,6 +17,7 @@ README в корне — короткая презентация продукт�
 - [`RUNBOOK.md`](RUNBOOK.md) — операции, окружение, миграции и резервное копирование.
 - [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md) — ограниченный loopback-only контур v2 для локальной проверки на Windows.
 - [`PLATFORM-OPERATIONS.md`](PLATFORM-OPERATIONS.md) — backup/restore/rollback, SQLite migration/reconciliation и локальные сигналы наблюдаемости для v2.
+- [`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md) — turnkey-инструкция owner-репетиции Stack Ready на ПК владельца (rehearsal backup/restore/rollback, live Redis, observability wiring, importer, таблица подписи); пример правил алертинга — `deploy/observability/prometheus-alerts.example.yml`.
 - [`INTERNAL-ALPHA-PLAN.md`](INTERNAL-ALPHA-PLAN.md) — поэтапный план внутренней технической alpha на одном сервере; Stack Ready и сетевой доступ пока не приняты.
 - [`DISTRIBUTED.md`](DISTRIBUTED.md), [`SYNC.md`](SYNC.md), [`CONTENT.md`](CONTENT.md) — legacy-архитектура и описание прежних клиентских сценариев; не инструкции по сетевому запуску.
 - [`IMPROVEMENTS.md`](IMPROVEMENTS.md) — legacy-бэклог существующего плеера; не roadmap платформы v2.

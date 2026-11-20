@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — 2026-11-12
+
+**Этап 1 (Stack Ready gate, ADR-0021) доведён до исполняемого turnkey-состояния.**
+Серверная часть кода Stage-1 укомплектована; внешние rehearsals и приёмка остаются
+за владельцем и зафиксированы как явные внешние гейты, а не отметки «сделано».
+
+- SQLite→v2 importer: `scripts/platform-sqlite-import.mjs` (dry-run по умолчанию;
+  `--apply` импортирует только `tracks`/`blobs`/`media` через штатный quarantine
+  upload → checksum → worker ingest; SHA-256-идемпотентность; явные disposition для
+  пропусков; роль artist/admin у целевого владельца; отчёт без названий/путей;
+  Node-тесты `scripts/platform-sqlite-import.test.mjs`, команда `npm run platform:sqlite:import`).
+  Ничего не публикует и не одобряет; cutover и rights/moderation — отдельные owner-run шаги.
+- Turnkey runbook owner-репетиции Stack Ready: `docs/PLATFORM-REHEARSAL.md` —
+  backup→restore→rollback, live Redis verification (CI evidence + redis-cli +
+  одноразовый контейнер в compose-сети, 6/6 rate-limit тестов), policy/load review
+  лимитов, observability wiring (token-gated `/metrics`, drill) и импортер
+  rehearsal + таблица подписи владельца. Пример правил алертинга:
+  `deploy/observability/prometheus-alerts.example.yml` (пороги-заглушки, ничего не применяется автоматически).
+- `docs/PLATFORM-OPERATIONS.md` §5 (acceptance ledger) дополнен строкой owner-приёмки
+  ADR-0021; `docs/ROADMAP-v2.md` §17.4 и checkpoint Ф1 ссылаются на runbook и importer.
+- **Stack Ready по-прежнему не принят.** Windows backup/restore rehearsal, live Redis,
+  observability wiring, importer rehearsal и подпись владельца — открыты и описаны
+  turnkey-командами; публичный UGC/бета/эфир/монетизация запрещены до приёмки и
+  отдельных юридических гейтов.
+
 ## 0.30.0 — 2026-11-12
 
 **Мобильный плеер снова только клиент API.** Код Node/JNI, встроенный Android-сервер,

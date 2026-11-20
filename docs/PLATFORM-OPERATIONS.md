@@ -1,6 +1,6 @@
 # Vision v2 — backup, recovery, migration and operations
 
-**Status:** technical runbook and migration proposal for the loopback-only local Compose stack. It is not a production backup policy, a production restore rehearsal, an approved SQLite cutover, or permission to accept/publicly publish user-generated music.
+**Status:** technical runbook and migration plan for the loopback-only local Compose stack; includes a tested SQLite importer (not yet rehearsed on a disposable PG16/MinIO target) and a rehearsal runbook for the owner ([`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md)). It is not a production backup policy, a production restore rehearsal, an approved SQLite cutover, or permission to accept/publicly publish user-generated music.
 
 The v2 platform remains isolated from the legacy SQLite personal-library server. Keep registration and uploads disabled outside approved synthetic tests. An ingest fingerprint status of `not_configured` is not a rights clearance.
 
@@ -84,7 +84,7 @@ Use `npm run platform:local:logs` for the JSON API/worker and infrastructure log
 
 ## 3. SQLite → PostgreSQL migration plan (proposal, not executed)
 
-SQLite v1 is a single-owner personal-library application. v2 is a multi-user music platform with explicit owner, rights-confirmation, quarantine, moderation and publication states. They are not interchangeable schemas and **must not be merged by table-name similarity**. A read-only aggregate inventory command is available; no importer, dual-write mode or cutover command is implemented.
+SQLite v1 is a single-owner personal-library application. v2 is a multi-user music platform with explicit owner, rights-confirmation, quarantine, moderation and publication states. They are not interchangeable schemas and **must not be merged by table-name similarity**. A read-only aggregate inventory command (`scripts/platform-sqlite-audit.mjs`) and a separate reviewable importer (`scripts/platform-sqlite-import.mjs`, dry-run by default, PGlite-tested) exist; no dual-write mode or cutover has been executed or approved.
 
 ### 3.1 Preserve source and define the allowed dataset
 
@@ -115,13 +115,13 @@ SQLite v1 is a single-owner personal-library application. v2 is a multi-user mus
    ```
 
    The tool opens SQLite read-only and rejects WAL/journal sidecars; its JSON report contains aggregate table/track/media counts, migration IDs, the database hash, checksum/size/missing-file findings and foreign-key violations. It does not emit titles, track IDs, paths, URLs, comments, tokens or crash text; it does not write to source or target and does not approve migration. Store the report privately because hashes/counts can still identify a dataset.
-4. Choose the exact subset and target owner account. Only after that explicit decision, a future importer may create a deterministic source-to-target ID map in a private staging area, not Git. No other user's or third-party music may be imported by inference. Before any public state, the target owner must make the current explicit rights confirmation and the content must pass v2 moderation; no legacy `liked`, `plays`, filename or prior state is evidence of rights or approval.
+4. Choose the exact subset and target owner account. Only after that explicit decision, the approved rehearsal may use the implemented importer (`scripts/platform-sqlite-import.mjs`); any deterministic source-to-target ID map it needs stays in a private staging area, not Git. No other user's or third-party music may be imported by inference. Before any public state, the target owner must make the current explicit rights confirmation and the content must pass v2 moderation; no legacy `liked`, `plays`, filename or prior state is evidence of rights or approval.
 
 ### 3.2 Candidate data disposition
 
 | Legacy SQLite data | Proposed handling | Guardrail |
 |---|---|---|
-| `tracks`, `blobs`, `track_variants`, `blob_seeds`, `media/`, `covers/` | Candidate metadata/media for an owner-approved private import; use the normal checksum, audio validation and quarantine ingest path. Rebuild variants and blob availability rather than trusting stale derived rows. | Keep private/quarantined. Verify SHA-256, byte count and media existence; do not copy filesystem paths into public rows. No import tool exists yet. |
+| `tracks`, `blobs`, `track_variants`, `blob_seeds`, `media/`, `covers/` | Candidate metadata/media for an owner-approved private import; use the normal checksum, audio validation and quarantine ingest path. Rebuild variants and blob availability rather than trusting stale derived rows. | Keep private/quarantined. Verify SHA-256, byte count and media existence; do not copy filesystem paths into public rows. Importer exists (`scripts/platform-sqlite-import.mjs`); rehearsal pending. |
 | `playlists`, `playlist_tracks`, `smart_playlists` | Retain in the v1 archive until v2 private-playlist semantics and ownership/mapping are accepted. | Do not turn them into public catalog or radio schedules. |
 | `listens`, `listen_events`, `tracks.plays`, `tracks.liked` | Do not migrate by default. If later approved, define a privacy/analytics mapping and mark imported aggregates as historical/unverified. | Legacy playback lacks v2 user/session/capability evidence; never synthesize v2 verified play events from counters. |
 | `external_tracks` | Keep in the v1 archive; review links and rights separately before any future import. | Do not copy external audio or treat embed metadata as permission. |
@@ -131,11 +131,11 @@ SQLite v1 is a single-owner personal-library application. v2 is a multi-user mus
 
 ### 3.3 Rehearsal, reconciliation and cutover gates
 
-A future importer must be a separate, reviewable tool and pass these stages against disposable PostgreSQL 16 + pgvector and MinIO, never production first:
+The importer (`scripts/platform-sqlite-import.mjs`) is a separate, reviewable tool and maps onto stages 1–3 below (dry-run report; validation of checksum/size/type/metadata; private quarantine load through the owner upload → checksum → quarantine → worker ingest path). It is idempotent by SHA-256 (re-running reports `already_imported`), writes no public state, approves nothing and emits a PII-free JSON report (`--report`). It does not perform stages 4–7: rehearsal must run against a disposable PostgreSQL 16 + pgvector and MinIO, never production first, per the runbook in [`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md) §E. Stages:
 
 1. **Dry-run extract:** read a verified SQLite snapshot; emit a report only. Record source schema/migration IDs, eligible row counts, duplicate checksums, missing media and excluded tables.
 2. **Transform:** stable ID mapping; explicit target owner; normalized metadata and dates; bounded text; no old access tokens/secrets. Validate all target constraints before writing.
-3. **Private load:** create new v2 records through a dedicated, audited import flow equivalent to owner upload → checksum verification → private quarantine → worker ingest. Do not insert `published` rows or fabricate moderation approvals. The import flow itself still needs design and implementation.
+3. **Private load:** implemented as `scripts/platform-sqlite-import.mjs --apply`: creates new v2 records through the owner upload → checksum verification → private quarantine → worker ingest path and enqueues the normal outbox. Do not insert `published` rows or fabricate moderation approvals. The import flow records `album`/`genre` after ingest and leaves tracks unprocessed/quarantine until the worker runs.
 4. **Reconcile:** compare source-eligible vs loaded counts by disposition; compare every imported audio SHA-256 and byte length; verify no duplicate/missing target IDs, dangling references, public visibility, unapproved moderation decisions or unresolved claims. Save machine-readable and human-readable reports with no PII.
 5. **Owner review:** manually inspect metadata and sample playback from private objects. Each track requires a current rights acknowledgement and moderator decision before any public catalog entry. `not_configured` fingerprint remains an unresolved technical status, not a rights finding.
 6. **Cutover:** only after explicit owner/legal/operations approval. Freeze v1 writes for the final snapshot, load the exact approved delta, reconcile again, and keep v1 read-only and restorable. Do not dual-write between SQLite and PostgreSQL.
@@ -150,6 +150,7 @@ Required reconciliation evidence is a versioned report of source schema, selecte
 - **Prometheus text metrics:** `GET /metrics` exposes bounded-cardinality HTTP request counters and latency histogram. Configure a random `PLATFORM_METRICS_TOKEN` of at least 32 bytes and scrape with `Authorization: Bearer ...`. The endpoint is hidden (404) when no token is configured and also returns 404 for a bad token. Do not publish the metrics endpoint or put the token in a URL.
 - **Structured logs:** API access entries contain request ID, method, route template, status and duration only; no raw path IDs, query strings, request bodies, IPs, emails or authorization headers. Worker events include job type/ID, status, attempt counts and sanitized error codes. Use request IDs to correlate API failures; do not treat logs as a durable audit store (moderation/rights transitions have PostgreSQL audit records).
 - **Database-level checks:** use the read-only queries above for outbox backlog/dead letters, expired upload intents, quarantine/in-review/published counts and rights claims. Keep query output private because it describes platform content/state.
+- **Alerting example:** `deploy/observability/prometheus-alerts.example.yml` holds starter rules (target down, 5xx > 5%, p95 > 1.5s, sustained 429) against `vision_platform_http_requests_total` / `vision_platform_http_request_duration_seconds`. Nothing is applied automatically; thresholds are placeholders until the owner sets SLOs/retention/contacts (turnkey wiring: [`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md) §D). Outbox/DLQ alerts need a blackbox SQL exporter that does not exist yet — manual SQL until then (known gap).
 
 This implementation supplies signals, not a production alert policy. Set service-specific SLOs, retention, log access, escalation contacts and alert thresholds only after the operator and legal/privacy review are assigned. A green health check or low HTTP latency does not prove UGC rights, successful recovery, anti-fraud, or production acceptance.
 
@@ -157,10 +158,11 @@ This implementation supplies signals, not a production alert policy. Set service
 
 | Check | Current state | Evidence needed to close |
 |---|---|---|
-| Backup bundle generation and file-hash verification | Implemented; bundle verifier covered by local Node tests. Docker commands not run in this workspace. | Owner-run Windows Compose backup; verify manifest and copy the bundle off-device securely. |
-| Restore/rollback recipe | Implemented with mandatory `--confirm` and automatic pre-restore backup. No real restore has been run. | Restore into disposable Windows volumes; check PostgreSQL health/migration, Redis queue recovery, object count/hash and private media; then rehearse rollback. |
-| Full upload → quarantine → ingest → rights submission → moderation → publication | Synthetic end-to-end HTTP test exists on PGlite with memory S3 and fake transcoder. | Repeat against PostgreSQL 16 + pgvector, Redis/BullMQ, MinIO and the approved real transcoder before Stack Ready acceptance. |
-| SQLite → PostgreSQL data migration | Plan plus tested read-only source inventory utility; no data importer or cutover performed. | Owner dataset decision, privacy/legal review, importer implementation, disposable rehearsal and signed reconciliation. |
-| Metrics/log/health signals | API JSON logs, token-gated HTTP metrics and richer worker health implemented. No hosted monitoring or alerts configured. | Owner-run wiring, privacy/retention review, thresholds/SLOs, access controls and incident drill. |
+| Backup bundle generation and file-hash verification | Implemented; bundle verifier covered by local Node tests. Docker commands not run in this workspace. Turnkey owner steps: [`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md) §A/B. | Owner-run Windows Compose backup; verify manifest and copy the bundle off-device securely. |
+| Restore/rollback recipe | Implemented with mandatory `--confirm` and automatic pre-restore backup. No real restore has been run. | Restore into disposable Windows volumes; check PostgreSQL health/migration, Redis queue recovery, object count/hash and private media; then rehearse rollback (runbook §B). |
+| Full upload → quarantine → ingest → rights submission → moderation → publication | Synthetic end-to-end HTTP test exists on PGlite with memory S3 and fake transcoder. | Repeat against PostgreSQL 16 + pgvector, Redis/BullMQ, MinIO and the approved real transcoder before Stack Ready acceptance (CI matrix covers PG16/Redis/MinIO; owner repeats per runbook §B/C). |
+| SQLite → PostgreSQL data migration | Importer implemented and automated-tested (dry-run report, apply via quarantine ingest, SHA-256 idempotency, explicit skip dispositions, owner artist/admin role required); source inventory read-only; no cutover performed. | Owner dataset decision; privacy/legal review; disposable PG16/MinIO rehearsal and signed reconciliation (runbook §E); per-track rights acknowledgement and moderation before any public state. |
+| Metrics/log/health signals | API JSON logs, token-gated HTTP metrics and richer worker health implemented; starter alert rules at `deploy/observability/prometheus-alerts.example.yml`; no hosted monitoring or alerts configured. | Owner-run wiring, privacy/retention review, thresholds/SLOs, access controls and incident drill (runbook §D). |
+| Owner Stack Ready acceptance (ADR-0021) | **Not accepted.** Technical implementation exists; owner rehearsals and sign-off are outstanding. | Every row above closed on the owner's machine plus an explicit owner decision recorded in `ROADMAP-v2.md` §17.4. Gate does not replace legal/consent gates. |
 
 Until those external rehearsals and owner decisions are recorded, Stack Ready, public UGC, external invitations and production readiness remain **not accepted**.

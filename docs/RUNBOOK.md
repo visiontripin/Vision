@@ -356,7 +356,7 @@ Windows-службе с автозапуском и admin installer конфли
 
 Этот раздел обновлён: v2 PostgreSQL API уже содержит upload intent/complete, private S3 ingest, outbox/worker, owner rights submission, moderation decision и публикацию через каталог. Утверждение ниже в старых ревизиях, что upload/ingest API отсутствует, устарело. Эти API **не** используются legacy `npm start`, который остаётся отдельным SQLite-сервером личной библиотеки; данные двух контуров не мигрируются автоматически.
 
-Локальный Compose-контур для Windows и его loopback ограничения описаны в [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md). Backup/restore/rollback, SQLite→Postgres migration/reconciliation и operational checks описаны в [`PLATFORM-OPERATIONS.md`](PLATFORM-OPERATIONS.md). Команды v2:
+Локальный Compose-контур для Windows и его loopback ограничения описаны в [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md). Backup/restore/rollback, SQLite→Postgres migration/reconciliation и operational checks описаны в [`PLATFORM-OPERATIONS.md`](PLATFORM-OPERATIONS.md); turnkey owner-репетиция Stack Ready (backup/restore/rollback, live Redis, observability, importer, подпись) — в [`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md). Команды v2:
 
 ```powershell
 npm run platform:local:init
