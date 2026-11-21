@@ -18,6 +18,7 @@
   лимитов, observability wiring (token-gated `/metrics`, drill) и импортер
   rehearsal + таблица подписи владельца. Пример правил алертинга:
   `deploy/observability/prometheus-alerts.example.yml` (пороги-заглушки, ничего не применяется автоматически).
+- `docs/AGENT-PLAYBOOK.md` — проверенные агентские приёмы: восстановление checkout после пересоздания песочницы, сверка деревьев без false positive на tracked-ignored файлах (`vision-release.p12`), тестовые сьюты и PGlite-паттерн, карта платформенного контура v2, правила дисциплины ledger/gate и известные ловушки.
 - `docs/PLATFORM-OPERATIONS.md` §5 (acceptance ledger) дополнен строкой owner-приёмки
   ADR-0021; `docs/ROADMAP-v2.md` §17.4 и checkpoint Ф1 ссылаются на runbook и importer.
 - **Stack Ready по-прежнему не принят.** Windows backup/restore rehearsal, live Redis,

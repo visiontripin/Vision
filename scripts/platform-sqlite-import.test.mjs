@@ -110,6 +110,10 @@ test('dry-run reports eligible tracks without writing to the platform', async ()
   try {
     const report = await runSqliteImport({ sourceDir, ownerId, pool, storage: makeStorage(), apply: false });
     assert.equal(report.mode, 'dry-run');
+    assert.equal(report.sourceDatabase.integrityCheck.ok, true);
+    assert.match(report.sourceDatabase.databaseSha256, /^[a-f0-9]{64}$/);
+    assert.deepEqual(report.sourceDatabase.migrationIds, []);
+    assert.equal(typeof report.sourceDatabase.excludedTableCounts.playlists, 'object');
     assert.equal(report.counts.total, 2);
     assert.equal(report.counts.would_import, 2);
     assert.ok(report.tracks.every((entry) => entry.disposition === 'would_import'));

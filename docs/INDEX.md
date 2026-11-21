@@ -15,6 +15,7 @@ README в корне — короткая презентация продукт�
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — установка зависимостей, проверки и локальная безопасность.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md), [`API.md`](API.md) — текущая архитектура и API-контракты.
 - [`RUNBOOK.md`](RUNBOOK.md) — операции, окружение, миграции и резервное копирование.
+- [`AGENT-PLAYBOOK.md`](AGENT-PLAYBOOK.md) — проверенные в этой песочнице приёмы: восстановление checkout после пересоздания, сверка деревьев, тесты (PGlite), платформенный контур v2, правила ledger/документов и известные ловушки.
 - [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md) — ограниченный loopback-only контур v2 для локальной проверки на Windows.
 - [`PLATFORM-OPERATIONS.md`](PLATFORM-OPERATIONS.md) — backup/restore/rollback, SQLite migration/reconciliation и локальные сигналы наблюдаемости для v2.
 - [`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md) — turnkey-инструкция owner-репетиции Stack Ready на ПК владельца (rehearsal backup/restore/rollback, live Redis, observability wiring, importer, таблица подписи); пример правил алертинга — `deploy/observability/prometheus-alerts.example.yml`.

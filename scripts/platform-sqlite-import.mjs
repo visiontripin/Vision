@@ -29,6 +29,11 @@ const AUDIO_TYPES = new Set([
   'audio/aac', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/ogg',
   'audio/opus', 'audio/wav', 'audio/webm', 'audio/x-wav',
 ]);
+const EXCLUDED_TABLES = [
+  'playlists', 'playlist_tracks', 'smart_playlists', 'listens', 'listen_events',
+  'external_tracks', 'shares', 'share_hits', 'share_comments', 'library_devices',
+  'library_tracks', 'library_files', 'crash_reports', 'audit_log',
+];
 const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -60,12 +65,35 @@ async function locateMedia(mediaDir, row) {
 async function readSourceTracks(sourceDir) {
   const { DatabaseSync } = await import('node:sqlite');
   const databasePath = path.join(sourceDir, 'vision.db');
+  const databaseSha256 = await sha256File(databasePath);
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
-    return database.prepare(`
+    const integrityRows = database.prepare('PRAGMA integrity_check').all();
+    const integrityCheck = { ok: integrityRows.length === 1 && integrityRows[0].integrity_check === 'ok', resultCount: integrityRows.length };
+    const tableNames = new Set(database.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    ).all().map((row) => row.name));
+    if (!tableNames.has('tracks')) throw new Error('SQLite source has no tracks table.');
+    const migrationIds = tableNames.has('schema_version')
+      ? database.prepare('SELECT id FROM schema_version ORDER BY id').all()
+        .map((row) => row.id).filter((id) => typeof id === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(id))
+      : [];
+    const excludedTableCounts = {};
+    for (const table of EXCLUDED_TABLES) {
+      excludedTableCounts[table] = tableNames.has(table)
+        ? Number(database.prepare(`SELECT COUNT(*) AS count FROM "${table}"`).get().count)
+        : null;
+    }
+    const duplicateChecksumGroups = Number(database.prepare(`
+      SELECT COUNT(*) AS count FROM (
+        SELECT checksum FROM tracks WHERE checksum IS NOT NULL GROUP BY checksum HAVING COUNT(*) > 1
+      )
+    `).get().count);
+    const rows = database.prepare(`
       SELECT id, title, artist, album, genre, mime, ext, size, checksum
       FROM tracks ORDER BY created_at, id
     `).all();
+    return { rows, sourceMeta: { databaseSha256, integrityCheck, migrationIds, excludedTableCounts, duplicateChecksumGroups } };
   } finally {
     database.close();
   }
@@ -86,11 +114,15 @@ export async function runSqliteImport({ sourceDir, ownerId, pool, storage, apply
   }
   const actor = { id: ownerId, role: ownerRow.primary_role };
   const mediaDir = path.join(sourceDir, 'media');
-  const rows = await readSourceTracks(sourceDir);
+  const { rows, sourceMeta } = await readSourceTracks(sourceDir);
+  if (!sourceMeta.integrityCheck.ok) {
+    throw new Error('SQLite source failed integrity_check; refusing to import an unverified database.');
+  }
   const report = {
     mode: apply ? 'apply' : 'dry-run',
     source: path.basename(sourceDir),
     owner: ownerId,
+    sourceDatabase: sourceMeta,
     counts: { total: rows.length, imported: 0, would_import: 0, already_imported: 0, skipped: 0, failed: 0 },
     tracks: [],
   };
