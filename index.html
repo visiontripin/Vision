@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision Audio — демо плеера</title>
+<meta name="description" content="Работающее демо плеера Vision Audio: один файл, без сервера — аудио синтезируется прямо в браузере.">
+<style>
+  :root {
+    --bg: #0c0e12;
+    --card: #14171d;
+    --card-2: #1a1e26;
+    --line: #262b34;
+    --text: #e8eaee;
+    --muted: #9aa3b2;
+    --accent: #ff5a1f;
+    --accent-soft: rgba(255, 90, 31, .16);
+    --ok: #3ecf8e;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: dark; }
+  body {
+    background:
+      radial-gradient(1200px 500px at 80% -10%, rgba(255, 90, 31, .10), transparent 60%),
+      radial-gradient(900px 420px at -10% 30%, rgba(62, 207, 142, .06), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: .2px; }
+  .brand .logo {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), #ff9052);
+    display: grid; place-items: center; color: #fff; font-size: 15px; font-weight: 800;
+    box-shadow: 0 4px 14px rgba(255, 90, 31, .35);
+  }
+  .pill {
+    font-size: 12px; color: var(--muted); border: 1px solid var(--line);
+    background: var(--card); padding: 5px 10px; border-radius: 999px;
+  }
+  .pill b { color: var(--ok); font-weight: 600; }
+
+  .player {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px; margin-bottom: 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  }
+  .now { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+  .cover {
+    width: 64px; height: 64px; border-radius: 12px; flex: none;
+    background: linear-gradient(135deg, #2a2f3a, #171a21);
+    display: grid; place-items: center; font-size: 26px;
+    border: 1px solid var(--line); overflow: hidden; position: relative;
+  }
+  .cover::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(135deg, var(--accent-soft), transparent 60%);
+  }
+  .meta { min-width: 0; flex: 1; }
+  .meta .title { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta .sub { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta .genre {
+    display: inline-block; margin-top: 6px; font-size: 11px; letter-spacing: .6px;
+    text-transform: uppercase; color: var(--accent); background: var(--accent-soft);
+    padding: 2px 8px; border-radius: 999px;
+  }
+
+  .wave-box { position: relative; margin-bottom: 10px; }
+  canvas#wave { width: 100%; height: 96px; display: block; cursor: pointer; border-radius: 8px; }
+  .times { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+
+  .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  button {
+    font: inherit; color: var(--text); background: var(--card-2);
+    border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+    transition: border-color .15s, background .15s, transform .05s;
+  }
+  button:hover { border-color: #39404d; background: #20242d; }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .icon-btn { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; }
+  .icon-btn svg { width: 18px; height: 18px; fill: currentColor; }
+  .play {
+    width: 52px; height: 52px; border-radius: 50%; border: none;
+    background: var(--accent); color: #fff;
+    box-shadow: 0 6px 18px rgba(255, 90, 31, .4);
+  }
+  .play:hover { background: #ff6b36; border: none; }
+  .play svg { width: 22px; height: 22px; fill: #fff; }
+  .like.on { color: var(--accent); border-color: rgba(255, 90, 31, .5); background: var(--accent-soft); }
+  .like.on svg { fill: var(--accent); }
+  .vol { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); }
+  .vol svg { width: 18px; height: 18px; fill: currentColor; }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; width: 110px; height: 4px;
+    background: var(--line); border-radius: 4px; outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: none;
+  }
+  input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); cursor: pointer; border: none; }
+
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 10px 2px; }
+  ul.tracks { list-style: none; display: grid; gap: 8px; margin-bottom: 18px; }
+  ul.tracks li {
+    display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  ul.tracks li:hover { border-color: #39404d; background: var(--card-2); }
+  ul.tracks li.active { border-color: rgba(255, 90, 31, .55); background: var(--accent-soft); }
+  .num { width: 20px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; flex: none; }
+  li.active .num { color: var(--accent); font-weight: 700; }
+  .t-meta { flex: 1; min-width: 0; }
+  .t-meta .t1 { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t-meta .t2 { color: var(--muted); font-size: 12px; }
+  .t-dur { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+  .mini-like { flex: none; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; padding: 0; }
+  .mini-like svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; }
+  .mini-like.on svg { fill: var(--accent); stroke: var(--accent); }
+
+  .note {
+    color: var(--muted); font-size: 13px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  .note kbd {
+    font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--card-2); border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px; color: var(--text);
+  }
+
+  #loading {
+    position: fixed; inset: 0; background: rgba(12, 14, 18, .92); z-index: 50;
+    display: grid; place-items: center; text-align: center; gap: 14px;
+    transition: opacity .35s; backdrop-filter: blur(3px);
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 42px; height: 42px; border-radius: 50%; margin: 0 auto;
+    border: 3px solid var(--line); border-top-color: var(--accent);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading .lt { font-weight: 700; font-size: 16px; }
+  #loading .ls { color: var(--muted); font-size: 13px; }
+  #loadbar { width: 220px; height: 5px; background: var(--line); border-radius: 5px; margin: 10px auto 0; overflow: hidden; }
+  #loadbar i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .2s; }
+
+  footer { margin-top: 22px; color: var(--muted); font-size: 12.5px; text-align: center; }
+  footer a { color: var(--muted); }
+
+  @media (max-width: 480px) {
+    body { padding: 16px 10px 36px; }
+    .player { padding: 14px; }
+    .vol { margin-left: 0; width: 100%; }
+    input[type="range"] { flex: 1; }
+    canvas#wave { height: 80px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="loading" role="status" aria-live="polite">
+  <div>
+    <div class="spinner"></div>
+    <div class="lt" style="margin-top:14px">Синтез аудио…</div>
+    <div class="ls" id="loadtext">Готовим треки в браузере, ничего не загружается</div>
+    <div id="loadbar"><i></i></div>
+  </div>
+</div>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><span class="logo">V</span> Vision Audio <span style="color:var(--muted);font-weight:400">· демо</span></div>
+    <span class="pill"><b>●</b> работает без сервера — один файл</span>
+  </header>
+
+  <section class="player" aria-label="Плеер">
+    <div class="now">
+      <div class="cover" id="cover" aria-hidden="true">♪</div>
+      <div class="meta">
+        <div class="title" id="np-title">—</div>
+        <div class="sub" id="np-sub">—</div>
+        <span class="genre" id="np-genre">—</span>
+      </div>
+      <button class="icon-btn like" id="btn-like" title="Нравится (лайк сохраняется в браузере)" aria-label="Нравится" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.4 8.4 2.3 4.5 6 4.5c2.2 0 3.7 1.2 4.5 2.6.8-1.4 2.3-2.6 4.5-2.6 3.7 0 5.6 3.9 4 7.2C19.5 16.3 12 21 12 21z"/></svg>
+      </button>
+    </div>
+
+    <div class="wave-box">
+      <canvas id="wave" role="slider" tabindex="0" aria-label="Позиция воспроизведения" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></canvas>
+    </div>
+    <div class="times"><span id="t-cur">0:00</span><span id="t-dur">0:00</span></div>
+
+    <div class="controls">
+      <button class="icon-btn" id="btn-prev" title="Предыдущий" aria-label="Предыдущий трек">
+        <svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3.5 7 8.5 6V6z"/></svg>
+      </button>
+      <button class="play" id="btn-play" title="Воспроизвести/пауза (Space)" aria-label="Воспроизвести">
+        <svg id="ic-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="ic-pause" viewBox="0 0 24 24" style="display:none"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-next" title="Следующий" aria-label="Следующий трек">
+        <svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM6 6l8.5 6L6 18z"/></svg>
+      </button>
+      <div class="vol">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+        <input type="range" id="vol" min="0" max="100" value="80" aria-label="Громкость">
+      </div>
+    </div>
+  </section>
+
+  <h2>Плейлист — демо-синтез</h2>
+  <ul class="tracks" id="list"></ul>
+
+  <p class="note">
+    🎧 Каждый трек синтезируется у вас в браузере через Web Audio API — файлы не
+    скачиваются и никуда не отправляются. Лайк, громкость и позиция сохраняются в
+    <code>localStorage</code>. Горячие клавиши: <kbd>Space</kbd> — пауза,
+    <kbd>←</kbd>/<kbd>→</kbd> — ±5 с, <kbd>M</kbd> — звук.
+    Полная версия продукта: <a href="main.html" style="color:var(--accent)">презентация</a> ·
+    <a href="https://visiontripin.github.io/Vision/" style="color:var(--accent)">онлайн-демо</a>.
+  </p>
+
+  <footer>
+    Vision Audio · демо-плеер в одном файле ·
+    <a href="https://github.com/visiontripin/Vision">github.com/visiontripin/Vision</a>
+  </footer>
+</div>
+
+<audio id="audio" preload="auto"></audio>
+
+<script>
+"use strict";
+/* ============================================================
+   Vision Audio — демо-плеер.
+   Аудио генерируется офлайн-рендером Web Audio (OfflineAudioContext)
+   в WAV-blob, затем играется обычным <audio>. Ничего не летит в сеть.
+   ============================================================ */
+
+const TRACKS = [
+  { id: "t1", title: "Рассвет над каналом", artist: "Vision Demo", genre: "Ambient",
+    bpm: 70, mood: "warm", seed: 11,
+    chords: [[57,60,64],[53,57,60],[48,52,55],[55,59,62]] },        // Am – F – C – G
+  { id: "t2", title: "Северный ветер", artist: "Vision Demo", genre: "Downtempo",
+    bpm: 84, mood: "beat", seed: 23,
+    chords: [[62,65,69],[60,64,67],[57,60,64],[55,59,62]] },        // Dm – C – Am – G
+  { id: "t3", title: "Неоновый двор", artist: "Vision Demo", genre: "Lo-fi",
+    bpm: 90, mood: "lofi", seed: 37,
+    chords: [[67,70,74],[65,69,72],[62,65,69],[60,64,67]] },        // Gm – F – Dm – C
+  { id: "t4", title: "Тихая станция", artist: "Vision Demo", genre: "Ambient",
+    bpm: 66, mood: "cold", seed: 41,
+    chords: [[55,58,62],[53,57,60],[50,53,57],[48,52,55]] },        // Gm – F – Dm – C (low)
+  { id: "t5", title: "Персональная волна", artist: "Vision Demo", genre: "Synth",
+    bpm: 100, mood: "synth", seed: 59,
+    chords: [[57,60,64],[55,59,62],[53,57,60],[52,55,59]] },        // Am – G – F – E
+];
+const TRACK_SECONDS = 26;
+const WAVES = 320; // пиков для отрисовки волны
+
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+
+/* ---------- синтез ---------- */
+
+function rng(seed) { // детерминированный PRNG, чтобы треки были стабильными
+  let s = seed >>> 0;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+function tone(ctx, dest, { freq, t, dur, type = "sine", vol = 0.2, attack = 0.02, release = 0.5, detune = 0, lp = 0 }) {
+  const o = ctx.createOscillator();
+  o.type = type;
+  o.frequency.value = freq;
+  o.detune.value = detune;
+  const g = ctx.createGain();
+  const end = t + Math.max(attack, dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + attack);
+  g.gain.setValueAtTime(vol, end);
+  g.gain.exponentialRampToValueAtTime(0.0001, end + release);
+  if (lp) {
+    const f = ctx.createBiquadFilter();
+    f.type = "lowpass"; f.frequency.value = lp; f.Q.value = 0.7;
+    o.connect(f); f.connect(g);
+  } else o.connect(g);
+  g.connect(dest);
+  o.start(t); o.stop(end + release + 0.05);
+}
+
+function kick(ctx, dest, t, vol = 0.9) {
+  const o = ctx.createOscillator();
+  o.type = "sine";
+  o.frequency.setValueAtTime(150, t);
+  o.frequency.exponentialRampToValueAtTime(42, t + 0.11);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+  o.connect(g); g.connect(dest);
+  o.start(t); o.stop(t + 0.32);
+}
+
+function hat(ctx, dest, t, noiseBuf, vol = 0.14) {
+  const s = ctx.createBufferSource();
+  s.buffer = noiseBuf;
+  const f = ctx.createBiquadFilter();
+  f.type = "highpass"; f.frequency.value = 7500;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  s.connect(f); f.connect(g); g.connect(dest);
+  s.start(t, 0.05); s.stop(t + 0.06);
+}
+
+function noiseBuffer(ctx, seconds = 0.3) {
+  const b = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * seconds), ctx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return b;
+}
+
+async function renderTrack(track) {
+  const sr = 44100, dur = TRACK_SECONDS;
+  const ctx = new OfflineAudioContext(2, Math.ceil(sr * dur), sr);
+  const rand = rng(track.seed);
+  const noise = noiseBuffer(ctx);
+
+  const master = ctx.createGain();
+  master.gain.value = 0.55;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
+  master.connect(comp); comp.connect(ctx.destination);
+
+  const bus = ctx.createBiquadFilter();
+  bus.type = "lowpass"; bus.frequency.value = 7800; bus.Q.value = 0.4;
+  bus.connect(master);
+
+  const spb = 60 / track.bpm;          // секунд на долю
+  const bar = spb * 4;                 // секунд в такте
+  const bars = Math.ceil(dur / bar);
+  const chordOf = b => track.chords[b % track.chords.length];
+
+  for (let b = 0; b < bars; b++) {
+    const t0 = b * bar;
+    if (t0 >= dur) break;
+    const ch = chordOf(b);
+    const root = ch[0];
+    const next = chordOf(b + 1)[0];
+    const m = track.mood;
+
+    // --- пад / подложка (всегда) ---
+    const padVol = m === "warm" ? 0.10 : m === "cold" ? 0.11 : 0.075;
+    for (const n of ch) {
+      tone(ctx, bus, { freq: mtof(n), t: t0, dur: bar * 0.92, type: "sawtooth",
+        vol: padVol, attack: 0.9, release: 1.4, detune: (rand() * 14 - 7), lp: 1100 });
+      tone(ctx, bus, { freq: mtof(n + 12), t: t0, dur: bar * 0.9, type: "sawtooth",
+        vol: padVol * 0.4, attack: 1.2, release: 1.5, detune: (rand() * 10 - 5), lp: 1500 });
+    }
+
+    // --- бас ---
+    if (m !== "warm") {
+      const bvol = m === "synth" ? 0.30 : 0.24;
+      tone(ctx, bus, { freq: mtof(root - 12), t: t0, dur: spb * 1.4, type: m === "lofi" ? "triangle" : "square",
+        vol: bvol, attack: 0.01, release: 0.3, lp: 500 });
+      tone(ctx, bus, { freq: mtof(root - 12), t: t0 + spb * 2, dur: spb * 1.2, type: m === "lofi" ? "triangle" : "square",
+        vol: bvol * 0.85, attack: 0.01, release: 0.3, lp: 500 });
+      if (m === "synth" || m === "beat") {
+        tone(ctx, bus, { freq: mtof(root - 12), t: t0 + spb * 3.5, dur: spb * 0.4, type: "square",
+          vol: bvol * 0.7, attack: 0.01, release: 0.2, lp: 600 });
+      }
+    }
+
+    // --- арпеджио ---
+    if (m === "synth" || m === "warm" || m === "cold") {
+      const step = m === "synth" ? spb / 2 : spb;
+      const pattern = [0, 1, 2, 1, 0, 2, 1, 2];
+      const notes = ch.concat([ch[0] + 12, ch[1] + 12]);
+      const oct = m === "synth" ? 12 : 0;
+      const steps = Math.round(bar / step);
+      for (let i = 0; i < steps; i++) {
+        if (m !== "synth" && rand() < 0.35) continue; // в эмбиенте — редкие капли
+        const n = notes[pattern[i % pattern.length] % notes.length] + oct;
+        tone(ctx, bus, { freq: mtof(n), t: t0 + i * step, dur: step * 0.5,
+          type: m === "synth" ? "square" : "sine",
+          vol: m === "synth" ? 0.12 : 0.16, attack: 0.005, release: m === "synth" ? 0.18 : 0.7,
+          lp: m === "synth" ? 3200 : 0 });
+      }
+    }
+
+    // --- клавиши (lo-fi) ---
+    if (m === "lofi") {
+      for (const n of ch) {
+        tone(ctx, bus, { freq: mtof(n), t: t0 + spb * 1.5, dur: spb * 0.8, type: "triangle",
+          vol: 0.16, attack: 0.01, release: 0.9, lp: 2600, detune: rand() * 8 - 4 });
+      }
+      if (b % 2 === 1) {
+        for (const n of ch) {
+          tone(ctx, bus, { freq: mtof(n + 12), t: t0 + spb * 3.5, dur: spb * 0.4, type: "triangle",
+            vol: 0.10, attack: 0.01, release: 0.7, lp: 3000 });
+        }
+      }
+    }
+
+    // --- колокольчики (тёплый/холодный эмбиент) ---
+    if (m === "warm" || m === "cold") {
+      if (rand() < 0.75) {
+        const n = ch[Math.floor(rand() * ch.length)] + 24;
+        tone(ctx, bus, { freq: mtof(n), t: t0 + rand() * bar * 0.9, dur: 0.1,
+          type: "sine", vol: 0.14, attack: 0.005, release: 1.6 });
+      }
+    }
+
+    // --- ударные ---
+    if (m === "beat" || m === "synth" || m === "lofi") {
+      const kv = m === "synth" ? 0.95 : 0.8;
+      for (let beat = 0; beat < 4; beat++) {
+        if (m === "lofi" && beat === 1) continue;             // лёгкий свинг-пропуск
+        if (m === "synth" && beat === 3 && b % 2 === 1) continue;
+        kick(ctx, bus, t0 + beat * spb, kv);
+      }
+      for (let eighth = 1; eighth < 8; eighth += 2) {
+        hat(ctx, bus, t0 + eighth * spb * 0.5, noise, m === "lofi" ? 0.08 : 0.12);
+      }
+      // маленький перебор на конце такта
+      if ((m === "beat" || m === "synth") && b % 4 === 3) {
+        for (let i = 0; i < 3; i++) hat(ctx, bus, t0 + bar - spb * (0.5 - i * 0.16), noise, 0.1);
+      }
+    }
+    void next; // переходные ноты между тактами намеренно не используются
+  }
+
+  return ctx.startRendering();
+}
+
+function bufferToWav(buf) {
+  const ch = Math.min(2, buf.numberOfChannels);
+  const sr = buf.sampleRate;
+  const len = buf.length;
+  const bytes = 44 + len * ch * 2;
+  const ab = new ArrayBuffer(bytes);
+  const v = new DataView(ab);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, "RIFF"); v.setUint32(4, bytes - 8, true); wstr(8, "WAVE");
+  wstr(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * ch * 2, true); v.setUint16(32, ch * 2, true); v.setUint16(34, 16, true);
+  wstr(36, "data"); v.setUint32(40, len * ch * 2, true);
+  const chans = [];
+  for (let c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
+  let off = 44;
+  for (let i = 0; i < len; i++) {
+    for (let c = 0; c < ch; c++) {
+      let s = Math.max(-1, Math.min(1, chans[c][i]));
+      v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      off += 2;
+    }
+  }
+  return new Blob([ab], { type: "audio/wav" });
+}
+
+function peaksFrom(buf, n) {
+  const data = buf.getChannelData(0);
+  const block = Math.floor(data.length / n);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let max = 0;
+    const s = i * block;
+    for (let j = 0; j < block; j += 4) {
+      const a = Math.abs(data[s + j] || 0);
+      if (a > max) max = a;
+    }
+    out[i] = max;
+  }
+  let peak = 0.0001;
+  for (const p of out) if (p > peak) peak = p;
+  for (let i = 0; i < n; i++) out[i] = Math.min(1, out[i] / peak);
+  return out;
+}
+
+/* ---------- состояние ---------- */
+
+const LS_KEY = "vision.demo.v1";
+const state = {
+  idx: 0,
+  likes: {},
+  volume: 0.8,
+  muted: false,
+  time: 0,
+};
+try {
+  const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+  if (saved && typeof saved === "object") {
+    if (Number.isInteger(saved.idx) && saved.idx >= 0 && saved.idx < TRACKS.length) state.idx = saved.idx;
+    if (saved.likes) state.likes = saved.likes;
+    if (typeof saved.volume === "number") state.volume = Math.min(1, Math.max(0, saved.volume));
+    if (typeof saved.time === "number") state.time = Math.max(0, saved.time);
+    if (typeof saved.muted === "boolean") state.muted = saved.muted;
+  }
+} catch (_) { /* приватный режим и т.п. — работаем без сохранения */ }
+
+function persist() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      idx: state.idx, likes: state.likes, volume: state.volume,
+      time: audio.currentTime || 0, muted: state.muted,
+    }));
+  } catch (_) {}
+}
+
+const audio = document.getElementById("audio");
+const canvas = document.getElementById("wave");
+const ctx2d = canvas.getContext("2d");
+const blobs = [];    // URL-ы по трекам
+const peaks = [];    // Float32Array по трекам
+const buffers = [];  // AudioBuffer по трекам
+const listEl = document.getElementById("list");
+
+const fmt = t => {
+  if (!isFinite(t) || t < 0) t = 0;
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return m + ":" + String(s).padStart(2, "0");
+};
+
+/* ---------- отрисовка ---------- */
+
+function drawWave() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx2d.clearRect(0, 0, w, h);
+
+  const pk = peaks[state.idx];
+  if (!pk) return;
+  const progress = audio.duration ? audio.currentTime / audio.duration : 0;
+  const barW = w / pk.length;
+  const mid = h / 2;
+  for (let i = 0; i < pk.length; i++) {
+    const amp = Math.max(2, pk[i] * (h * 0.86));
+    const x = i * barW;
+    const played = (i / pk.length) <= progress;
+    ctx2d.fillStyle = played ? "#ff5a1f" : "#333a46";
+    const r = Math.min(1.5, barW / 2);
+    roundRect(ctx2d, x + 0.5, mid - amp / 2, Math.max(1.5, barW - 1.2), amp, r);
+    ctx2d.fill();
+  }
+  // курсор
+  const cx = progress * w;
+  ctx2d.fillStyle = "rgba(255,255,255,.75)";
+  ctx2d.fillRect(cx - 0.75, 0, 1.5, h);
+}
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
+function renderList() {
+  listEl.innerHTML = "";
+  TRACKS.forEach((t, i) => {
+    const li = document.createElement("li");
+    li.className = i === state.idx ? "active" : "";
+    li.setAttribute("role", "button");
+    li.tabIndex = 0;
+    li.innerHTML =
+      '<span class="num">' + (i + 1) + "</span>" +
+      '<span class="t-meta"><span class="t1">' + t.title + '</span>' +
+      '<span class="t2">' + t.artist + " · " + t.genre + "</span></span>" +
+      '<span class="t-dur">' + fmt(TRACK_SECONDS) + "</span>" +
+      '<button class="mini-like' + (state.likes[t.id] ? " on" : "") + '" aria-label="Нравится" title="Нравится">' +
+      '<svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.4 8.4 2.3 4.5 6 4.5c2.2 0 3.7 1.2 4.5 2.6.8-1.4 2.3-2.6 4.5-2.6 3.7 0 5.6 3.9 4 7.2C19.5 16.3 12 21 12 21z"/></svg></button>';
+    li.addEventListener("click", e => {
+      if (e.target.closest(".mini-like")) return;
+      selectTrack(i, true);
+    });
+    li.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); selectTrack(i, true); }
+    });
+    li.querySelector(".mini-like").addEventListener("click", e => {
+      e.stopPropagation();
+      toggleLike(t.id);
+    });
+    listEl.appendChild(li);
+  });
+}
+
+function renderMeta() {
+  const t = TRACKS[state.idx];
+  document.getElementById("np-title").textContent = t.title;
+  document.getElementById("np-sub").textContent = t.artist;
+  document.getElementById("np-genre").textContent = t.genre;
+  const on = !!state.likes[t.id];
+  const bl = document.getElementById("btn-like");
+  bl.classList.toggle("on", on);
+  bl.setAttribute("aria-pressed", String(on));
+  document.getElementById("t-dur").textContent = fmt(audio.duration || TRACK_SECONDS);
+}
+
+function renderPlayIcon() {
+  const playing = !audio.paused && !audio.ended;
+  document.getElementById("ic-play").style.display = playing ? "none" : "";
+  document.getElementById("ic-pause").style.display = playing ? "" : "none";
+  document.getElementById("btn-play").setAttribute("aria-label", playing ? "Пауза" : "Воспроизвести");
+}
+
+/* ---------- управление ---------- */
+
+function loadCurrent(resetTime) {
+  const t = TRACKS[state.idx];
+  audio.src = blobs[state.idx];
+  if (resetTime) audio.currentTime = 0;
+  else if (state.time > 0 && state.time < TRACK_SECONDS - 1) audio.currentTime = state.time;
+  renderMeta();
+  renderList();
+  drawWave();
+}
+
+function selectTrack(i, autoplay) {
+  const wasPlaying = !audio.paused;
+  state.idx = (i + TRACKS.length) % TRACKS.length;
+  state.time = 0;
+  loadCurrent(true);
+  if (autoplay || wasPlaying) audio.play().catch(() => {});
+  persist();
+}
+
+function toggleLike(id) {
+  state.likes[id] = !state.likes[id];
+  renderMeta();
+  renderList();
+  persist();
+}
+
+function seekDelta(sec) {
+  if (!audio.duration) return;
+  audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + sec));
+  drawWave();
+}
+
+document.getElementById("btn-play").addEventListener("click", () => {
+  if (audio.paused) audio.play().catch(() => {});
+  else audio.pause();
+});
+document.getElementById("btn-prev").addEventListener("click", () => selectTrack(state.idx - 1, true));
+document.getElementById("btn-next").addEventListener("click", () => selectTrack(state.idx + 1, true));
+document.getElementById("btn-like").addEventListener("click", () => toggleLike(TRACKS[state.idx].id));
+
+const volEl = document.getElementById("vol");
+volEl.addEventListener("input", () => {
+  state.volume = volEl.value / 100;
+  state.muted = state.volume === 0;
+  audio.volume = state.volume;
+  audio.muted = state.muted;
+  persist();
+});
+
+canvas.addEventListener("click", e => {
+  if (!audio.duration) return;
+  const r = canvas.getBoundingClientRect();
+  const p = (e.clientX - r.left) / r.width;
+  audio.currentTime = p * audio.duration;
+  drawWave();
+});
+canvas.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); seekDelta(-5); }
+  if (e.key === "ArrowRight") { e.preventDefault(); e.stopPropagation(); seekDelta(5); }
+});
+
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, select")) return;
+  if (e.code === "Space") {
+    if (e.target.closest("button, a")) return; // нативное нажатие на фокусированной кнопке
+    e.preventDefault();
+    if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+  }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); seekDelta(-5); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); seekDelta(5); }
+  else if (e.key === "m" || e.key === "M" || e.key === "ь" || e.key === "Ь") {
+    state.muted = !state.muted;
+    audio.muted = state.muted;
+    if (!state.muted && state.volume === 0) { state.volume = 0.8; volEl.value = 80; audio.volume = 0.8; }
+    persist();
+  }
+});
+
+audio.addEventListener("play", renderPlayIcon);
+audio.addEventListener("pause", renderPlayIcon);
+audio.addEventListener("ended", () => selectTrack(state.idx + 1, true));
+audio.addEventListener("loadedmetadata", () => {
+  document.getElementById("t-dur").textContent = fmt(audio.duration);
+});
+let saveTick = 0;
+function loop() {
+  document.getElementById("t-cur").textContent = fmt(audio.currentTime);
+  drawWave();
+  if (++saveTick % 50 === 0) persist();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener("beforeunload", persist);
+window.addEventListener("resize", drawWave);
+
+/* ---------- загрузка: рендерим все треки офлайн ---------- */
+
+async function boot() {
+  volEl.value = Math.round(state.volume * 100);
+  audio.volume = state.volume;
+  audio.muted = state.muted;
+  renderList();
+  renderMeta();
+
+  const bar = document.querySelector("#loadbar i");
+  const lt = document.getElementById("loadtext");
+  for (let i = 0; i < TRACKS.length; i++) {
+    lt.textContent = "Трек " + (i + 1) + " из " + TRACKS.length + " — " + TRACKS[i].title;
+    try {
+      const buf = await renderTrack(TRACKS[i]);
+      buffers[i] = buf;
+      peaks[i] = peaksFrom(buf, WAVES);
+      blobs[i] = URL.createObjectURL(bufferToWav(buf));
+    } catch (err) {
+      console.error("render failed", TRACKS[i].id, err);
+      peaks[i] = new Float32Array(WAVES).fill(0.4);
+      blobs[i] = "";
+    }
+    bar.style.width = Math.round(((i + 1) / TRACKS.length) * 100) + "%";
+    await new Promise(r => setTimeout(r, 0));
+  }
+
+  loadCurrent(false);
+  document.getElementById("loading").classList.add("hide");
+  requestAnimationFrame(loop);
+}
+
+boot();
+</script>
+</body>
+</html>
