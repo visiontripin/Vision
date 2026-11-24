@@ -20,7 +20,6 @@ apps/desktop/node_modules/
 apps/mobile/android/
 
 apps/mobile/ios/
-apps/mobile/.expo/
 apps/mobile/dist/
 
 # панель Vision Server: Rust-цели и сгенерированный Android-проект — только в CI
