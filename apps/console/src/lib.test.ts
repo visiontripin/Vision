@@ -92,6 +92,24 @@ test('диагностика: типичные поломки объяснены
   assert.ok(!isReady(checks), 'красный диск блокирует «готово к работе»');
 });
 
+test('диагностика предупреждает о секрете подписи, зависящем от пароля', () => {
+  const checks = diagnose({
+    ok: true,
+    version: '0.30.0',
+    diskFreeMb: 10_000,
+    security: { mediaSecretConfigured: false },
+  });
+  assert.equal(checks.find((check) => check.title === 'Секрет подписи медиа зависит от пароля')?.level, 'warn');
+
+  const configured = diagnose({
+    ok: true,
+    version: '0.30.0',
+    diskFreeMb: 10_000,
+    security: { mediaSecretConfigured: true },
+  });
+  assert.ok(!configured.some((check) => check.title === 'Секрет подписи медиа зависит от пароля'));
+});
+
 test('адрес панели для телефона', () => {
   assert.equal(adminUrl('http://192.168.1.10:4000'), 'http://192.168.1.10:4000/admin');
   assert.equal(adminUrl(''), '/admin');

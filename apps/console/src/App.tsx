@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
 import {
   ConsoleClient, ConsoleError, baseHint, loadSession, normalizeBase, saveSession,
   type AuditPage, type BackupResult, type BackupStatus, type CrashItem, type CrashPage, type CrashSummary, type Dashboard, type Health,
 } from './api';
 import { adminUrl, ago, auditClock, diagnose, diskState, expiry, humanBytes, isReady, playsChart } from './lib';
+import { ManagedServerPanel } from './ManagedServerPanel';
 
 /**
  * Vision Server — панель запуска и администрирования.
@@ -30,7 +32,7 @@ const AUDIT_FILTERS: { value: string; label: string }[] = [
 
 export function App() {
   const initial = useMemo(() => loadSession(), []);
-  const [base, setBase] = useState(initial.base);
+  const [base, setBase] = useState(initial.base || (isTauri() ? 'http://127.0.0.1:4000' : ''));
   const [token, setToken] = useState(initial.token);
   const [password, setPassword] = useState('');
   const [health, setHealth] = useState<Health | null>(null);
@@ -51,22 +53,38 @@ export function App() {
   const [auditFilter, setAuditFilter] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [localServerMessage, setLocalServerMessage] = useState<string | null>(null);
+  const [localServerAddress, setLocalServerAddress] = useState('http://127.0.0.1:4000');
 
   const connected = Boolean(token);
   const checks = diagnose(health);
 
   const client = useMemo(() => new ConsoleClient(base, token), [base, token]);
-
-  /** «Сервер на этом ПК»: панель, открытая самим сервером, живёт на том же origin. */
-  const useThisMachine = () => {
-    setBase('');
+  const rememberLocalServerAddress = useCallback((address: string) => setLocalServerAddress(address), []);
+  const setManagedServerAddress = useCallback((address: string) => {
+    setBase(address);
+    setHealth(null);
     setError(null);
+    setLocalServerMessage(null);
+  }, []);
+
+  /** «Сервер на этом ПК» выбирает localhost в Tauri или same-origin в браузере. */
+  const useThisMachine = () => {
+    const desktop = isTauri();
+    const nextBase = desktop ? localServerAddress : '';
+    setBase(nextBase);
+    setError(null);
+    setHealth(null);
+    setLocalServerMessage(desktop
+      ? `Выбран локальный адрес ${nextBase}. Эта кнопка только выбирает адрес, а не запускает службу. Нажмите «Проверить связь»; запуск службы — в карточке выше.`
+      : 'Выбран сервер с того же адреса, с которого открыта панель. Эта кнопка только выбирает адрес, а не запускает сервер.');
   };
 
   const connect = async () => {
     const next = normalizeBase(base);
     setBusy('connect');
     setError(null);
+    setLocalServerMessage(null);
     setHealth(null);
     try {
       const probe = new ConsoleClient(next, null);
@@ -290,19 +308,44 @@ export function App() {
         </div>
       </header>
 
+      <ManagedServerPanel
+        base={base}
+        token={token}
+        onLocalAddress={rememberLocalServerAddress}
+        onSetAddress={setManagedServerAddress}
+        onStarted={(address, nextToken, info) => {
+          setBase(address);
+          setToken(nextToken);
+          setHealth(info);
+          saveSession(address, nextToken);
+          setPassword('');
+          setError(null);
+        }}
+        onStopped={(address) => {
+          if (normalizeBase(base) !== normalizeBase(address)) return;
+          logout();
+          setHealth(null);
+        }}
+      />
+
       {/* --- подключение --- */}
       {!connected && (
         <section className="card">
           <div className="card__head">
             <h2>Где сервер</h2>
-            {health && <span className="badge badge--ok">отвечает · v{health.version}</span>}
+            {health && <span className="badge badge--ok" role="status">отвечает · v{health.version}</span>}
           </div>
 
           <label className="field">
             <span>Адрес</span>
             <input
               value={base}
-              onChange={(event) => setBase(event.target.value)}
+              onChange={(event) => {
+                setBase(event.target.value);
+                setError(null);
+                setHealth(null);
+                setLocalServerMessage(null);
+              }}
               placeholder="192.168.1.10:4000"
               inputMode="url"
               autoCapitalize="none"
@@ -319,10 +362,12 @@ export function App() {
             <button type="button" className="btn btn--small" onClick={() => void connect()} disabled={busy === 'connect'}>
               {busy === 'connect' ? 'Проверяю…' : 'Проверить связь'}
             </button>
-            <button type="button" className="btn btn--small btn--ghost" onClick={useThisMachine}>
+            <button type="button" className="btn btn--small btn--ghost" onClick={useThisMachine} disabled={busy === 'connect'}>
               Сервер на этом устройстве
             </button>
           </div>
+
+          {localServerMessage && <p className="hint" role="status">{localServerMessage}</p>}
 
           {health && (
             <>
@@ -353,7 +398,7 @@ export function App() {
             </>
           )}
 
-          {error && <p className="error">{error}</p>}
+          {error && <p className="error" role="alert">{error}</p>}
         </section>
       )}
 

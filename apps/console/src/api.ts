@@ -14,6 +14,7 @@ export type Health = {
   tracks: number;
   diskFreeMb: number | null;
   version: string;
+  security?: { mediaSecretConfigured: boolean };
   migrations: { applied: string[]; pending: number };
   ffmpeg: { available: boolean; version: string | null; path: string | null };
   runtime: { platform: string; arch: string; node: string; termux: boolean };
@@ -289,6 +290,10 @@ export class ConsoleClient {
     });
     this.token = result.token;
     return result;
+  }
+
+  shutdown() {
+    return this.request<{ ok: boolean; stopping: boolean }>('/api/shutdown', { method: 'POST' });
   }
 
   me() {

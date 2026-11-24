@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision Audio — независимая музыка. Персональная волна.</title>
+<meta name="description" content="Презентация Vision Audio: платформа независимой музыки и персональное радио «Моя волна». Статус, стек, документация и демо.">
+<meta property="og:title" content="Vision Audio — независимая музыка. Персональная волна.">
+<meta property="og:description" content="Платформа независимой музыки и персональное радио «Моя волна» — в разработке.">
+<meta property="og:image" content="docs/assets/social-preview.png">
+<style>
+  :root {
+    --bg: #0c0e12;
+    --bg-2: #10131a;
+    --card: #14171d;
+    --line: #262b34;
+    --text: #e8eaee;
+    --muted: #9aa3b2;
+    --accent: #ff5a1f;
+    --accent-2: #ffb15c;
+    --ok: #3ecf8e;
+    --warn: #f5b942;
+    --info: #6ea8fe;
+    --radius: 16px;
+    --max: 1060px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: dark; scroll-behavior: smooth; }
+  body {
+    background:
+      radial-gradient(1100px 480px at 85% -8%, rgba(255, 90, 31, .10), transparent 60%),
+      radial-gradient(900px 500px at -8% 40%, rgba(81, 64, 168, .12), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  img { max-width: 100%; display: block; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+
+  /* ---------- навигация ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 40;
+    background: rgba(12, 14, 18, .82); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-in { display: flex; align-items: center; gap: 18px; height: 58px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); }
+  .brand:hover { text-decoration: none; }
+  .logo {
+    width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; font-weight: 800; font-size: 14px;
+    box-shadow: 0 4px 12px rgba(255, 90, 31, .35);
+  }
+  .nav-links { display: flex; gap: 16px; margin-left: auto; }
+  .nav-links a { color: var(--muted); font-size: 14px; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px; border-radius: 12px; font-weight: 600; font-size: 15px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    transition: transform .12s, border-color .12s, background .12s;
+    cursor: pointer;
+  }
+  .btn:hover { text-decoration: none; border-color: #3a4150; background: #1a1e26; transform: translateY(-1px); }
+  .btn.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    box-shadow: 0 8px 22px rgba(255, 90, 31, .35);
+  }
+  .btn.primary:hover { background: #ff6b36; }
+  .btn.sm { padding: 8px 14px; font-size: 14px; border-radius: 10px; }
+
+  /* ---------- hero ---------- */
+  header.hero { padding: 72px 0 56px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 44px; align-items: center; }
+  .eyebrow {
+    display: inline-block; font-size: 12.5px; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--accent); background: rgba(255, 90, 31, .12); border: 1px solid rgba(255, 90, 31, .3);
+    padding: 5px 12px; border-radius: 999px; margin-bottom: 18px;
+  }
+  h1 { font-size: clamp(34px, 5vw, 52px); line-height: 1.1; letter-spacing: -.5px; margin-bottom: 14px; }
+  h1 .grad {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2) 60%, #58d6c7);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lead { font-size: 18px; color: var(--muted); margin-bottom: 26px; max-width: 34em; }
+  .hero-cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .hero-shot {
+    border: 1px solid var(--line); border-radius: 18px; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+  }
+  .hero-shot img { width: 100%; }
+  .hero-note { margin-top: 10px; font-size: 12.5px; color: var(--muted); text-align: center; }
+
+  /* ---------- секции ---------- */
+  section { padding: 54px 0; }
+  section.alt { background: linear-gradient(180deg, transparent, rgba(20, 23, 29, .55) 12%, rgba(20, 23, 29, .55) 88%, transparent); }
+  .sec-head { max-width: 720px; margin-bottom: 30px; }
+  h2 { font-size: clamp(24px, 3vw, 32px); letter-spacing: -.3px; margin-bottom: 10px; }
+  .sec-head p { color: var(--muted); font-size: 16.5px; }
+
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 22px; transition: transform .15s, border-color .15s;
+  }
+  .card:hover { transform: translateY(-3px); border-color: #343b48; }
+  .card .ico { font-size: 26px; margin-bottom: 12px; }
+  .card h3 { font-size: 17px; margin-bottom: 8px; }
+  .card p { color: var(--muted); font-size: 14.5px; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); background: var(--bg-2);
+  }
+  .chip.ok { color: var(--ok); border-color: rgba(62, 207, 142, .35); background: rgba(62, 207, 142, .08); }
+  .chip.wip { color: var(--warn); border-color: rgba(245, 185, 66, .35); background: rgba(245, 185, 66, .08); }
+  .chip.plan { color: var(--info); border-color: rgba(110, 168, 254, .35); background: rgba(110, 168, 254, .08); }
+  .chip.off { color: var(--muted); }
+  .card .chip { margin-bottom: 12px; }
+
+  .stack { display: flex; flex-wrap: wrap; gap: 10px; }
+  .stack span {
+    font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg-2); border: 1px solid var(--line); color: var(--text);
+    padding: 7px 13px; border-radius: 10px;
+  }
+
+  .status-box {
+    background: rgba(245, 185, 66, .06); border: 1px solid rgba(245, 185, 66, .3);
+    border-radius: var(--radius); padding: 24px;
+  }
+  .status-box h3 { color: var(--warn); font-size: 17px; margin-bottom: 10px; }
+  .status-box p, .status-box li { color: var(--muted); font-size: 15px; }
+  .status-box ul { margin: 12px 0 0 18px; display: grid; gap: 6px; }
+
+  .doc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .doc {
+    display: block; background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px; color: var(--text); transition: border-color .15s, transform .15s;
+  }
+  .doc:hover { text-decoration: none; border-color: rgba(255, 90, 31, .5); transform: translateY(-2px); }
+  .doc b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .doc span { color: var(--muted); font-size: 13px; }
+
+  .cta-band {
+    text-align: center; background:
+      linear-gradient(135deg, rgba(255, 90, 31, .14), rgba(88, 214, 199, .08)),
+      var(--card);
+    border: 1px solid var(--line); border-radius: 22px; padding: 44px 24px;
+  }
+  .cta-band h2 { margin-bottom: 8px; }
+  .cta-band p { color: var(--muted); margin-bottom: 22px; }
+  .cta-band .hero-cta { justify-content: center; }
+
+  footer {
+    border-top: 1px solid var(--line); margin-top: 40px; padding: 28px 0 40px;
+    color: var(--muted); font-size: 13.5px;
+  }
+  .foot-in { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--text); }
+
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .5s, transform .5s; }
+  .reveal.in { opacity: 1; transform: none; }
+
+  @media (max-width: 880px) {
+    .hero-grid { grid-template-columns: 1fr; gap: 30px; }
+    .grid-3, .doc-grid { grid-template-columns: 1fr 1fr; }
+    .nav-links { display: none; }
+    header.hero { padding-top: 44px; }
+  }
+  @media (max-width: 560px) {
+    .grid-3, .grid-2, .doc-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="main.html"><span class="logo">V</span> Vision Audio</a>
+    <div class="nav-links">
+      <a href="#idea">Идея</a>
+      <a href="#platform">Платформа</a>
+      <a href="#status">Статус</a>
+      <a href="#docs">Документация</a>
+    </div>
+    <a class="btn sm primary" href="index.html">🎧 Демо-плеер</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Платформа в разработке · v2</span>
+      <h1>Независимая музыка.<br><span class="grad">Персональная волна.</span></h1>
+      <p class="lead">
+        Vision Audio — пространство, где слушатели открывают новых независимых
+        артистов, а музыка складывается в персональный эфир «Моя волна».
+        Один владелец, честные правила, приватность по умолчанию.
+      </p>
+      <div class="hero-cta">
+        <a class="btn primary" href="index.html">🎧 Открыть демо-плеер</a>
+        <a class="btn" href="https://visiontripin.github.io/Vision/">🌐 Онлайн-прототип</a>
+        <a class="btn" href="https://github.com/visiontripin/Vision">GitHub</a>
+      </div>
+    </div>
+    <div>
+      <div class="hero-shot">
+        <img src="docs/assets/social-preview.svg" alt="Vision Audio — «Моя волна»: волновая графика презентации" width="1280" height="640">
+      </div>
+      <div class="hero-note">Демо-плеер работает в одном файле — без сервера и сборки</div>
+    </div>
+  </div>
+</header>
+
+<section id="idea">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <h2>Идея</h2>
+      <p>Три обещания, из которых собирается продукт.</p>
+    </div>
+    <div class="grid-3">
+      <div class="card reveal">
+        <div class="ico">🧭</div>
+        <h3>Открытия</h3>
+        <p>Находить музыку за пределами привычного каталога: рекомендации из прослушиваний, а не только из чартов.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ico">📻</div>
+        <h3>Персональный эфир</h3>
+        <p>Слушать собственную волну «Моя волна», а не вручную собирать очередь на каждый вечер.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ico">🤝</div>
+        <h3>Доверие</h3>
+        <p>Делиться музыкой только с подтверждёнными правами и понятными правилами — модерация и takedown как часть архитектуры.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="platform" class="alt">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <h2>Что внутри платформы</h2>
+      <p>Целевой продукт — Vision Audio v2: мультипользовательская платформа. Текущий плеер остаётся рабочим прототипом и витриной.</p>
+    </div>
+    <div class="grid-3">
+      <div class="card reveal">
+        <span class="chip ok">✅ рабочий прототип</span>
+        <h3>Web-плеер</h3>
+        <p>Библиотека, волновой плеер, плейлисты, лайки, приватные ссылки, офлайн через IndexedDB. Публикуется на GitHub Pages.</p>
+      </div>
+      <div class="card reveal">
+        <span class="chip ok">✅ реализован</span>
+        <h3>API и хранилище</h3>
+        <p>Node 22, PostgreSQL + pgvector, Redis-очереди, приватный S3, миграции 001–008, signed media URLs, метрики и OpenAPI.</p>
+      </div>
+      <div class="card reveal">
+        <span class="chip wip">🔧 backend, гейты открыты</span>
+        <h3>Платформенный контур v2</h3>
+        <p>Identity, каталог, квоты и загрузки, очередь ingest, moderation/rights, события и рекомендации, радио-сессии и TTS-path.</p>
+      </div>
+      <div class="card reveal">
+        <span class="chip plan">📋 в плане</span>
+        <h3>«Моя волна» — радио</h3>
+        <p>Сессии, расписание, feedback и транспорт эфира. Нужны реальный TTS-провайдер и клиентский плеер — после отдельного решения.</p>
+      </div>
+      <div class="card reveal">
+        <span class="chip off">🧊 клиенты заморожены (ADR-0016)</span>
+        <h3>Android · iOS · Windows · Linux</h3>
+        <p>Expo-клиент и Tauri-плеер собраны и работают; новые публикации требуют отдельного решения после принятия гейтов v2.</p>
+      </div>
+      <div class="card reveal">
+        <span class="chip wip">⏳ Stack Ready не принят</span>
+        <h3>Эксплуатация</h3>
+        <p>Backup/restore CLI, импортёр SQLite, rehearsal-runbook и алерты готовы; owner-репетиции на ПК и юридические гейты — открыты.</p>
+      </div>
+    </div>
+
+    <div class="sec-head reveal" style="margin-top:38px">
+      <h2 style="font-size:20px">Стек</h2>
+    </div>
+    <div class="stack reveal">
+      <span>Node.js 22</span><span>PostgreSQL 16 + pgvector</span><span>Redis / BullMQ</span>
+      <span>S3 (MinIO)</span><span>React 19 + Vite</span><span>TypeScript</span>
+      <span>Expo / React Native</span><span>Tauri 2</span><span>SQLite (legacy)</span>
+      <span>ffmpeg · HLS</span><span>OpenAPI</span>
+    </div>
+  </div>
+</section>
+
+<section id="status">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <h2>Честный статус</h2>
+      <p>Мы не заявляем готовности там, где её нет.</p>
+    </div>
+    <div class="status-box reveal">
+      <h3>⚠️ Публичной беты нет</h3>
+      <p>Публичная платформа, персональное радио и приём музыки не запущены. Техническая реализация не разрешает публичный UGC-запуск.</p>
+      <ul>
+        <li>Stack Ready gate (ADR-0021) не принят: owner-репетиции backup/restore, live Redis, observability и подпись — открыты.</li>
+        <li>Legal/privacy-процесс, владелец жалоб и takedown/appeal не закрыты.</li>
+        <li>Локальный контур v2 — только loopback, регистрация выключена.</li>
+      </ul>
+      <p style="margin-top:14px">Куда движемся и что дальше: <a href="docs/DEVELOPMENT-ROADMAP.md">DEVELOPMENT-ROADMAP.md</a> ·
+        <a href="docs/OWNER-CHECKLIST.md">чеклист владельца</a> ·
+        <a href="docs/ROADMAP-v2.md">scope и критерии приёмки</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="docs" class="alt">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <h2>Документация</h2>
+      <p>Полный каталог — <a href="docs/INDEX.md">docs/INDEX.md</a>. Самое нужное для старта:</p>
+    </div>
+    <div class="doc-grid">
+      <a class="doc reveal" href="CONTRIBUTING.md"><b>CONTRIBUTING.md</b><span>Ветки, PR, гейты перед merge, правила документации</span></a>
+      <a class="doc reveal" href="docs/DEVELOPMENT.md"><b>Разработка</b><span>Установка, проверки, локальные контуры, секреты</span></a>
+      <a class="doc reveal" href="docs/ROADMAP-v2.md"><b>ROADMAP-v2</b><span>Scope, фазы, контракты и критерии приёмки</span></a>
+      <a class="doc reveal" href="docs/ARCHITECTURE.md"><b>Архитектура</b><span>Как устроен код и данные, ADR 0001–0022</span></a>
+      <a class="doc reveal" href="docs/API.md"><b>API</b><span>Контракт сервера, эндпоинты, безопасность</span></a>
+      <a class="doc reveal" href="docs/ROLES.md"><b>Роли и RACI</b><span>Кто что решает + системные промпты агентов</span></a>
+      <a class="doc reveal" href="SECURITY.md"><b>Безопасность</b><span>Статус и приватный канал сообщений об уязвимостях</span></a>
+      <a class="doc reveal" href="docs/AGENT-PLAYBOOK.md"><b>Agent Playbook</b><span>Проверенные приёмы работы в песочнице</span></a>
+      <a class="doc reveal" href="docs/RUNBOOK.md"><b>Runbook</b><span>Эксплуатация, окружение, бэкапы</span></a>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="cta-band reveal">
+      <h2>Посмотрите, как это звучит</h2>
+      <p>Демо-плеер в одном HTML-файле: пять треков, синтезируемых прямо в браузере, волна, лайки и горячие клавиши. Без сервера и установки.</p>
+      <div class="hero-cta">
+        <a class="btn primary" href="index.html">🎧 Открыть index.html</a>
+        <a class="btn" href="https://visiontripin.github.io/Vision/">🌐 Полный прототип на Pages</a>
+        <a class="btn" href="https://github.com/visiontripin/Vision/actions">⚙️ CI</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <div>Vision Audio · независимая музыка и персональное радио «Моя волна»</div>
+    <div>
+      <a href="https://github.com/visiontripin/Vision">GitHub</a> ·
+      <a href="docs/INDEX.md">Документация</a> ·
+      <a href="index.html">Демо</a> ·
+      <a href="docs/REPO-METADATA.md">Лицензия и метаданные</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // лёгкое появление блоков при прокрутке
+  const io = new IntersectionObserver(es => {
+    for (const e of es) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }, { threshold: 0.12 });
+  document.querySelectorAll(".reveal").forEach(el => io.observe(el));
+</script>
+</body>
+</html>

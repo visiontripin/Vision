@@ -108,7 +108,7 @@ export function listDevices(now = Date.now()) {
   return db
     .prepare('SELECT id, name, base_url, seen_at FROM library_devices WHERE seen_at >= ? ORDER BY seen_at DESC')
     .all(from)
-    .map((row) => ({ id: row.id, name: row.name, baseUrl: row.base_url, at: Date.parse(row.seen_at) || 0 }));
+    .map((row) => ({ id: row.id, name: row.name, baseUrl: row.base_url, at: Date.parse(String(row.seen_at)) || 0 }));
 }
 
 /** Всё, что известно реестру: метаданные живых устройств + отметка о файлах. */
@@ -136,7 +136,7 @@ export function snapshot(now = Date.now()) {
       deviceId: row.device_id,
       deviceName: row.device_name,
       downloadable: Boolean(row.file_id),
-      updatedAt: Date.parse(row.updated_at) || 0,
+      updatedAt: Date.parse(String(row.updated_at)) || 0,
     }));
 
   const published = {};
@@ -151,7 +151,7 @@ export function getLibraryTrack(id) {
 export function getLibraryFile(id) {
   const row = db.prepare('SELECT * FROM library_files WHERE track_id = ?').get(id) ?? null;
   if (!row) return null;
-  const file = path.join(DATA_DIR, row.path);
+  const file = path.join(DATA_DIR, String(row.path));
   if (!existsSync(file)) {
     // Запись есть, файла нет (почистили диск) — честно убираем, иначе скачивание
     // будет вечно отвечать 500 вместо понятного «нет файла».
@@ -167,7 +167,12 @@ export function getLibraryFile(id) {
  * Читаем потоком и считаем sha256 на лету: файл может быть в сотни мегабайт, а
  * `readFile` в память на телефоне-сервере — верный способ получить OOM.
  */
-export async function saveLibraryFile(id, stream, { mime, limit = MAX_LIBRARY_BYTES } = {}) {
+/**
+ * @param {string} id
+ * @param {any} stream The request or multipart byte stream (both are async iterables).
+ * @param {{mime?: string, limit?: number}} [options={}]
+ */
+export async function saveLibraryFile(id, stream, { mime = 'application/octet-stream', limit = MAX_LIBRARY_BYTES } = {}) {
   mkdirSync(LIBRARY_DIR, { recursive: true });
 
   const ext = extForMime(mime);
@@ -261,7 +266,7 @@ export function streamLibraryFile(req, res, record) {
 /** Удаление трека из реестра (например, владелец убрал его из библиотеки). */
 export function removeLibraryTrack(id) {
   const file = db.prepare('SELECT path FROM library_files WHERE track_id = ?').get(id);
-  if (file?.path) rmSync(path.join(DATA_DIR, file.path), { force: true });
+  if (file?.path) rmSync(path.join(DATA_DIR, String(file.path)), { force: true });
   db.prepare('DELETE FROM library_files WHERE track_id = ?').run(id);
   db.prepare('DELETE FROM library_tracks WHERE id = ?').run(id);
 }

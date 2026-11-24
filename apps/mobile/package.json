@@ -1,11 +1,10 @@
 {
   "name": "@vision/mobile",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "server:check": "node ../../scripts/fetch-nodejs-mobile.mjs --check",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "fix": "expo install --fix",

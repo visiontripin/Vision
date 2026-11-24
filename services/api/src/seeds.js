@@ -178,12 +178,15 @@ export function seedSummary(hashes = []) {
       .all(...chunk, cutoff, replicaCutoff);
 
     for (const row of rows) {
-      const entry = result.get(row.hash) || { servable: 0, replicas: 0, devices: 0, kinds: {} };
-      entry.devices += row.n;
-      if (row.servable) entry.servable += row.n;
-      else entry.replicas += row.n;
-      entry.kinds[row.kind] = (entry.kinds[row.kind] || 0) + row.n;
-      result.set(row.hash, entry);
+      const hash = String(row.hash);
+      const kind = String(row.kind);
+      const count = Number(row.n || 0);
+      const entry = result.get(hash) || { servable: 0, replicas: 0, devices: 0, kinds: {} };
+      entry.devices += count;
+      if (Number(row.servable)) entry.servable += count;
+      else entry.replicas += count;
+      entry.kinds[kind] = (entry.kinds[kind] || 0) + count;
+      result.set(hash, entry);
     }
   }
 
@@ -201,7 +204,7 @@ function seedFiles() {
   const files = new Map();
   try {
     for (const name of readdirSync(SEED_DIR)) {
-      const [hash, ext] = name.split('.');
+      const [hash, ext] = String(name).split('.');
       if (isHash(hash) && ext) files.set(hash, path.join(SEED_DIR, name));
     }
   } catch { /* каталога ещё нет */ }
@@ -438,7 +441,7 @@ export async function adoptBlob(hash, { ttlMs = MEDIA_TTL_MS } = {}) {
 
       await rename(tmp, target);
       invalidateSeedCache();
-      declareBlob({ hash, bytes: received, mime: blob.mime });
+      declareBlob({ hash, bytes: received, mime: String(blob.mime) });
       registerSeed({ hash, deviceId: DEVICE_ID, kind: 'origin', baseUrl: PUBLIC_URL || null });
       return { ok: true, already: false, bytes: received, file: target, from: seed.deviceId };
     } catch (error) {

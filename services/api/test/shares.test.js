@@ -173,7 +173,9 @@ describe('приватные ссылки', () => {
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-type') ?? '', /text\/html/);
     assert.match(page.headers.get('x-robots-tag') ?? '', /noindex/);
-    assert.match(page.headers.get('content-security-policy') ?? '', /default-src 'none'/);
+    const csp = page.headers.get('content-security-policy') ?? '';
+    assert.match(csp, /default-src 'none'/);
+    assert.match(csp, /frame-ancestors 'self'/);
 
     const html = await page.text();
     assert.match(html, /Shared Track/);

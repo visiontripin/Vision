@@ -1,185 +1,35 @@
-# Android APK — сборка, подпись, установка
+# Android APK — сборка и релиз legacy-клиента
 
-Готовый установочный файл мобильного приложения собирается в GitHub Actions
-(`.github/workflows/android.yml`) — без Expo-аккаунта, EAS и локального Android SDK.
+> **Внутренняя техническая памятка.** Android-приложение — прежний локальный/API-плеер, не клиент платформы Vision Audio v2. Новое развитие отложено до Ф5; публикация APK возможна только после отдельного решения владельца.
 
-```
-Actions → «Android APK» → Run workflow  →  Release android-v<версия>
-https://github.com/visiontripin/Vision/releases/latest
-```
+## CI и проверки
 
-## Что делает workflow
+Workflow `.github/workflows/android.yml` собирает клиент без встроенного Node/API-сервера и проверяет отсутствие серверных артефактов в APK. Ручной запуск по умолчанию создаёт только временный artifact. GitHub Release разрешается только при явном `release: true` или owner-created `android-v<версия>` tag и отдельном решении владельца.
 
-| Шаг | Детали |
-| --- | --- |
-| Node 22 + JDK 17 | `actions/setup-node`, `actions/setup-java` (temurin) |
-| `npm ci` | зависимости `apps/mobile` по lockfile |
-| `npx tsc --noEmit` | типы не дают собрать заведомо сломанный бандл |
-| `npx expo prebuild -p android` | генерирует `apps/mobile/android` (в git не попадает) |
-| `node scripts/android-prepare.mjs` | версия, ключ подписи, проверка `usesCleartextTraffic` |
-| `./gradlew assembleRelease` | Hermes-бандл + релизный APK |
-| «Проверка APK» | `apksigner verify --print-certs`, `aapt2 dump badging`, наличие `assets/index.android.bundle` |
-| upload-artifact | `VisionAudio-<версия>-android.apk` + `.sha256` (90 дней) |
-| GitHub Release | `android-v<версия>`, тег на текущий коммит, файлы в ассетах |
-
-Артефакт workflow живёт 90 дней, релиз — бессрочно, поэтому ссылкой можно делиться:
-
-```
-https://github.com/visiontripin/Vision/releases/latest/download/VisionAudio-latest.apk
-```
-
-Кроме версионного `VisionAudio-<версия>-android.apk` в релиз кладётся копия
-`VisionAudio-latest.apk` — ссылка на неё не меняется при выходе новых версий.
-
-Повторный запуск с тем же тегом не падает: workflow обновляет ассеты (`--clobber`).
-
-## Встроенный сервер и тестовый APK
-
-Сборка с Node-рантаймом (input `embedded`, по умолчанию `true`) дополнительно
-скачивает ≈90 МБ рантайма (кэшируется по версии) и вживляет его скриптом
-`scripts/android-embed-node.mjs`. Проверка APK в этом случае требует
-`lib/<abi>/libnode.so` под три ABI и `assets/nodejs-project/bootstrap.mjs`;
-если рантайма нет — сборка помечается предупреждением «без Node», а не молчит.
-
-Тестовый APK (`VisionTester`) собирается тем же workflow при включённом input
-`tester` (job `tester`): другой `applicationId`, ставится рядом с обычным
-приложением, внутри встроенный Node и тестер API. Подробности — `docs/EMBEDDED.md`.
-
-## Что проверяется в CI
-
-Сборка не публикуется, если APK не проходит проверки; результаты печатаются
-`::warning`-аннотациями на странице job-а:
-
-| Проверка | Текущий APK (0.2.0, versionCode 5) |
-| --- | --- |
-| `apksigner verify` | `Verifies`, схема **v2** — true |
-| `aapt2 dump badging` | `package: app.vision.audio`, `versionName 0.2.0`, `targetSdkVersion 36` |
-| JS-бандл | `assets/index.android.bundle` внутри APK |
-| размер | ~57 МБ (universal: arm64-v8a, armeabi-v7a, x86, x86_64) |
-
-Схема v1 выключена намеренно: `minSdk 24` (Android 7.0), а v1 нужна только для
-Android 6 и ниже. Universal-APK удобнее для ручной раздачи, чем отдельные
-сборки под ABI: один файл ставится на любой телефон.
-
-
-## Второй APK: приложение «Vision Server» (админка)
-
-`apps/console` собирается тем же способом, но **отдельным** скриптом
-`scripts/android-sign-console.mjs`. Он нужен, потому что `tauri android build --apk`
-собирает *release*-APK, а release без `signingConfig` остаётся неподписанным — Android
-такой файл не ставит и пишет «Приложение не установлено: пакет недействителен
-(например, повреждён)». Именно так в `console-v0.1.0` уехал
-`app-universal-release-unsigned.apk`.
-
-```bash
-cd apps/console && npx tauri android init --ci
-node scripts/android-sign-console.mjs     # версия + signingConfig visionRelease
-npx tauri android build --apk --ci
-```
-
-- Ключ тот же, что у плеера: `apps/mobile/vision-release.p12` (alias `vision`,
-  пароль `vision-audio`). Один ключ на все свои APK — обновления ставятся поверх.
-- `versionCode` берётся из `GITHUB_RUN_NUMBER`, `versionName` — из
-  `apps/console/src-tauri/tauri.conf.json`.
-- Скрипт дописывает блок `signingConfigs` в `build.gradle.kts` **после** генерации и
-  самопроверяется: если шаблон Tauri изменится и подпись не подключится, сборка
-  упадёт сразу, а не на телефоне.
-- В CI (`console.yml`) после сборки стоит `apksigner verify` + `aapt2 dump badging`:
-  сборка с `unsigned`/`does not verify` в выводе роняет джобу.
-- В релиз кладутся `VisionServer-<версия>-android.apk`, `.sha256` и
-  `VisionServer-latest.apk` (постоянная ссылка).
-
-Важно: приложение «Vision Server» **не запускает Node внутри телефона** — оно
-открывает панель и проверяет, что сервер отвечает (`apps/console/src-tauri/src/lib.rs`).
-На Android сам сервер живёт в Termux (`docs/TERMUX.md`).
-
-## Подпись
-
-- Ключ: `apps/mobile/vision-release.p12` (PKCS#12, RSA 2048, самоподписанный,
-  срок 27 лет), alias `vision`, пароль `vision-audio`.
-- Пароль и файл зафиксированы в репозитории намеренно: репозиторий публичный, а
-  сборка должна воспроизводиться без доступа к секретам. Это **ключ для личной
-  раздачи**, а не для Google Play.
-- Смысл постоянного ключа — обновления: новая сборка с тем же `applicationId`
-  (`app.vision.audio`) и большим `versionCode` ставится поверх старой и сохраняет
-  вход, настройки и скачанные треки. Если подпись сменится, Android потребует
-  удалить приложение (потеряются офлайн-копии, но не серверные данные).
-
-Если хочется убрать ключ из репозитория:
-
-```bash
-# 1) сгенерировать свой ключ (JKS) и положить в GitHub Secrets
-keytool -genkeypair -v -keystore vision-release.jks -storetype JKS \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias vision \
-  -dname "CN=Vision Audio, O=visiontripin, C=NL"
-base64 -w0 vision-release.jks | pbcopy     # или xclip/xsel
-# 2) Actions → Settings → Secrets: VISION_KEYSTORE_B64, VISION_KEYSTORE_PASSWORD,
-#    VISION_KEY_ALIAS, VISION_KEY_PASSWORD
-```
-
-`scripts/android-prepare.mjs` уже читает `VISION_KEYSTORE_PATH`,
-`VISION_KEYSTORE_PASSWORD`, `VISION_KEY_ALIAS`, `VISION_KEY_PASSWORD`, поэтому
-секретам достаточно декодировать файл в `apps/mobile/vision-release.p12` перед шагом
-подписи. `versionCode` берётся из `GITHUB_RUN_NUMBER` (растёт с каждым запуском),
-`versionName` — из `apps/mobile/app.json`.
-
-## HTTP до домашнего сервера
-
-Release-сборка Android по умолчанию блокирует `http://`, а домашний сервер в
-локальной сети как раз без TLS. Поэтому в `app.json` включён плагин
-
-```json
-["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]
-```
-
-`scripts/android-prepare.mjs` после `prebuild` проверяет атрибут
-`android:usesCleartextTraffic="true"` в `AndroidManifest.xml` и, если плагин его не
-добавил, дописывает сам — сборка не уедет в релиз с «мёртвой» сетью.
-
-## Установка на телефон
-
-1. Открыть ссылку релиза на телефоне, скачать `VisionAudio-latest.apk`
-   (или `VisionAudio-<версия>-android.apk` из списка ассетов)
-   (нужен Android 7.0+ — `minSdk 24`)
-   (Chrome предупредит про «файл может быть опасен» — это обычная подпись
-   самоподписанного APK, не из Play Store).
-2. В диалоге установки разрешить установку из этого источника
-   (Настройки → Приложения → Специальный доступ → Установка неизвестных приложений).
-3. Запустить «Vision Audio», ввести адрес сервера:
-   - дома: `http://192.168.1.10:4000` (IP телефона/ПК с сервером в Wi-Fi);
-   - вне дома: адрес Tailscale `http://100.x.y.z:4000` или HTTPS-туннель;
-   - `http://` разрешён (см. раздел выше), HTTPS-туннель тоже подходит.
-
-Пароль по умолчанию — `vision` (или значение `VISION_PASSWORD` на сервере).
-
-Проверка целостности файла (по желанию, на ПК):
-
-```bash
-sha256sum VisionAudio-latest.apk     # сверьте с .sha256 версионного файла
-```
-
-## Сборка вручную (если нужен локальный APK)
-
-Нужны JDK 17 и Android SDK (или `ANDROID_HOME` от Android Studio):
+Для локальных проверок:
 
 ```bash
 cd apps/mobile
-npm install
-npx expo prebuild --platform android --no-install
-node ../../scripts/android-prepare.mjs
-cd android && ./gradlew assembleRelease
-# → app/build/outputs/apk/release/app-release.apk
+npm ci
+npx tsc --noEmit
 ```
 
-Локальный клон должен содержать `apps/mobile/vision-release.p12`; если ключа нет —
-создать свой PKCS#12 и указать его через `VISION_KEYSTORE_PATH`.
+Из корня репозитория клиентские тесты запускаются вместе с остальными через `npm run test:all`.
 
-## Ограничения сборки
+## Сетевые ограничения
 
-- **Без Expo-аккаунта**: сборка идёт через `prebuild` + Gradle, EAS не нужен
-  (и `EXPO_TOKEN` не требуется).
-- `apps/mobile/android` и `ios` — генерируемые каталоги, в git их нет.
-- В APK нет системных медиа-кнопок (экран блокировки, Bluetooth) — это ограничение
-  `expo-av`, нужен dev build с `react-native-track-player`.
-- APK не подписан Google Play и не публикуется в сторах; обновления — вручную с
-  той же страницы релизов.
+APK остаётся клиентом API и не содержит сервера. Это не означает, что legacy API безопасно открывать для телефона или других устройств.
+
+Legacy API по умолчанию слушает `0.0.0.0`, использует незашифрованный HTTP и имеет слабые credentials по умолчанию. **Не подключайте приложение к такому API в домашней сети или интернете; не используйте стандартный пароль и не включайте port forwarding.** В этом проекте нет утверждённой инструкции для сетевого тестирования legacy API.
+
+Выбранная проверка v2 — отдельный loopback-only контур на Windows (`127.0.0.1:4400`); он предназначен для того же компьютера, а не для Android-телефона. См. [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md). Это не публичный staging и не бета.
+
+## Загрузка и подпись
+
+Доступные старые APK перечислены в [`DOWNLOADS.md`](DOWNLOADS.md). Они не являются платформой v2, а наличие файла в GitHub Releases не означает поддержку или рекомендацию к использованию.
+
+Ключи подписи и пароли следует хранить вне репозитория и передавать CI только через защищённые GitHub Secrets. Аудит обнаружил, что текущий legacy keystore всё ещё отслеживается Git, а сценарии подписи имеют небезопасный fallback; этот ключ следует считать скомпрометированным и не использовать для новых релизов.
+
+Ротация **не выполнялась**: смена Android signing key лишит уже установленные sideload-копии обычного обновления. До удаления ключа из истории нужен согласованный план миграции: новый ключ + CI secrets, судьба уже выпущенных APK и явная инструкция пользователям по переустановке. Не удаляйте keystore и не переписывайте историю без этого плана. Не копируйте ключи, пароли, токены или содержимое secrets в Markdown, Issues, PR или логи.
+
+Любая новая публикация должна сначала пройти отдельный review владельца, проверку активного workflow и решение по статусу клиента. Этот документ не является приглашением скачать или установить APK.

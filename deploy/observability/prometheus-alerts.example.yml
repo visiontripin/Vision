@@ -1,0 +1,54 @@
+# Vision v2 platform — ПРИМЕР правил алертинга. Не применяется автоматически.
+# Пороговые значения — стартовые заглушки для закрытой alpha: перед включением
+# владелец обязан выставить SLOs/ретеншен/контакты эскалации (docs/PLATFORM-REHEARSAL.md §D).
+# Источник метрик: token-gated `GET /metrics` (см. docs/PLATFORM-OPERATIONS.md §4).
+# Метрики: vision_platform_http_requests_total{method,route,status},
+#          vision_platform_http_request_duration_seconds_bucket/sum/count.
+groups:
+  - name: vision-platform
+    rules:
+      - alert: VisionPlatformApiTargetDown
+        expr: up{job="vision-platform-api"} == 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Vision platform API is not scrapeable"
+          description: "Prometheus cannot scrape the token-gated /metrics endpoint. Check the API process and the scrape token (401 => wrong/missing token resolves as target down on some setups; the endpoint itself returns 404 without a token by design)."
+
+      - alert: VisionPlatformHighErrorRate
+        expr: |
+          (
+            sum(rate(vision_platform_http_requests_total{status=~"5.."}[10m]))
+            / clamp_min(sum(rate(vision_platform_http_requests_total[10m])), 1)
+          ) > 0.05
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: "5xx share above 5% for 10 minutes"
+          description: "Investigate via request IDs (X-Request-Id) in structured logs. Do not disable the alert to silence it; fix the failing route or roll back per docs/PLATFORM-OPERATIONS.md §2."
+
+      - alert: VisionPlatformHighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(vision_platform_http_request_duration_seconds_bucket[10m])) by (le)
+          ) > 1.5
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "p95 latency above 1.5s for 10 minutes"
+          description: "Route attribution: add `route` label to the sum(...) by (le) to see which route template regressed."
+
+      - alert: VisionPlatformSustained429
+        expr: |
+          sum(rate(vision_platform_http_requests_total{status="429"}[15m])) > 1
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Sustained rate-limit rejections"
+          description: "Sustained 429s usually mean abuse or a too-tight alpha policy. Review PLATFORM_RATE_LIMIT_POLICIES and abuse signals; do not raise limits without owner decision."
+
+# Заметки, которые НЕ являются алертами (требуют отдельного blackbox SQL-экспортёра, не поставлен):
+# - outbox backlog / dead-lettered outbox rows (docs/PLATFORM-OPERATIONS.md §2 diagnostic SQL);
+# - pending upload_intents, протухшие до expires_at;
+# - worker heartbeat / последний успешный цикл outbox (Compose health endpoint, порт 4401 не публиковать).
+# До появления экспортёра эти проверки выполняются вручную по runbook и помечены как gap в ledger.

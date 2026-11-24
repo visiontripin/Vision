@@ -10,6 +10,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${DATA_DIR:-$HOME/vision-data}"
+PASSWORD_FILE="$DATA_DIR/.vision-password"
 PORT="${PORT:-4000}"
 # Трекер реплик: устройство само раздаёт свои файлы и говорит об этом трекеру.
 DEVICE_ID="${DEVICE_ID:-termux}"
@@ -32,8 +33,8 @@ say "Ставлю nodejs, ffmpeg и git"
 # npm-пакет ffmpeg-static собран под glibc и здесь не запускается
 pkg install -y nodejs ffmpeg git >/dev/null
 
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$NODE_MAJOR" -ge 22 ] || die "Нужен Node 22+ (сейчас $(node -v)). Выполните: pkg upgrade nodejs"
+node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 16) ? 0 : 1)' \
+  || die "Нужен Node 22.16+ с поддержкой FTS5 (сейчас $(node -v)). Выполните: pkg upgrade nodejs"
 say "Node $(node -v), $(ffmpeg -version 2>/dev/null | head -1 | cut -c1-40)…"
 
 cd "$REPO_DIR"
@@ -44,8 +45,15 @@ npm install --no-audit --no-fund
 say "Собираю web-интерфейс"
 npm run build
 
-say "Готовлю каталог данных: $DATA_DIR"
+say "Готовлю защищённый каталог данных: $DATA_DIR"
 mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR" || die "Не удалось закрыть доступ к DATA_DIR. Используйте приватный каталог внутри \$HOME, не /sdcard."
+if [ -n "${VISION_PASSWORD:-}" ]; then
+  printf '%s' "$VISION_PASSWORD" > "$PASSWORD_FILE"
+elif [ ! -s "$PASSWORD_FILE" ]; then
+  node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))" > "$PASSWORD_FILE"
+fi
+chmod 600 "$PASSWORD_FILE"
 
 cat > "$BOOT_FILE.tmp" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
@@ -56,6 +64,7 @@ cd "$REPO_DIR" || exit 1
 export DATA_DIR="$DATA_DIR"
 export PORT="$PORT"
 export HOST=0.0.0.0
+export VISION_PASSWORD="\$(cat "$DATA_DIR/.vision-password")"
 export FFMPEG_PATH="$(command -v ffmpeg)"
 export DEVICE_ID="$DEVICE_ID"
 export SEED_ENABLED=1
@@ -78,10 +87,13 @@ cat <<EOF
   1) запустить сейчас:
        cd "$REPO_DIR"
        DATA_DIR="$DATA_DIR" PORT=$PORT HOST=0.0.0.0 DEVICE_ID=$DEVICE_ID \
+         VISION_PASSWORD="\$(cat '$PASSWORD_FILE')" \
          FFMPEG_PATH="$(command -v ffmpeg)" npm start
 
   2) открыть в браузере телефона или компьютера в той же Wi-Fi:
-       http://$IP:$PORT      (пароль по умолчанию: vision)
+       http://$IP:$PORT
+       случайный пароль сохранён в: $PASSWORD_FILE
+       чтобы посмотреть: cat '$PASSWORD_FILE'
 
   3) автозапуск после перезагрузки:
        установите Termux:Boot из F-Droid и один раз откройте его

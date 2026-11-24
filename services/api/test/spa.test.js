@@ -63,6 +63,14 @@ after(() => {
 });
 
 describe('SPA-маршруты для входящих ссылок', () => {
+  test('основное приложение запрещает встраивание на сторонние сайты', async () => {
+    const res = await fetch(`${BASE}/`);
+    assert.equal(res.status, 200);
+    const csp = res.headers.get('content-security-policy') || '';
+    assert.match(csp, /frame-ancestors 'self'/);
+    assert.doesNotMatch(csp, /frame-ancestors\s+\*/);
+  });
+
   test('/share из системного меню «Поделиться» отдаёт оболочку без входа', async () => {
     if (!existsSync(path.join(WEB_DIST, 'index.html'))) return; // сборки нет — сервер сам скажет об этом
     const res = await fetch(`${BASE}/share?url=${encodeURIComponent('https://x.com/a.mp3')}&title=Song`, {

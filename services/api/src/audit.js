@@ -218,13 +218,16 @@ export function auditSummary({ days = 1 } = {}) {
         WHERE at >= ? GROUP BY action, actor ORDER BY n DESC`
     )
     .all(since);
-  const byActor = { owner: 0, guest: 0, system: 0 };
-  for (const row of rows) byActor[row.actor] = (byActor[row.actor] || 0) + row.n;
+  const byActor = /** @type {Record<string, number>} */ ({ owner: 0, guest: 0, system: 0 });
+  for (const row of rows) {
+    const actor = String(row.actor);
+    byActor[actor] = (byActor[actor] || 0) + Number(row.n || 0);
+  }
   return {
     since,
-    total: rows.reduce((sum, row) => sum + row.n, 0),
+    total: rows.reduce((sum, row) => sum + Number(row.n || 0), 0),
     byActor,
-    actions: rows.map((row) => ({ action: row.action, actor: row.actor, count: row.n })),
+    actions: rows.map((row) => ({ action: row.action, actor: String(row.actor), count: Number(row.n || 0) })),
   };
 }
 

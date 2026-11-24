@@ -1,52 +1,47 @@
-# Runbook: запуск, деплой, бэкапы
+# Runbook: архивные операции legacy private API
 
-## 1. Локальный запуск
+> **Не использовать как инструкцию к запуску Vision Audio v2 или публичному staging.** Это справочник для прежнего SQLite API. Его небезопасные defaults — `HOST=0.0.0.0` и `VISION_PASSWORD=vision`. Не открывайте legacy API в домашнюю сеть или интернет с этими настройками; в рамках текущего проекта не публикуйте его через firewall, router, tunnel, Docker port или reverse proxy. Для выбранной локальной проверки v2 используйте только [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md), где API ограничен `127.0.0.1:4400`.
+
+Windows Vision Server и console workflow временно заморожены по ADR-0016; отдельное требование владельца к Windows-службе/автозапуску/admin installer остаётся нерешённым и не считается отменённым. Public UGC, peer seeding и рекламные функции не включать до прохождения своих гейтов.
+
+## 1. Локальный запуск legacy API — только loopback
+
+Следующий режим предназначен только для локальной отладки на той же машине. Он генерирует отдельные случайные credentials и переопределяет опасный bind по умолчанию:
 
 ```bash
 npm install
 npm run build        # web → apps/web/dist
-npm start            # API + статика, http://0.0.0.0:4000
+export HOST=127.0.0.1
+export VISION_PASSWORD="$(openssl rand -hex 32)"
+export VISION_SECRET="$(openssl rand -hex 32)"
+npm start
 ```
 
-Проверка: `curl -s localhost:4000/api/health` → `{"ok":true,...}`.
+Проверка: `curl -s http://127.0.0.1:4000/api/health` → `{"ok":true,...}`. В режиме разработки `npm start` по умолчанию ограничен loopback; сетевой bind без явно заданного `VISION_PASSWORD` или `VISION_PASSWORD_FILE` будет отклонён. В production задайте отдельный случайный `VISION_SECRET` и сохраняйте его между перезапусками: `/api/health.security.mediaSecretConfigured=false` означает, что подпись media URL выводится из пароля.
 
-## 2. Docker
+## 2. Docker — только loopback, не deployment
+
+Этот пример не создаёт сетевой или публичный сервис. Не меняйте host-side binding на `4000:4000` или `0.0.0.0`:
 
 ```bash
 docker build -t vision-audio .
+export VISION_PASSWORD="$(openssl rand -hex 32)"
+export VISION_SECRET="$(openssl rand -hex 32)"
 docker run -d --name vision \
-  -p 4000:4000 \
-  -e VISION_PASSWORD='свой-пароль' \
-  -e VISION_SECRET="$(openssl rand -hex 32)" \
+  -p 127.0.0.1:4000:4000 \
+  -e VISION_PASSWORD -e VISION_SECRET \
   -v /srv/vision-data:/app/data \
   --restart unless-stopped \
   vision-audio
 ```
 
-Данные (`vision.db`, `media/`, `covers/`) лежат в томе `/app/data` — его и бэкапим.
+Данные (`vision.db`, `media/`, `covers/`) лежат в томе `/app/data`. Не публикуйте этот порт и не подключайте его к публичному reverse proxy.
 
-В образ попадают обе сборки: веб-приложение и панель администрирования (`/admin`).
-Если панель нужна на сервере — ничего дополнительно делать не нужно; отдельными
-каналами идут APK и установщик Windows (`apps/console`, см. `docs/adr/0009-server-console.md`).
+В образ попадают веб-клиент и legacy-панель `/admin`; они не являются приложением Vision Audio v2. Windows/console эксперимент не является поддерживаемым каналом поставки.
 
-## 3. Reverse proxy (TLS)
+## 3. Публичный reverse proxy — не разрешён для этого scope
 
-Caddy — самый короткий путь:
-
-```
-music.example.com {
-    encode zstd gzip
-    reverse_proxy 127.0.0.1:4000
-}
-```
-
-Проверить после включения HTTPS: вход, загрузка, seek в треке, обложки.
-
-**Для приватных ссылок прокси обязан пробрасывать Host** (Caddy делает это по умолчанию,
-nginx — `proxy_set_header Host $host;`). Иначе `/s/<token>` соберёт относительный `og:url`
-и карточка в мессенджере развернётся с чужим адресом. Если сервис стоит за прокси с
-нестандартным доменом, проще задать `PUBLIC_URL=https://music.example.com` — он
-приоритетнее заголовков запроса.
+Примеры reverse proxy, туннелей и публичного DNS удалены из активной инструкции. Наличие TLS не превращает legacy API в одобренный публичный сервис. Не используйте этот runbook для публикации API.
 
 ## 4. Бэкап и проверка восстановления (v0.24.0, D5)
 
@@ -58,7 +53,6 @@ nginx — `proxy_set_header Host $host;`). Иначе `/s/<token>` соберё�
 |---|---|---|
 | Приложение/панель | «сделать копию сейчас» | `POST /api/backups` (или вкладка «Копии» в панели) |
 | Скрипт | по cron, сервер не нужен | `./scripts/backup.sh /srv/backups` |
-| Сервер сам | расписание, `BACKUP_EVERY_HOURS` | `BACKUP_EVERY_HOURS=24 npm start` |
 
 ```bash
 # бэкап без остановки сервиса (проверка встроена: при провале код выхода 2)
@@ -233,24 +227,17 @@ Network → Offline → перезагрузить страницу (должн�
 
 ## 5.3.1 Android / Termux
 
-Домашний сервер на телефоне: установка, автозапуск (Termux:Boot), доступ по
-Wi-Fi и через Tailscale, экономный профиль транскодинга и диагностика —
-в отдельном документе **`docs/TERMUX.md`**. Кратко: `bash scripts/termux-setup.sh`.
+Архивное описание прежнего Termux self-hosted режима — `docs/TERMUX.md`. Встроенный
+сервер в мобильном APK отменён; этот режим не является целевой публичной платформой v2.
 
-## 5.4 Панель Vision Server (v0.15.0)
+## 5.4 Архивная панель Vision Server (v0.15.0)
 
-Эксплуатация без curl: приложение для Windows и Android (`apps/console`) или та же
-страница на самом сервере — `http://<сервер>:4000/admin`.
-
-- **Подключение**: адрес вида `host:4000` (или `https://…`), пароль владельца.
-  На Android сервер обычно в Termux — вводите адрес телефона в Wi-Fi.
-- **Диагностика** переводит `/api/health` в три цвета: «готов к работе» / «есть замечания».
-  Красное — сервер не отвечает или диск почти кончился; жёлтое — не применены миграции,
-  нет ffmpeg, есть файлы без источника, не задан `PUBLIC_URL`.
-- **Ссылки**: открытия, срок, комментарии, перевыпуск (новая ссылка копируется в буфер)
-  и отзыв. Это не замена `docs/API.md` — только кнопки над теми же вызовами.
-- Если `/admin` отвечает 503 «панель не собрана» — выполните `npm run build:console`
-  и перезапустите сервер; API и библиотека при этом работают.
+Исторически `apps/console` предоставлял панель локального API. Его Windows-установщик,
+Android APK и маршрут `/admin` из этой версии не следует считать текущим способом
+установки или поддерживаемым release-каналом. Windows build/install/runtime не
+подтверждены, автоматическая публикация выключена. Отдельное требование владельца к
+Windows-службе с автозапуском и admin installer конфликтует с временной заморозкой и
+остаётся открытым; см. [`HOME-SERVER-WINDOWS.md`](HOME-SERVER-WINDOWS.md).
 
 ## 5.5 Приватные ссылки (v0.12.0)
 
@@ -365,6 +352,23 @@ Wi-Fi и через Tailscale, экономный профиль транско�
   сервер (`/#/track/…`), а не на старую копию; и что трек ещё в библиотеке —
   удалённый трек ссылка не воскрешает.
 
+## 5.8 PostgreSQL и v2 API для разработки
+
+Этот раздел обновлён: v2 PostgreSQL API уже содержит upload intent/complete, private S3 ingest, outbox/worker, owner rights submission, moderation decision и публикацию через каталог. Утверждение ниже в старых ревизиях, что upload/ingest API отсутствует, устарело. Эти API **не** используются legacy `npm start`, который остаётся отдельным SQLite-сервером личной библиотеки; данные двух контуров не мигрируются автоматически.
+
+Локальный Compose-контур для Windows и его loopback ограничения описаны в [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md). Backup/restore/rollback, SQLite→Postgres migration/reconciliation и operational checks описаны в [`PLATFORM-OPERATIONS.md`](PLATFORM-OPERATIONS.md); turnkey owner-репетиция Stack Ready (backup/restore/rollback, live Redis, observability, importer, подпись) — в [`PLATFORM-REHEARSAL.md`](PLATFORM-REHEARSAL.md). Команды v2:
+
+```powershell
+npm run platform:local:init
+npm run platform:local:up
+npm run platform:local:backup -- backups/platform-v2/before-local-test
+npm run platform:local:restore -- backups/platform-v2/before-local-test --confirm
+```
+
+Restore — разрушительная операция для локального v2 состояния: он требует `--confirm`, проверяет manifest/хэши, автоматически сохраняет pre-restore копию и оставляет API/worker остановленными. Указанный путь — пример; backup-команда не перезаписывает существующую копию, поэтому при повторной репетиции укажите новое уникальное имя и перед restore проверьте выбранный bundle. После проверки восстановленного набора запустите `npm run platform:local:up`, чтобы применить forward-only миграции и поднять сервисы. Эти команды пока не проходили owner-run Windows/Docker restore rehearsal и не являются production backup policy.
+
+`npm test` проверяет SQL-поведение на встроенном PGlite и включает synthetic upload→quarantine→ingest→moderation→publication E2E. Это не заменяет реальный PostgreSQL 16 + pgvector, Redis/BullMQ, MinIO, backup/restore/rollback rehearsal или security/legal acceptance. Регистрация и uploads в локальном Compose остаются выключенными; не включайте их для публичного трафика.
+
 ## 6. Типовые проблемы
 
 | Симптом | Причина | Решение |
@@ -399,8 +403,8 @@ git pull
 npm ci
 npm run build
 npm test
-docker build -t vision-audio . && docker rm -f vision && docker run ...   # или systemctl restart vision
-curl -s localhost:4000/api/health
+docker build -t vision-audio .   # повторный локальный запуск — только с loopback binding из §2
+curl -s http://127.0.0.1:4000/api/health
 ```
 
 Миграции БД идемпотентны (`CREATE TABLE IF NOT EXISTS`) и применяются при старте

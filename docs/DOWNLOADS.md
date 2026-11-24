@@ -1,75 +1,27 @@
-# Прямые ссылки на скачивание
+# Загрузки Vision Audio
 
-Все ссылки — на файлы из GitHub Releases. Никаких сокращателей и промежуточных страниц:
-клик по ссылке сразу начинает загрузку файла.
+[Все GitHub Releases](https://github.com/visiontripin/Vision/releases). Новая Vision Audio v2 платформа ещё не выпущена; существующие артефакты — клиент/плеер, а не публичный UGC-каталог.
 
-> Актуальные версии: **Android 0.8.0**, **Windows-плеер 0.3.0**, **Windows и Android: сервер + админка 0.1.1**,
-> **Linux 0.3.0**. Web открывается без установки: https://visiontripin.github.io/Vision/
+## Web demo
 
-## Android
+- [Локальная web-версия](https://visiontripin.github.io/Vision/) — данные хранятся в браузере, сервер не нужен.
 
-| Что | Ссылка | Размер |
-|---|---|---|
-| **Плеер Vision Audio** (всегда последняя версия) | https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-latest.apk | 90 МБ |
-| Плеер Vision Audio 0.9.0 (фиксированная версия) | https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk | 90 МБ |
-| **Тестовый APK** (ставится рядом, свой applicationId) | https://github.com/visiontripin/Vision/releases/download/tester-v0.9.0/VisionTester-0.9.0-android.apk | 90 МБ |
-| Контрольная сумма APK | https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk.sha256 | 96 Б |
-| **Админка / запуск сервера** (APK, подписан — ставится) | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-latest.apk | 36 МБ |
-| Админка — фиксированная версия | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-0.1.1-android.apk | 36 МБ |
-| Контрольная сумма APK админки | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/VisionServer-0.1.1-android.apk.sha256 | 97 Б |
+## Android — существующий плеер-клиент
 
-`VisionAudio-latest.apk` — прямая ссылка без версии в имени: её можно сохранить и
-переиспользовать, она всегда ведёт на свежую сборку.
+- [Последние доступные APK и контрольные суммы](https://github.com/visiontripin/Vision/releases/latest)
+- APK — клиент внешнего API и локальной библиотеки; Node/API-сервера в нём нет.
+- Android development отложен по roadmap до Ф5. Ручной workflow default-only builds artifact; Release появляется лишь при явном `release: true` или owner-created `android-v*` tag после отдельного решения владельца.
 
-## Windows
+## Windows / Linux — прежние desktop-сборки
 
-| Что | Ссылка | Размер |
-|---|---|---|
-| **Плеер Vision Audio 0.3.0 — установщик (.msi)** | https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_x64_en-US.msi | 4.6 МБ |
-| Плеер Vision Audio 0.3.0 — установщик (.exe) | https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_x64-setup.exe | 3.2 МБ |
-| **Сервер + админка 0.1.1 — установщик (.msi)** | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/Vision.Server_0.1.1_x64_en-US.msi | 2.9 МБ |
-| Сервер + админка 0.1.1 — установщик (.exe) | https://github.com/visiontripin/Vision/releases/download/console-v0.1.1/Vision.Server_0.1.1_x64-setup.exe | 1.9 МБ |
+Уже выпущенные версии не удаляются, но новые desktop builds/releases заморожены по ADR-0016 до подтверждения PMF. Старые `.msi`, `.exe`, `.deb` и `.AppImage` — архивные; поддержка не гарантируется.
 
-`.msi` и `.exe` — два формата одного и того же приложения: MSI удобнее для тихой
-установки и групповых политик, EXE (NSIS) — обычный «далее-далее-готово».
+## Windows Vision Server
 
-## Linux
+**Проверенного Windows Vision Server релиза нет.** Installer в этой Arena-ветке не проверен на Windows; автоматическая публикация выключена. Не скачивать/не устанавливать код этой ветки как релиз. Отдельное требование владельца к Windows-службе и администраторскому установщику остаётся открытым и конфликтует с временной заморозкой console — см. `docs/HOME-SERVER-WINDOWS.md`. Старый `console-v0.1.1` — клиентская панель, не сервер.
 
-| Что | Ссылка | Размер |
-|---|---|---|
-| Плеер 0.3.0 — AppImage (без установки) | https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_amd64.AppImage | 83.5 МБ |
-| Плеер 0.3.0 — .deb (Debian/Ubuntu) | https://github.com/visiontripin/Vision/releases/download/desktop-v0.3.0/Vision.Audio_0.3.0_amd64.deb | 5.1 МБ |
+Архивная заметка: [`HOME-SERVER-WINDOWS.md`](HOME-SERVER-WINDOWS.md). Она не является инструкцией к установке.
 
-AppImage: `chmod +x Vision.Audio_0.3.0_amd64.AppImage && ./Vision.Audio_0.3.0_amd64.AppImage`.
+## Статус продукта
 
-## Web
-
-| Что | Ссылка |
-|---|---|
-| Приложение в браузере (локальный режим, данные в браузере) | https://visiontripin.github.io/Vision/ |
-| Админка на своём сервере | `http://<адрес-сервера>:4000/admin` |
-
-## Проверка целостности APK
-
-```bash
-curl -LO https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk
-curl -LO https://github.com/visiontripin/Vision/releases/download/android-v0.9.0/VisionAudio-0.9.0-android.apk.sha256
-sha256sum -c VisionAudio-0.6.0-android.apk.sha256
-```
-
-## Установка
-
-- **Android**: скачать APK → «Установить из этого источника». Новая сборка ставится
-  поверх старой, вход и скачанные треки сохраняются. В приложении указать адрес
-  сервера, например `http://192.168.1.10:4000`.
-- **Windows**: запустить `.msi` или `-setup.exe`. Установщик не подписан сертификатом —
-  SmartScreen предупредит один раз («Подробнее» → «Выполнить в любом случае»).
-- **Сервер**: приложение «Vision Server» поднимает API и панель, либо разверните сервер
-  по `docs/RUNBOOK.md` и откройте `/admin` в браузере.
-
-## Ссылки на страницы релизов
-
-- Все релизы: https://github.com/visiontripin/Vision/releases
-- Android 0.8.0: https://github.com/visiontripin/Vision/releases/tag/android-v0.9.0
-- Windows-плеер + Linux 0.3.0: https://github.com/visiontripin/Vision/releases/tag/desktop-v0.3.0
-- Сервер + админка 0.1.1: https://github.com/visiontripin/Vision/releases/tag/console-v0.1.1
+Текущий код — приватный одно-владельческий плеер/API. Public uploads, каталог, модерация, рекомендации, персональное радио и реклама пока не доступны. Для разработки и задач см. `docs/ROADMAP-v2.md` и `docs/RUNBOOK.md`.

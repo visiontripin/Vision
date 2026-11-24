@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/node": "node",
+      "resources/server": "server"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "nsis/vision-service-hooks.nsh"
+      }
+    }
+  }
+}

@@ -36,7 +36,11 @@ export const PLAYLIST_HEIGHT = 320;
 const MIN_SIZE = 40;
 const MAX_SIZE = 960;
 
-/** Размеры виджета: пропорциональное уменьшение под maxwidth/maxheight. */
+/**
+ * Размеры виджета: пропорциональное уменьшение под maxwidth/maxheight.
+ * @param {string} kind
+ * @param {{maxwidth?: number|string|null, maxheight?: number|string|null}} [options={}]
+ */
 export function embedSize(kind, { maxwidth, maxheight } = {}) {
   const width = clamp(maxwidth, DEFAULT_WIDTH);
   const naturalHeight = kind === 'playlist' ? PLAYLIST_HEIGHT : TRACK_HEIGHT;
@@ -123,6 +127,10 @@ export function embedTheme(value) {
  * треки плейлиста (переключение — обычный переход на полную страницу: виджет
  * не должен уметь «плеер целиком», иначе он превратится в приложение в iframe).
  */
+/**
+ * @param {any} view
+ * @param {{token?: string, selfBase?: string, theme?: string}} [options={}]
+ */
 export function renderEmbedWidget(view, { token, selfBase = '', theme = 'dark' } = {}) {
   const base = String(selfBase || '').replace(/\/$/, '');
   const link = `${base}/s/${token}`;
@@ -190,6 +198,10 @@ function hostOf(base) {
 }
 
 /** Тело oEmbed-ответа по спецификации 1.0 (`type: rich`). */
+/**
+ * @param {any} view
+ * @param {{token?: string, selfBase?: string, maxwidth?: number|string|null, maxheight?: number|string|null}} [options={}]
+ */
 export function oembedPayload(view, { token, selfBase = '', maxwidth, maxheight } = {}) {
   const base = String(selfBase || '').replace(/\/$/, '');
   const meta = embedMeta(view);

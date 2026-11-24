@@ -3,6 +3,13 @@
  * Никаких зависимостей от браузера, кроме XMLHttpRequest при загрузке с прогрессом.
  */
 
+/** Generated from the API's OpenAPI 3.1 document; see `npm run generate:api-types`. */
+export type {
+  paths as OpenApiPaths,
+  components as OpenApiComponents,
+  operations as OpenApiOperations,
+} from './generated/openapi.js';
+
 export type Track = {
   id: string;
   title: string;

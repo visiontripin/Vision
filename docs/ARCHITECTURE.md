@@ -1,5 +1,7 @@
 # Архитектура
 
+> Описание смешивает текущий legacy one-owner API и будущий v2. Legacy API по умолчанию слушает `0.0.0.0` и использует слабый пароль; старт с сетевым bind без явно заданных credentials блокируется, но legacy API всё равно не предназначен для публичного доступа. Локальный сценарий v2 документирован отдельно в [`BETA-WINDOWS-LOCAL.md`](BETA-WINDOWS-LOCAL.md).
+
 ## 1. Принципы
 
 1. **Один бэкенд, много клиентов.** API — единственный источник правды; типы и HTTP-клиент живут в `packages/shared`.
@@ -80,7 +82,7 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
 ## 7. Аутентификация
 
 - `POST /api/auth/login {password}` → `{ token }`, где token = `base64(payload).HMAC-SHA256`.
-- Пароль сравнивается с `VISION_PASSWORD` (env, по умолчанию `vision` для локального демо).
+- Пароль сравнивается с `VISION_PASSWORD`; legacy default слабый и допустим только в изолированных тестах, не в сетевом окружении.
 - Клиент хранит токен в `localStorage`, отправляет `Authorization: Bearer <token>`.
   Cookies не используются — приложение одинаково работает в iframe/превью и в нативной оболочке.
 - Rate limit на `/api/auth/login`: 10 попыток / 5 минут на IP.
@@ -100,15 +102,15 @@ shares (token TEXT PRIMARY KEY, track_id TEXT, expires_at TEXT)  -- этап 4
   из `usePlayer`). Волна рисуется на `<canvas>` (`Waveform` в `ui.tsx`), перемотка —
   `pointerdown/move` + `setPointerCapture`, подсказка времени — параметр `timeAt`.
 
-## 8.1 Панель администрирования (`apps/console`)
+## 8.1 Панель администрирования и Vision Server (`apps/console`)
 
-- Отдельное приложение: Vite + React, оболочка Tauri 2 → окно Windows (`.msi`/`.exe`)
-  и APK Android (`docs/adr/0009-server-console.md`).
-- Тот же бандл сервер отдаёт по `/admin` (`serveConsole` в `server.js`): отдельная
-  статика, `noindex`, SPA-фолбэк, `503` с инструкцией, если не собрана.
-- Права Tauri — `core:default` и собственная команда `platform()`; ни `shell`, ни `fs`.
-- Чистая логика (`src/lib.ts`: `diagnose`, `diskState`, `humanBytes`, `expiry`, `ago`)
-  под тестами; интерфейс только показывает её результат.
+**Статус:** замороженный эксперимент по ADR-0016; описание ниже фиксирует наличие кода, а не активную или поддерживаемую платформу.
+
+- `apps/console` — Vite + React/Tauri 2; в ветке есть экспериментальный Windows NSIS bundle. Автоматические build/release отключены; вручную проверять можно только после отдельного разрешения. Это временное состояние не отменяет открытое требование владельца к Windows-службе с автозапуском/admin installer (см. `docs/HOME-SERVER-WINDOWS.md`).
+- Windows experiment включал Node 24, API, админку, FFmpeg, WinSW и SCM hooks (`docs/adr/0020-home-server-windows-experiment.md`). Установка, ACL, автозапуск и runtime не подтверждены.
+- Серверный код может отдавать `/admin`; это не означает, что Vision v2 уже имеет рабочую multi-user админку или публичный UGC-контур.
+- Мобильный плеер остаётся клиентом внешнего API; Android-панель/embedded Node не являются активным направлением.
+- Чистая логика панели и тесты сохранены как историческая кодовая база, без обещания поддержки.
 
 ## 8.2 Встраивание (E4): `/embed/:token` и `/api/oembed`
 

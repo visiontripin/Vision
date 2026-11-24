@@ -11,7 +11,7 @@ COPY . .
 RUN npm run build && npm run build:console
 
 # ---------- runtime ----------
-FROM node:22-alpine
+FROM node:22.23.5-alpine
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=4000 \
