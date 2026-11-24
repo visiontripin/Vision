@@ -4,7 +4,7 @@
 
 Закрывает owner-run пробелы ADR-0021: backup/restore/rollback rehearsal, live Redis verification + rate-limit review, production observability wiring, SQLite importer rehearsal. CI evidence (PostgreSQL 16 + pgvector, Redis/BullMQ, MinIO) уже пройдена на ветке; этот runbook дополняет её репетицией на машине владельца.
 
-**Предусловия:** Windows 10/11, Docker Desktop (WSL2 backend) запущен, checkout `arena/3e05af70-vision`, Node ≥ 22.16 (`node --version`), `npm ci` выполнен, порт 4400/9001 свободны, ≥ 10 ГБ диска, все команды из корня репозитория в PowerShell.
+**Предусловия:** Windows 10/11, Docker Desktop (WSL2 backend) запущен, checkout `main` (работа ветки `arena/3e05af70-vision` интегрирована в `main` 2026-11-24), Node ≥ 22.16 (`node --version`), `npm ci` выполнен, порт 4400/9001 свободны, ≥ 10 ГБ диска, все команды из корня репозитория в PowerShell.
 
 ## A. Поднять изолированный локальный контур
 
@@ -44,7 +44,7 @@ Invoke-RestMethod http://127.0.0.1:4400/api/v2/health
 ### C1. Hosted evidence (быстро)
 
 ```powershell
-gh run list --branch arena/3e05af70-vision --workflow ci.yml --limit 1
+gh run list --branch main --workflow ci.yml --limit 1
 ```
 
 Открыть run; джоба с PostgreSQL 16 + Redis 7.4 + MinIO должна быть зелёной (интеграционные тесты `platform-postgres|queue|storage.integration.test.js` и Redis-тесты rate-limit). Красный или отменённый run — сначала разобраться, потом репетиция.
